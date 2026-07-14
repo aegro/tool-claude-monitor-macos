@@ -11,6 +11,7 @@ import AppKit
 struct MenuBarLabel: View {
     @ObservedObject var monitor: Monitor
     @ObservedObject private var settings = Settings.shared
+    @ObservedObject private var keep = KeepAwake.shared
 
     private var session: LimitWindow? { monitor.usage?.session }
     private var showLimit: Bool { settings.menuBarStyle != .cpu }
@@ -34,6 +35,13 @@ struct MenuBarLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
+            if keep.active {
+                Image(systemName: keep.lidClosed ? "sun.max.fill" : "sun.max")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Ink.ember)
+                    .help(keep.stateText)
+            }
+
             if showLimit, let session {
                 Image(nsImage: RingIcon.make(
                     fraction: session.utilization / 100,

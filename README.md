@@ -20,6 +20,20 @@ e onde estão os processos (Docker, java, Chrome) que uma sessão abriu e deixou
 - **Encerrar** qualquer processo, subárvore ou sessão inteira (com tudo que ela subiu), via
   hover ou menu de contexto. `⌥` força (SIGKILL).
 
+## Manter o Mac desperto
+
+Réplica das duas funções do Vorssaint (estilo Amphetamine), no topo do painel:
+
+- **Manter desperto** — segura uma power assertion do IOKit (`PreventUserIdleSystemSleep`), o
+  mesmo mecanismo do `caffeinate`. Sem senha. Aceita uma **duração** (1h/2h/4h/8h/indefinido);
+  ao esgotar, desliga sozinho.
+- **Continuar com a tampa fechada** — usa `pmset disablesleep`, que exige root. Em vez de pedir
+  a senha toda vez, instala **uma única regra sudoers restrita** — limitada a exatamente
+  `pmset disablesleep 0|1`, validada com `visudo` e instalada como `root:wheel 0440` — com um
+  prompt de admin na primeira vez. Depois disso, alternar não pede mais senha. Mesmo mecanismo e
+  mesmo escopo do Vorssaint; nenhum outro comando fica liberado. Para remover:
+  `sudo rm /etc/sudoers.d/monitor-claude-clamshell`.
+
 ## Instalar (qualquer Mac)
 
 Pré-requisito único: as **ferramentas de linha de comando do Xcode** (trazem o Swift). Se você

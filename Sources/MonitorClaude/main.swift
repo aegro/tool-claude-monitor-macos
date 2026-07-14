@@ -97,6 +97,21 @@ if CommandLine.arguments.contains("--dump-tree") {
     exit(0)
 }
 
+if CommandLine.arguments.contains("--test-awake") {
+    // Estamos na main thread aqui; KeepAwake é @MainActor, então acessa direto sem Task.
+    MainActor.assumeIsolated {
+        KeepAwake.shared.setAwake(true)
+        print("assertion ligada; estado: \(KeepAwake.shared.stateText)")
+        print("SleepDisabled do sistema: \(KeepAwake.systemSleepDisabled())")
+    }
+    Thread.sleep(forTimeInterval: 1.0)
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+    p.arguments = ["-g", "assertions"]
+    try? p.run(); p.waitUntilExit()
+    exit(0)
+}
+
 if CommandLine.arguments.contains("--preview") {
     NSApplication.shared.setActivationPolicy(.regular)
     PreviewApp.main()

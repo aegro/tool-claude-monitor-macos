@@ -34,6 +34,8 @@ struct PanelView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    KeepAwakeSection()
+                    Hairline()
                     limitsSection
                     Hairline()
                     tokensSection

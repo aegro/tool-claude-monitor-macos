@@ -55,10 +55,21 @@ final class KeepAwake: ObservableObject {
     private let sudoersPath = "/etc/sudoers.d/monitor-claude-clamshell"
     private let assertionName = "Monitor Claude: manter o Mac desperto" as CFString
 
+    /// O init precisa ser trivial: ele roda dentro do `dispatch_once` do singleton, então
+    /// qualquer trabalho pesado (ler o pmset, criar assertion) pode re-entrar e travar
+    /// (EXC_BREAKPOINT em _dispatch_once_wait). Todo o resto vai para `bootstrap()`, chamado
+    /// uma vez, de forma assíncrona, já fora do once.
+    private var didBootstrap = false
+
     private init() {
         if let d = UserDefaults.standard.string(forKey: "awakeDuration"),
            let parsed = Duration(rawValue: d) { duration = parsed }
+    }
 
+    /// Lê o estado real do sistema e re-aplica a intenção salva. Idempotente.
+    func bootstrap() {
+        guard !didBootstrap else { return }
+        didBootstrap = true
         lidClosed = Self.systemSleepDisabled()
         if lidClosed { setAwake(true) }
         else if UserDefaults.standard.bool(forKey: "keepAwake") { setAwake(true) }

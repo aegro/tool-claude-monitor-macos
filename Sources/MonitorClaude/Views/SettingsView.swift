@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var settings = Settings.shared
     @ObservedObject var monitor: Monitor
+    @ObservedObject var keep = KeepAwake.shared
     var onClose: () -> Void
 
     var body: some View {
@@ -28,6 +29,46 @@ struct SettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    group("Manter desperto") {
+                        toggle("Manter o Mac desperto", isOn: Binding(
+                            get: { keep.awake }, set: { keep.setAwake($0) }))
+
+                        HStack {
+                            Text("Duração").font(Type.label)
+                            Spacer()
+                            Menu {
+                                ForEach(KeepAwake.Duration.allCases) { d in
+                                    Button {
+                                        keep.duration = d
+                                    } label: {
+                                        if keep.duration == d {
+                                            Label(d.label, systemImage: "checkmark")
+                                        } else {
+                                            Text(d.label)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Text(keep.duration.label).font(Type.label)
+                                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
+                                }
+                                .foregroundStyle(Ink.ember)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                            .disabled(!keep.awake)
+                            .opacity(keep.awake ? 1 : 0.4)
+                        }
+
+                        toggle("Continuar com a tampa fechada", isOn: Binding(
+                            get: { keep.lidClosed }, set: { keep.setLidClosed($0) }))
+                            .disabled(keep.busy)
+
+                        Text("A tampa fechada usa uma regra sudoers restrita (só pmset disablesleep), instalada com um único pedido de senha. Remover: sudo rm /etc/sudoers.d/monitor-claude-clamshell")
+                            .font(Type.labelTiny).foregroundStyle(.tertiary)
+                    }
+
                     group("Painel") {
                         picker("Altura", selection: $settings.panelSizeRaw,
                                options: Settings.PanelSize.allCases.map { ($0.rawValue, $0.label) })

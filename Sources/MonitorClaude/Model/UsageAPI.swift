@@ -58,7 +58,7 @@ enum UsageError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unauthorized: return "Token expirado. Use qualquer sessão do Claude no terminal para renovar."
+        case .unauthorized: return "Token recusado mesmo após renovar. Faça login pelo terminal uma vez."
         case .forbidden: return "Token sem o escopo user:profile."
         case .decode: return "Resposta da API em formato inesperado."
         case .http(let c): return "A API respondeu \(c)."

@@ -7,9 +7,15 @@ if CommandLine.arguments.contains("--dump-usage") {
     let sem = DispatchSemaphore(value: 0)
     Task {
         do {
-            let creds = try Keychain.claudeCredentials()
+            var creds = try Keychain.claudeCredentials()
             print("scopes: \(creds.scopes.joined(separator: ", "))")
             print("plan: \(creds.subscriptionType ?? "?")  expired: \(creds.isExpired)")
+            if creds.expiresSoon, creds.refreshToken != nil {
+                print("token expirando — renovando via refresh token…")
+                _ = try await OAuthRefresh.renewAndStore(using: creds)
+                creds = try Keychain.claudeCredentials()
+                print("renovado; expired: \(creds.isExpired)")
+            }
             let (snap, raw) = try await UsageAPI.fetch(token: creds.accessToken)
             print("\n--- raw ---")
             print(String(data: raw, encoding: .utf8) ?? "<binário>")
@@ -19,6 +25,27 @@ if CommandLine.arguments.contains("--dump-usage") {
                 print(String(format: "%-26@ %6.2f%%  pace %5.1f%%  reset %@",
                              w.key as NSString, w.utilization, w.paceTarget, reset))
             }
+        } catch {
+            print("erro: \(error.localizedDescription)")
+        }
+        sem.signal()
+    }
+    sem.wait()
+    exit(0)
+}
+
+// Forces a token renewal from the refresh token and reports the new expiry, without
+// printing any token material. Handy to confirm the keychain write-back works.
+if CommandLine.arguments.contains("--refresh") {
+    let sem = DispatchSemaphore(value: 0)
+    Task {
+        do {
+            let creds = try Keychain.claudeCredentials()
+            print("antes: expired \(creds.isExpired)  refreshToken \(creds.refreshToken != nil ? "presente" : "ausente")")
+            _ = try await OAuthRefresh.renewAndStore(using: creds)
+            let after = try Keychain.claudeCredentials()
+            let reset = after.expiresAt.map(ISO8601DateFormatter().string(from:)) ?? "?"
+            print("depois: expired \(after.isExpired)  expira em \(reset)")
         } catch {
             print("erro: \(error.localizedDescription)")
         }

@@ -119,12 +119,30 @@ final class Monitor: ObservableObject {
 
         do {
             let creds = try Keychain.claudeCredentials()
-            let (snap, _) = try await UsageAPI.fetch(token: creds.accessToken)
+            let snap = try await fetchUsage(creds: creds)
             usage = snap
             usageError = nil
             record(snap)
         } catch {
             usageError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Fetches usage, renewing the OAuth token when it is expired (proactive) or when the
+    /// server rejects it (reactive). Renewal is attempted at most once per call, so a bad
+    /// refresh token surfaces as a normal error instead of a loop.
+    private func fetchUsage(creds: Keychain.Credentials) async throws -> UsageSnapshot {
+        var token = creds.accessToken
+
+        if creds.expiresSoon, creds.refreshToken != nil {
+            token = (try? await OAuthRefresh.renewAndStore(using: creds)) ?? token
+        }
+
+        do {
+            return try await UsageAPI.fetch(token: token).0
+        } catch UsageError.unauthorized where creds.refreshToken != nil {
+            let renewed = try await OAuthRefresh.renewAndStore(using: creds)
+            return try await UsageAPI.fetch(token: renewed).0
         }
     }
 

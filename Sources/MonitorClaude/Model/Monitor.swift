@@ -144,11 +144,25 @@ final class Monitor: ObservableObject {
     /// CLI may have rotated the credential since we cached it, and renewing from a retired
     /// refresh token trips the server's reuse detection. Renewal happens at most once per
     /// call, so a bad refresh token surfaces as a normal error instead of a loop.
+    ///
+    /// The proactive renewal above is best-effort (`try?`): if it fails partway — the exchange
+    /// succeeded server-side (rotating the refresh token) but our local write or response
+    /// handling then failed — `current` stays on the old, now-retired refresh token. Retrying
+    /// blindly on the 401 below would resubmit that retired token and trip reuse detection for
+    /// real. So the reactive path only retries when the keychain reread shows the refresh token
+    /// actually changed; otherwise it surfaces the original renewal failure instead of guessing.
     private func fetchUsage(creds: Keychain.Credentials) async throws -> UsageSnapshot {
         var current = creds
+        var attemptedRefreshToken: String?
+        var renewalError: Error?
 
         if current.expiresSoon, current.refreshToken != nil {
-            current = (try? await renew(current)) ?? current
+            attemptedRefreshToken = current.refreshToken
+            do {
+                current = try await renew(current)
+            } catch {
+                renewalError = error
+            }
         }
 
         do {
@@ -157,6 +171,9 @@ final class Monitor: ObservableObject {
             let fresh = try credentials(bypassingCache: true)
             if fresh.accessToken != current.accessToken {
                 return try await UsageAPI.fetch(token: fresh.accessToken).0
+            }
+            if let renewalError, fresh.refreshToken == attemptedRefreshToken {
+                throw renewalError
             }
             let renewed = try await renew(fresh)
             return try await UsageAPI.fetch(token: renewed.accessToken).0

@@ -16,12 +16,17 @@ swift build -c release 2>&1 | grep -Ev "^\[|^Building|^Compiling|warning:" || tr
 BIN=".build/release/MonitorClaude"
 [ -f "$BIN" ] || { echo "falhou: binário não gerado"; exit 1; }
 
-echo "· montando $APP"
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/MonitorClaude"
+# Monta e assina num stage temporário — só mexe em $APP depois do codesign dar certo, senão
+# uma falha de assinatura apaga o app instalado e deixa o destino pela metade ou sem assinar.
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+STAGED_APP="$STAGE/$(basename "$APP")"
 
-cat > "$APP/Contents/Info.plist" <<PLIST
+echo "· montando $APP"
+mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
+cp "$BIN" "$STAGED_APP/Contents/MacOS/MonitorClaude"
+
+cat > "$STAGED_APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -42,13 +47,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 echo "· assinando ($IDENTITY)"
-if ! codesign --force --sign "$IDENTITY" "$APP"; then
+if ! codesign --force --sign "$IDENTITY" "$STAGED_APP"; then
   echo "falhou: identidade \"$IDENTITY\" não encontrada ou recusada."
   echo "Crie uma vez no Acesso às Chaves: Assistente de Certificado → Criar um Certificado…"
   echo "  nome \"$IDENTITY\" · Raiz autoassinada · tipo Assinatura de código."
   echo "Ou aponte outra identidade: IDENTITY=\"…\" ./scripts/build.sh"
   exit 1
 fi
-xattr -cr "$APP" 2>/dev/null || true
+xattr -cr "$STAGED_APP" 2>/dev/null || true
+
+rm -rf "$APP"
+mkdir -p "$(dirname "$APP")"
+mv "$STAGED_APP" "$APP"
 
 echo "· pronto: $APP"

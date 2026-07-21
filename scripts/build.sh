@@ -11,7 +11,17 @@ VERSION="0.1.0"
 IDENTITY="${IDENTITY:-Aegro Local Dev}"
 
 echo "· compilando"
-swift build -c release 2>&1 | grep -Ev "^\[|^Building|^Compiling|warning:" || true
+# O grep é só pra filtrar ruído do output — não pode ser ele quem decide se o build passou.
+# Sem isolar o status: quando o grep -v filtra 100% das linhas (comum num build limpo), ele
+# sai com status 1 (nenhuma linha selecionada) e o "|| true" mascara isso, mas também mascara
+# uma falha real do swift build — que aí passaria batido pro binário .build/release/
+# MonitorClaude ANTIGO (de um build anterior bem-sucedido) e ele seria assinado e instalado
+# como se fosse novo, sem esse script nunca acusar erro.
+set +e
+swift build -c release 2>&1 | grep -Ev "^\[|^Building|^Compiling|warning:"
+BUILD_STATUS=${PIPESTATUS[0]}
+set -e
+[ "$BUILD_STATUS" -eq 0 ] || { echo "falhou: swift build (status $BUILD_STATUS)"; exit 1; }
 
 BIN=".build/release/MonitorClaude"
 [ -f "$BIN" ] || { echo "falhou: binário não gerado"; exit 1; }

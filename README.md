@@ -43,7 +43,7 @@ nunca instalou:
 xcode-select --install
 ```
 
-Depois, **uma vez só por máquina**, crie a identidade local que assina o app — é ela que faz o
+Depois, **uma vez só por usuário** (a identidade fica no login Keychain, não na máquina), crie a identidade local que assina o app — é ela que faz o
 macOS lembrar do "Sempre Permitir" entre builds (assinatura ad-hoc não tem identidade durável,
 então o prompt do Keychain voltaria a cada build e, em versões recentes do macOS, a cada
 leitura): **Acesso às Chaves** → menu **Assistente de Certificado → Criar um Certificado…** →
@@ -53,7 +53,7 @@ nome `Aegro Local Dev` · tipo de identidade **Raiz autoassinada** · tipo de ce
 ```sh
 git clone git@github.com:aegro/tool-claude-monitor-macos.git
 cd tool-claude-monitor-macos
-./scripts/build.sh          # compila, monta o .app, instala em /Aplicativos e assina com a identidade local
+./scripts/build.sh          # compila, monta o .app, instala em /Applications e assina com a identidade local
 open -a "Monitor Claude"
 ```
 

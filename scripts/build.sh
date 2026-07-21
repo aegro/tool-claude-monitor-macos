@@ -56,8 +56,23 @@ if ! codesign --force --sign "$IDENTITY" "$STAGED_APP"; then
 fi
 xattr -cr "$STAGED_APP" 2>/dev/null || true
 
-rm -rf "$APP"
+# Troca pelo app novo sem nunca deixar o destino sem um .app válido: o app atual só sai do
+# caminho via rename (mesmo diretório = mesmo volume = atômico, não fica pela metade), e só
+# depois de o STAGED_APP já assinado estar pronto pra entrar no lugar. Se o mv final falhar
+# (ex.: STAGE em outro volume, disco cheio), a versão anterior volta ao lugar.
 mkdir -p "$(dirname "$APP")"
-mv "$STAGED_APP" "$APP"
+BACKUP="$APP.prev.$$"
+[ -e "$APP" ] && mv "$APP" "$BACKUP"
+if mv "$STAGED_APP" "$APP"; then
+  rm -rf "$BACKUP" 2>/dev/null || true
+else
+  echo "falhou: não consegui instalar em $APP."
+  rm -rf "$APP"
+  if [ -e "$BACKUP" ]; then
+    mv "$BACKUP" "$APP"
+    echo "versão anterior restaurada."
+  fi
+  exit 1
+fi
 
 echo "· pronto: $APP"

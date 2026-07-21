@@ -1,11 +1,14 @@
 #!/bin/bash
-# Builds Farol.app and installs it. Ad-hoc signed: the keychain ACL is bound to the
-# code signature, so a rebuild re-prompts once for "Claude Code-credentials".
+# Builds Monitor Claude.app and installs it. Signed with a stable local identity
+# (IDENTITY, default "Aegro Local Dev") so the "Always Allow" ACL on the
+# "Claude Code-credentials" keychain item survives rebuilds — ad-hoc signing has no
+# durable identity, so macOS re-prompts on every build and, often, on every read.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP="${1:-/Applications/Monitor Claude.app}"
 VERSION="0.1.0"
+IDENTITY="${IDENTITY:-Aegro Local Dev}"
 
 echo "· compilando"
 swift build -c release 2>&1 | grep -Ev "^\[|^Building|^Compiling|warning:" || true
@@ -38,8 +41,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "· assinando"
-codesign --force --deep --sign - "$APP" 2>/dev/null
+echo "· assinando ($IDENTITY)"
+if ! codesign --force --sign "$IDENTITY" "$APP"; then
+  echo "falhou: identidade \"$IDENTITY\" não encontrada ou recusada."
+  echo "Crie uma vez no Acesso às Chaves: Assistente de Certificado → Criar um Certificado…"
+  echo "  nome \"$IDENTITY\" · Raiz autoassinada · tipo Assinatura de código."
+  echo "Ou aponte outra identidade: IDENTITY=\"…\" ./scripts/build.sh"
+  exit 1
+fi
 xattr -cr "$APP" 2>/dev/null || true
 
 echo "· pronto: $APP"

@@ -35,10 +35,10 @@ enum OAuthRefresh {
     }
 
     /// Exchanges the current refresh token for a fresh access token and persists the result.
-    /// Returns the new access token so the caller can retry the request that triggered the
-    /// refresh without a second keychain read.
+    /// Returns the renewed set so the caller can keep an in-memory copy coherent without a
+    /// second keychain read.
     @discardableResult
-    static func renewAndStore(using creds: Keychain.Credentials) async throws -> String {
+    static func renewAndStore(using creds: Keychain.Credentials) async throws -> Renewed {
         guard let refresh = creds.refreshToken, !refresh.isEmpty else {
             throw Failure.noRefreshToken
         }
@@ -48,7 +48,7 @@ enum OAuthRefresh {
             refreshToken: renewed.refreshToken,
             expiresAt: renewed.expiresAt
         )
-        return renewed.accessToken
+        return renewed
     }
 
     static func exchange(refreshToken: String) async throws -> Renewed {

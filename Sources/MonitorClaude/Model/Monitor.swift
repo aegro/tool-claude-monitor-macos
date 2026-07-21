@@ -32,6 +32,7 @@ final class Monitor: ObservableObject {
     private var lastUsageFetch: Date?
     private var lastLedgerScan: Date?
     private var sampling = false
+    private var cachedCreds: Keychain.Credentials?
 
     private var usageInterval: TimeInterval { Settings.shared.usageIntervalSeconds }
     private let ledgerInterval: TimeInterval = 20
@@ -118,7 +119,7 @@ final class Monitor: ObservableObject {
         lastUsageFetch = Date()
 
         do {
-            let creds = try Keychain.claudeCredentials()
+            let creds = try credentials()
             let snap = try await fetchUsage(creds: creds)
             usage = snap
             usageError = nil
@@ -128,22 +129,50 @@ final class Monitor: ObservableObject {
         }
     }
 
-    /// Fetches usage, renewing the OAuth token when it is expired (proactive) or when the
-    /// server rejects it (reactive). Renewal is attempted at most once per call, so a bad
-    /// refresh token surfaces as a normal error instead of a loop.
-    private func fetchUsage(creds: Keychain.Credentials) async throws -> UsageSnapshot {
-        var token = creds.accessToken
+    /// Cached keychain read. Every SecItemCopyMatching is a potential user-facing prompt (one
+    /// per poll adds up fast), so the item is only touched when nothing is cached yet or the
+    /// cached token is about to expire.
+    private func credentials(bypassingCache: Bool = false) throws -> Keychain.Credentials {
+        if !bypassingCache, let cached = cachedCreds, !cached.expiresSoon { return cached }
+        let fresh = try Keychain.claudeCredentials()
+        cachedCreds = fresh
+        return fresh
+    }
 
-        if creds.expiresSoon, creds.refreshToken != nil {
-            token = (try? await OAuthRefresh.renewAndStore(using: creds)) ?? token
+    /// Fetches usage, renewing the OAuth token when it is about to expire (proactive) or when
+    /// the server rejects it (reactive). On a 401 the keychain is re-read before renewing: the
+    /// CLI may have rotated the credential since we cached it, and renewing from a retired
+    /// refresh token trips the server's reuse detection. Renewal happens at most once per
+    /// call, so a bad refresh token surfaces as a normal error instead of a loop.
+    private func fetchUsage(creds: Keychain.Credentials) async throws -> UsageSnapshot {
+        var current = creds
+
+        if current.expiresSoon, current.refreshToken != nil {
+            current = (try? await renew(current)) ?? current
         }
 
         do {
-            return try await UsageAPI.fetch(token: token).0
-        } catch UsageError.unauthorized where creds.refreshToken != nil {
-            let renewed = try await OAuthRefresh.renewAndStore(using: creds)
-            return try await UsageAPI.fetch(token: renewed).0
+            return try await UsageAPI.fetch(token: current.accessToken).0
+        } catch UsageError.unauthorized {
+            let fresh = try credentials(bypassingCache: true)
+            if fresh.accessToken != current.accessToken {
+                return try await UsageAPI.fetch(token: fresh.accessToken).0
+            }
+            let renewed = try await renew(fresh)
+            return try await UsageAPI.fetch(token: renewed.accessToken).0
         }
+    }
+
+    /// Renews via the refresh token, persists through Keychain.update, and keeps the cache
+    /// coherent so the next poll neither re-reads the keychain nor renews from stale state.
+    private func renew(_ creds: Keychain.Credentials) async throws -> Keychain.Credentials {
+        let renewed = try await OAuthRefresh.renewAndStore(using: creds)
+        var next = creds
+        next.accessToken = renewed.accessToken
+        next.refreshToken = renewed.refreshToken ?? creds.refreshToken
+        next.expiresAt = renewed.expiresAt
+        cachedCreds = next
+        return next
     }
 
     private func record(_ snap: UsageSnapshot) {

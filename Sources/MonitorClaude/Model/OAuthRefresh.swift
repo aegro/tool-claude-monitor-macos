@@ -34,20 +34,20 @@ enum OAuthRefresh {
         var expiresAt: Date?
     }
 
-    /// Exchanges the current refresh token for a fresh access token and persists the result.
-    /// Returns the new access token so the caller can retry the request that triggered the
-    /// refresh without a second keychain read.
+    /// Exchanges the given refresh token for a fresh access token and persists the result to
+    /// the monitor's *own* store — never the shared Keychain. Returns the new access token so
+    /// the caller can retry the request that triggered the refresh.
     @discardableResult
-    static func renewAndStore(using creds: Keychain.Credentials) async throws -> String {
-        guard let refresh = creds.refreshToken, !refresh.isEmpty else {
+    static func renewAndStore(refreshToken: String?) async throws -> String {
+        guard let refresh = refreshToken, !refresh.isEmpty else {
             throw Failure.noRefreshToken
         }
         let renewed = try await exchange(refreshToken: refresh)
-        try Keychain.update(
+        MonitorCredentials.save(StoredCredentials(
             accessToken: renewed.accessToken,
             refreshToken: renewed.refreshToken,
             expiresAt: renewed.expiresAt
-        )
+        ))
         return renewed.accessToken
     }
 

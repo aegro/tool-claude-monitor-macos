@@ -118,8 +118,7 @@ final class Monitor: ObservableObject {
         lastUsageFetch = Date()
 
         do {
-            let creds = try Keychain.claudeCredentials()
-            let snap = try await fetchUsage(creds: creds)
+            let snap = try await fetchUsage()
             usage = snap
             usageError = nil
             record(snap)
@@ -128,20 +127,29 @@ final class Monitor: ObservableObject {
         }
     }
 
-    /// Fetches usage, renewing the OAuth token when it is expired (proactive) or when the
-    /// server rejects it (reactive). Renewal is attempted at most once per call, so a bad
-    /// refresh token surfaces as a normal error instead of a loop.
-    private func fetchUsage(creds: Keychain.Credentials) async throws -> UsageSnapshot {
-        var token = creds.accessToken
+    /// Fetches usage using the freshest token we can see — the Keychain (kept current by the
+    /// CLI/Desktop) or our own renewed copy, whichever expires latest. Renews only as a last
+    /// resort (both stale, or a 401), and only into our own store — the shared Keychain is
+    /// read-only for us. Renewal happens at most once per call, so a dead refresh token
+    /// surfaces as a normal error instead of a loop.
+    private func fetchUsage() async throws -> UsageSnapshot {
+        // A missing Keychain entry is not fatal if our own store still has a usable token.
+        let keychain = try? Keychain.claudeCredentials()
+        guard let creds = MonitorCredentials.freshest(keychain: keychain) else {
+            // Surface the real Keychain error (not found / denied) when we have nothing at all.
+            _ = try Keychain.claudeCredentials()
+            throw UsageError.unauthorized
+        }
 
+        var token = creds.accessToken
         if creds.expiresSoon, creds.refreshToken != nil {
-            token = (try? await OAuthRefresh.renewAndStore(using: creds)) ?? token
+            token = (try? await OAuthRefresh.renewAndStore(refreshToken: creds.refreshToken)) ?? token
         }
 
         do {
             return try await UsageAPI.fetch(token: token).0
         } catch UsageError.unauthorized where creds.refreshToken != nil {
-            let renewed = try await OAuthRefresh.renewAndStore(using: creds)
+            let renewed = try await OAuthRefresh.renewAndStore(refreshToken: creds.refreshToken)
             return try await UsageAPI.fetch(token: renewed).0
         }
     }

@@ -71,11 +71,22 @@ depois de dias sem terminal, o app respondia com token vencido e o servidor pass
 
 Agora o app se vira sozinho: ao detectar o token perto de vencer — ou ao levar um `401` do
 servidor — ele troca o **refresh token** por um novo par no endpoint OAuth do próprio Claude
-Code (`POST https://console.anthropic.com/v1/oauth/token`) e grava a credencial renovada **de
-volta na mesma entrada do Keychain**, no formato que o CLI também lê. É exatamente o que o CLI
-faz; a renovação acontece no máximo uma vez por ciclo, então um refresh token inválido aparece
-como erro normal em vez de virar loop. Você não precisa mais abrir o terminal para manter o
-painel vivo.
+Code (`POST https://console.anthropic.com/v1/oauth/token`) e guarda a credencial renovada num
+**arquivo só dele** (`~/Library/Application Support/MonitorClaude/credentials.json`, `0600`).
+A renovação acontece no máximo uma vez por ciclo, então um refresh token inválido aparece como
+erro normal em vez de virar loop. Você não precisa mais abrir o terminal para manter o painel
+vivo.
+
+**Por que não gravar de volta no Keychain.** A entrada `Claude Code-credentials` é
+compartilhada com o CLI, e a Anthropic **rotaciona o refresh token a cada uso**. Se o app e o
+CLI renovassem os dois na mesma entrada, quem renovasse por último com um token já rotacionado
+seria rejeitado — forçando um `claude` a relogar. Então o app **só lê** o Keychain (nunca
+escreve) e mantém a própria cópia à parte. A cada consulta ele usa o token **mais fresco** entre
+o do Keychain (mantido pelo CLI/Desktop) e o da própria cópia, então na prática ele pega carona
+nas renovações do CLI e só faz a dele quando os dois estão vencidos. Ressalva honesta: essa
+renovação-de-último-recurso ainda rotaciona o token compartilhado, então pode custar **um**
+relogin do CLI na próxima vez que ele precisar renovar — irrelevante se você usa `apiKeyHelper`
+ou raramente abre o terminal.
 
 ## Por que não confiar nos tokens locais
 
@@ -106,7 +117,7 @@ BIN="/Applications/Monitor Claude.app/Contents/MacOS/MonitorClaude"
 "$BIN" --dump-usage    # o JSON cru de /api/oauth/usage e o parse
 "$BIN" --dump-ledger   # tokens do bloco atual, por sessão e por modelo
 "$BIN" --dump-tree     # a atribuição de processos + a prova de partição exata
-"$BIN" --refresh       # força a renovação do token e mostra a nova expiração (sem imprimir o token)
+"$BIN" --refresh       # força a renovação, grava no store do monitor e mostra a nova expiração (sem imprimir o token)
 "$BIN" --preview       # abre o painel numa janela normal (desenvolvimento)
 ```
 
@@ -118,11 +129,12 @@ do seu usuário. Fala com dois endpoints, ambos da própria Anthropic e nenhum a
 `console.anthropic.com/v1/oauth/token` (o mesmo do CLI). O refresh token nunca vai para nenhum
 outro lugar.
 
-A única gravação de credencial é **de volta na própria entrada do Keychain** quando o token é
-renovado (substitui `accessToken`/`refreshToken`/`expiresAt`, preserva o resto); nenhum token é
-escrito em disco em texto puro. O histórico de limites vai para
-`~/Library/Application Support/MonitorClaude/usage-history.json` (só porcentagens e horários de
-reset, nunca credenciais).
+O Keychain é **só leitura** — o app nunca escreve nele. A credencial renovada fica num arquivo
+próprio, `~/Library/Application Support/MonitorClaude/credentials.json`, com permissão `0600`
+(dono apenas). Sim, é um token em disco fora do Keychain; a troca é deliberada, para não brigar
+com o CLI pela entrada compartilhada (ver "Renovação automática do token"). O histórico de
+limites vai para `~/Library/Application Support/MonitorClaude/usage-history.json` (só
+porcentagens e horários de reset, nunca credenciais).
 
 ## Licença
 

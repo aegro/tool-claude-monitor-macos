@@ -7,16 +7,16 @@ if CommandLine.arguments.contains("--dump-usage") {
     let sem = DispatchSemaphore(value: 0)
     Task {
         do {
-            var creds = try Keychain.claudeCredentials()
+            let creds = try Keychain.claudeCredentials()
             print("scopes: \(creds.scopes.joined(separator: ", "))")
             print("plan: \(creds.subscriptionType ?? "?")  expired: \(creds.isExpired)")
+            var token = creds.accessToken
             if creds.expiresSoon, creds.refreshToken != nil {
-                print("token expirando — renovando via refresh token…")
-                _ = try await OAuthRefresh.renewAndStore(using: creds)
-                creds = try Keychain.claudeCredentials()
-                print("renovado; expired: \(creds.isExpired)")
+                print("token expirando — renovando via refresh token (armazenado no store do monitor)…")
+                token = try await OAuthRefresh.renewAndStore(refreshToken: creds.refreshToken)
+                print("renovado")
             }
-            let (snap, raw) = try await UsageAPI.fetch(token: creds.accessToken)
+            let (snap, raw) = try await UsageAPI.fetch(token: token)
             print("\n--- raw ---")
             print(String(data: raw, encoding: .utf8) ?? "<binário>")
             print("\n--- parsed ---")
@@ -41,11 +41,11 @@ if CommandLine.arguments.contains("--refresh") {
     Task {
         do {
             let creds = try Keychain.claudeCredentials()
-            print("antes: expired \(creds.isExpired)  refreshToken \(creds.refreshToken != nil ? "presente" : "ausente")")
-            _ = try await OAuthRefresh.renewAndStore(using: creds)
-            let after = try Keychain.claudeCredentials()
-            let reset = after.expiresAt.map(ISO8601DateFormatter().string(from:)) ?? "?"
-            print("depois: expired \(after.isExpired)  expira em \(reset)")
+            print("antes (keychain): expired \(creds.isExpired)  refreshToken \(creds.refreshToken != nil ? "presente" : "ausente")")
+            _ = try await OAuthRefresh.renewAndStore(refreshToken: creds.refreshToken)
+            let after = MonitorCredentials.load()
+            let reset = after?.expiresAt.map(ISO8601DateFormatter().string(from:)) ?? "?"
+            print("depois (store do monitor): expira em \(reset)  — keychain do CLI intacto")
         } catch {
             print("erro: \(error.localizedDescription)")
         }

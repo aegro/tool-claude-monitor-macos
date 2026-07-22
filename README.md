@@ -43,18 +43,25 @@ nunca instalou:
 xcode-select --install
 ```
 
-Depois:
+Depois, **uma vez só por usuário** (a identidade fica no login Keychain, não na máquina), crie a identidade local que assina o app — é ela que faz o
+macOS lembrar do "Sempre Permitir" entre builds (assinatura ad-hoc não tem identidade durável,
+então o prompt do Keychain voltaria a cada build e, em versões recentes do macOS, a cada
+leitura): **Acesso às Chaves** → menu **Assistente de Certificado → Criar um Certificado…** →
+nome `Aegro Local Dev` · tipo de identidade **Raiz autoassinada** · tipo de certificado
+**Assinatura de código**. Se quiser outro nome, passe `IDENTITY="…" ./scripts/build.sh`.
 
 ```sh
 git clone git@github.com:aegro/tool-claude-monitor-macos.git
 cd tool-claude-monitor-macos
-./scripts/build.sh          # compila, monta o .app, instala em /Aplicativos e assina localmente
+./scripts/build.sh          # compila, monta o .app, instala em /Applications e assina com a identidade local
 open -a "Monitor Claude"
 ```
 
-Na primeira vez que ele lê os limites, o macOS pergunta se o app pode acessar a entrada
-`Claude Code-credentials` do Keychain. Clique em **Sempre Permitir** — é o mesmo token de login
-do seu terminal, lido em tempo de execução.
+Dois prompts únicos na primeira vez, ambos com **Sempre Permitir**: o `codesign` pede para usar
+a chave privada do certificado ao assinar, e, quando o app lê os limites, o macOS pergunta se
+ele pode acessar a entrada `Claude Code-credentials` do Keychain (digite a senha do Keychain
+antes de clicar) — é o mesmo token de login do seu terminal, lido em tempo de execução. Como a
+identidade de assinatura é estável, essas permissões sobrevivem a rebuilds.
 
 Para atualizar: `git pull && ./scripts/build.sh`.
 

@@ -1,25 +1,26 @@
 import Foundation
 import Security
 
-/// Reads (and, after a refresh, writes back) the OAuth token Claude Code stores in the
-/// login keychain. macOS prompts once per signed binary; "Always Allow" persists the ACL.
+/// Reads (read-only) the OAuth token Claude Code stores in the login keychain. The Monitor
+/// never writes this item: Claude Code owns it and keeps it fresh, and a second writer here
+/// would race the CLI's refresh-token rotation, trip the server's reuse detection, and break
+/// login for both. macOS prompts once per signed binary; "Always Allow" persists the ACL.
 enum Keychain {
     static let service = "Claude Code-credentials"
 
     struct Credentials {
         var accessToken: String
-        var refreshToken: String?
         var expiresAt: Date?
         var subscriptionType: String?
         var scopes: [String]
 
-        /// A small skew so we renew *before* the server would start rejecting, rather than
-        /// after the first 401. Claude Code uses the same idea.
         var isExpired: Bool {
             guard let expiresAt else { return false }
             return expiresAt < Date()
         }
 
+        /// A small skew so we re-read the keychain *before* the token would start being
+        /// rejected — the CLI refreshes it there and we just pick up its fresh copy.
         var expiresSoon: Bool {
             guard let expiresAt else { return false }
             return expiresAt < Date().addingTimeInterval(5 * 60)
@@ -43,12 +44,12 @@ enum Keychain {
     }
 
     static func claudeCredentials() throws -> Credentials {
-        try parse(rawData().1)
+        try parse(readItem())
     }
 
-    /// The raw bytes plus the decoded top-level object, so a write-back can preserve every
-    /// field the CLI cares about instead of reconstructing the shape from scratch.
-    private static func rawData() throws -> (Data, [String: Any]) {
+    /// The decoded top-level object of the `Claude Code-credentials` item. Read-only: we ask
+    /// for the data, decode it, and never write it back.
+    private static func readItem() throws -> [String: Any] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -70,7 +71,7 @@ enum Keychain {
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { throw Failure.malformed }
 
-        return (data, root)
+        return root
     }
 
     private static func parse(_ root: [String: Any]) throws -> Credentials {
@@ -87,40 +88,9 @@ enum Keychain {
 
         return Credentials(
             accessToken: token,
-            refreshToken: node["refreshToken"] as? String,
             expiresAt: expires,
             subscriptionType: node["subscriptionType"] as? String,
             scopes: (node["scopes"] as? [String]) ?? []
         )
-    }
-
-    /// Merges a renewed token back into the exact object Claude Code stored, touching only the
-    /// three fields the refresh produces. Everything else (subscriptionType, scopes, any key we
-    /// do not model) is written back byte-for-byte so the CLI keeps reading its own credential.
-    static func update(accessToken: String, refreshToken: String?, expiresAt: Date?) throws {
-        var (_, root) = try rawData()
-
-        let nested = root["claudeAiOauth"] is [String: Any]
-        var node = (root["claudeAiOauth"] as? [String: Any]) ?? root
-
-        node["accessToken"] = accessToken
-        if let refreshToken { node["refreshToken"] = refreshToken }
-        if let expiresAt { node["expiresAt"] = expiresAt.timeIntervalSince1970 * 1000 }
-
-        if nested { root["claudeAiOauth"] = node } else { root = node }
-
-        let data = try JSONSerialization.data(withJSONObject: root, options: [])
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-        ]
-        let attrs: [String: Any] = [kSecValueData as String: data]
-        let status = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
-        switch status {
-        case errSecSuccess: return
-        case errSecItemNotFound: throw Failure.notFound
-        case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed: throw Failure.denied
-        default: throw Failure.other(status)
-        }
     }
 }

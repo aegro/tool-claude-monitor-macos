@@ -139,57 +139,21 @@ final class Monitor: ObservableObject {
         return fresh
     }
 
-    /// Fetches usage, renewing the OAuth token when it is about to expire (proactive) or when
-    /// the server rejects it (reactive). On a 401 the keychain is re-read before renewing: the
-    /// CLI may have rotated the credential since we cached it, and renewing from a retired
-    /// refresh token trips the server's reuse detection. Renewal happens at most once per
-    /// call, so a bad refresh token surfaces as a normal error instead of a loop.
-    ///
-    /// The proactive renewal above is best-effort (`try?`): if it fails partway — the exchange
-    /// succeeded server-side (rotating the refresh token) but our local write or response
-    /// handling then failed — `current` stays on the old, now-retired refresh token. Retrying
-    /// blindly on the 401 below would resubmit that retired token and trip reuse detection for
-    /// real. So the reactive path only retries when the keychain reread shows the refresh token
-    /// actually changed; otherwise it surfaces the original renewal failure instead of guessing.
+    /// The Monitor is a read-only observer of the credential. Claude Code owns the token and
+    /// keeps it fresh, so we never refresh here: two independent clients rotating the same
+    /// refresh token trip Anthropic's reuse detection and invalidate the whole token family —
+    /// which would break login for the CLI too and leave the Keychain prompting in a loop. On a
+    /// 401 we re-read the keychain once (the CLI may have rotated the token since we cached it)
+    /// and retry; if it is still rejected we surface the error and let the next poll try again
+    /// after the CLI has renewed.
     private func fetchUsage(creds: Keychain.Credentials) async throws -> UsageSnapshot {
-        var current = creds
-        var attemptedRefreshToken: String?
-        var renewalError: Error?
-
-        if current.expiresSoon, current.refreshToken != nil {
-            attemptedRefreshToken = current.refreshToken
-            do {
-                current = try await renew(current)
-            } catch {
-                renewalError = error
-            }
-        }
-
         do {
-            return try await UsageAPI.fetch(token: current.accessToken).0
+            return try await UsageAPI.fetch(token: creds.accessToken).0
         } catch UsageError.unauthorized {
             let fresh = try credentials(bypassingCache: true)
-            if fresh.accessToken != current.accessToken {
-                return try await UsageAPI.fetch(token: fresh.accessToken).0
-            }
-            if let renewalError, fresh.refreshToken == attemptedRefreshToken {
-                throw renewalError
-            }
-            let renewed = try await renew(fresh)
-            return try await UsageAPI.fetch(token: renewed.accessToken).0
+            guard fresh.accessToken != creds.accessToken else { throw UsageError.unauthorized }
+            return try await UsageAPI.fetch(token: fresh.accessToken).0
         }
-    }
-
-    /// Renews via the refresh token, persists through Keychain.update, and keeps the cache
-    /// coherent so the next poll neither re-reads the keychain nor renews from stale state.
-    private func renew(_ creds: Keychain.Credentials) async throws -> Keychain.Credentials {
-        let renewed = try await OAuthRefresh.renewAndStore(using: creds)
-        var next = creds
-        next.accessToken = renewed.accessToken
-        next.refreshToken = renewed.refreshToken ?? creds.refreshToken
-        next.expiresAt = renewed.expiresAt
-        cachedCreds = next
-        return next
     }
 
     private func record(_ snap: UsageSnapshot) {

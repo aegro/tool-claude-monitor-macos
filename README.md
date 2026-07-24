@@ -90,8 +90,9 @@ consulta ao servidor.
 
 O app distribuído é assinado com um **Developer ID Application** da conta Apple Developer da
 Aegro e **notarizado** pela Apple — é isso que faz o "Sempre Permitir" grudar para qualquer
-usuário. A assinatura acontece **só no CI**; a chave privada nunca sai dos secrets do repo.
-Publicar é empurrar uma tag `v*`:
+usuário. O release **oficial** roda **só no CI**; a chave privada nunca sai dos secrets do
+repo — é o CI quem faz a assinatura que todo usuário final recebe. Publicar é empurrar uma
+tag `v*`:
 
 ```sh
 git tag v1.2.0
@@ -112,9 +113,12 @@ Secrets do repositório (**Settings → Secrets and variables → Actions**), co
 | `APPLE_TEAM_ID` | o Team ID (10 caracteres) da conta Apple Developer |
 | `APPLE_APP_SPECIFIC_PASSWORD` | uma [app-specific password](https://support.apple.com/102654) da Apple ID, para o `notarytool` |
 
-Para rodar fora do CI, o [`scripts/release.sh`](scripts/release.sh) aceita os mesmos valores por
-variável de ambiente (`SIGN_IDENTITY`, `AC_APPLE_ID`, `AC_TEAM_ID`, `AC_PASSWORD`) com o
-certificado já no seu keychain.
+O [`scripts/release.sh`](scripts/release.sh) é o mesmo script que o CI roda — ele aceita os
+mesmos valores por variável de ambiente (`SIGN_IDENTITY`, `AC_APPLE_ID`, `AC_TEAM_ID`,
+`AC_PASSWORD`) e pode ser executado localmente com o certificado já no seu keychain, mas isso
+é para depurar o processo de assinatura/notarização — **não é o caminho de release oficial**.
+O artefato que os usuários recebem é sempre o que sai do CI, assinado com a chave que só existe
+nos secrets do repositório.
 
 ## Renovação automática do token
 

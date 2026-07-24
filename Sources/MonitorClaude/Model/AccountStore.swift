@@ -22,6 +22,10 @@ final class AccountStore: ObservableObject {
     @Published private(set) var records: [String: AccountRecord] = [:]
     private let url: URL
     private var dirty = false
+    /// Serializes `flush()`'s writes so completion order matches call order — two independent
+    /// `Task.detached` writers have no relative ordering guarantee, and the one holding the
+    /// older snapshot finishing last would silently revert accounts.json to stale data.
+    private let writeQueue = DispatchQueue(label: "farol.accounts.write", qos: .utility)
 
     init() {
         let dir = FileManager.default
@@ -55,7 +59,7 @@ final class AccountStore: ObservableObject {
         dirty = false
         let snapshot = records
         let target = url
-        Task.detached(priority: .utility) {
+        writeQueue.async {
             let enc = JSONEncoder()
             enc.dateEncodingStrategy = .iso8601
             if let data = try? enc.encode(snapshot) {

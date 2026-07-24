@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Combine
 
 /// Everything the panel renders, refreshed on three independent cadences:
 /// processes fast (they change constantly), the ledger medium, the API slow (it is
@@ -16,6 +17,11 @@ final class Monitor: ObservableObject {
     @Published private(set) var usageError: String?
     @Published private(set) var loadingUsage = false
     @Published private(set) var ledger = LedgerSnapshot()
+
+    /// The account Claude Code has active right now (from ~/.claude.json). Drives the multi-account
+    /// view; nil means we could not read an identity, so the panel shows the single-account layout.
+    @Published private(set) var activeAccount: AccountIdentity?
+    let accounts = AccountStore()
 
     @Published var panelOpen = false { didSet { retime() } }
 
@@ -33,11 +39,21 @@ final class Monitor: ObservableObject {
     private var lastLedgerScan: Date?
     private var sampling = false
     private var cachedCreds: Keychain.Credentials?
+    private var lastAccountUuid: String?
+    private var cancellables: Set<AnyCancellable> = []
 
     private var usageInterval: TimeInterval { Settings.shared.usageIntervalSeconds }
     private let ledgerInterval: TimeInterval = 20
 
     init() {
+        // AccountStore is a nested ObservableObject; SwiftUI does not observe it through Monitor
+        // automatically. Forward its change notifications so the panel re-renders when an
+        // account's cached usage updates, instead of relying on some other @Published property
+        // happening to change in the same turn.
+        accounts.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
         retime()
         tickFast()
         Task {
@@ -118,15 +134,51 @@ final class Monitor: ObservableObject {
         defer { loadingUsage = false }
         lastUsageFetch = Date()
 
+        // Read the active identity first: if Claude Code switched accounts since our last poll
+        // — including a *logout*, where the identity goes to nil — the token we cached and the
+        // usage/error on screen all belong to the old account. Drop the cached token so we
+        // re-read the keychain (and correctly surface `.noAccountToken` after a logout), and
+        // clear the stale usage so the new account starts from a clean "loading" state instead
+        // of showing the previous account's numbers under the new account's name.
+        let identity = ClaudeConfig.activeAccount()
+        if identity?.uuid != lastAccountUuid {
+            cachedCreds = nil
+            usage = nil
+            usageError = nil
+            lastAccountUuid = identity?.uuid
+        }
+        activeAccount = identity
+
         do {
             let creds = try credentials()
             let snap = try await fetchUsage(creds: creds)
             usage = snap
             usageError = nil
             record(snap)
+            if let id = identity {
+                accounts.record(uuid: id.uuid, label: id.label,
+                                plan: creds.subscriptionType ?? id.planFallback,
+                                snapshot: snap, at: snap.fetchedAt)
+            }
         } catch {
             usageError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// Accounts other than the active one, most-recently-seen first — rendered as the collapsible
+    /// strips beneath the active account. Empty until a second account has been used at least once,
+    /// and empty while the active identity is unknown (we cannot say which cached account is the
+    /// "other" one, so we fall back to the single-account layout rather than guessing).
+    var otherAccounts: [AccountRecord] {
+        guard let active = activeAccount else { return [] }
+        return accounts.others(activeUuid: active.uuid)
+    }
+
+    /// Plan badge for the active account: the token's own subscriptionType (most accurate, stored
+    /// on the last record) falling back to the org type from ~/.claude.json.
+    var activePlan: String? {
+        guard let id = activeAccount else { return nil }
+        return accounts.records[id.uuid]?.plan ?? id.planFallback
     }
 
     /// Cached keychain read. Every SecItemCopyMatching is a potential user-facing prompt (one

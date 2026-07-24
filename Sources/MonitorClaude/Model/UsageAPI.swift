@@ -1,7 +1,7 @@
 import Foundation
 
 /// One rate-limit window as the server reports it.
-struct LimitWindow: Equatable, Identifiable {
+struct LimitWindow: Equatable, Identifiable, Codable {
     var key: String              // session | weekly_all | weekly_scoped:<model>
     var title: String
     var utilization: Double      // 0...100, as the server sends it
@@ -40,7 +40,7 @@ struct LimitWindow: Equatable, Identifiable {
     var isCritical: Bool { utilization >= 90 || severity == "critical" }
 }
 
-struct UsageSnapshot: Equatable {
+struct UsageSnapshot: Equatable, Codable {
     var windows: [LimitWindow] = []
     var extraUsageEnabled = false
     var extraUsageUtilization: Double?

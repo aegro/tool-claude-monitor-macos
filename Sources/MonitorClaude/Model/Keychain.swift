@@ -27,18 +27,28 @@ enum Keychain {
         }
     }
 
-    enum Failure: Error, LocalizedError {
+    /// Each case is a different thing for the user to *do*, which is the only reason to keep
+    /// them apart: "não logado" and "credencial corrompida" look identical from here but send
+    /// you looking in completely different places.
+    enum Failure: Error, LocalizedError, Equatable {
         case notFound
+        case noAccountToken
         case denied
         case malformed
         case other(OSStatus)
 
         var errorDescription: String? {
             switch self {
-            case .notFound: return "Login do terminal não encontrado no Keychain."
-            case .denied: return "Acesso ao Keychain negado."
-            case .malformed: return "Credencial do Keychain em formato inesperado."
-            case .other(let s): return "Keychain falhou (\(s))."
+            case .notFound:
+                return "Claude Code não está logado neste Mac — rode `claude /login` no terminal."
+            case .noAccountToken:
+                return "O Keychain só tem tokens de MCP, sem sessão de conta — rode `claude /login` no terminal."
+            case .denied:
+                return "Acesso ao Keychain negado — clique “Sempre Permitir” quando o macOS perguntar."
+            case .malformed:
+                return "Credencial do Keychain em formato inesperado."
+            case .other(let s):
+                return "Keychain falhou (\(s))."
             }
         }
     }
@@ -74,11 +84,24 @@ enum Keychain {
         return root
     }
 
-    private static func parse(_ root: [String: Any]) throws -> Credentials {
-        // Claude Code nests under `claudeAiOauth`, but tolerate a flat shape too.
-        let node = (root["claudeAiOauth"] as? [String: Any]) ?? root
+    /// The item holds the account session under `claudeAiOauth` and, side by side with it, the
+    /// per-MCP tokens under `mcpOAuth`. Those are independent: log out (or have the item
+    /// rewritten by something else) and `mcpOAuth` can be the only thing left. An item in that
+    /// state is perfectly well-formed — it just has nobody logged in — so it must not be
+    /// reported as corrupt, which sends you hunting for a broken file that does not exist.
+    static func parse(_ root: [String: Any]) throws -> Credentials {
+        let node: [String: Any]
+        if let nested = root["claudeAiOauth"] {
+            guard let dict = nested as? [String: Any] else { throw Failure.malformed }
+            node = dict
+        } else {
+            // Older shapes kept the token flat. This also covers the mcpOAuth-only item, where
+            // the lookup below simply finds no account token.
+            node = root
+        }
+
         guard let token = node["accessToken"] as? String, !token.isEmpty else {
-            throw Failure.malformed
+            throw Failure.noAccountToken
         }
 
         var expires: Date?

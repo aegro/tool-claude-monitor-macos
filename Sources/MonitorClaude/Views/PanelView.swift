@@ -6,6 +6,8 @@ struct PanelView: View {
     @State private var expanded: Set<pid_t> = []
     @State private var showLedgerNote = false
     @State private var showSettings = false
+    /// Which inactive account is open, if any. nil = the active account is shown in full (default).
+    @State private var expandedAccount: String?
 
     /// MenuBarExtra sizes its window to the content's ideal height, and a ScrollView has none.
     /// The machine strip and footer are fixed chrome, so the scroll area gets whatever the
@@ -25,6 +27,9 @@ struct PanelView: View {
         }
         .onAppear { monitor.panelOpen = true }
         .onDisappear { monitor.panelOpen = false }
+        // A switch makes the newly-active account the one shown in full; don't leave a
+        // previously-opened inactive account expanded across the change.
+        .onChange(of: monitor.activeAccount?.uuid) { _, _ in expandedAccount = nil }
     }
 
     private var panel: some View {
@@ -112,25 +117,7 @@ struct PanelView: View {
                         trailing: monitor.usage.map { "há \(Fmt.duration(Date().timeIntervalSince($0.fetchedAt)))" })
 
             if let usage = monitor.usage {
-                if let session = usage.session {
-                    LimitGauge(window: session, burn: monitor.sessionBurn)
-                    trailOrHint(session)
-                    outlookLine
-                }
-
-                ForEach(usage.windows.filter { !$0.isSession }) { w in
-                    LimitGauge(window: w, dense: true)
-                }
-
-                if usage.extraUsageEnabled, let u = usage.extraUsageUtilization {
-                    HStack(spacing: 6) {
-                        Image(systemName: "creditcard").font(.system(size: 9))
-                        Text("Crédito extra").font(Type.labelTiny)
-                        Spacer()
-                        Text(Fmt.pct(u)).font(Type.value)
-                    }
-                    .foregroundStyle(.secondary)
-                }
+                accountLimits(usage)
             } else if let err = monitor.usageError {
                 errorCard(err)
             } else {
@@ -139,6 +126,99 @@ struct PanelView: View {
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    /// One account → exactly today's layout. Two or more → the active account keeps its full live
+    /// detail with a lead row, and the others sit below as clickable strips; opening one swaps it
+    /// into a last-seen detail and collapses the active account to a strip. One open at a time.
+    @ViewBuilder
+    private func accountLimits(_ usage: UsageSnapshot) -> some View {
+        let others = monitor.otherAccounts
+        if others.isEmpty {
+            activeDetail(usage)
+            if monitor.activeAccount != nil {
+                Text("Outras contas aparecem aqui quando você as usa no `claude`.")
+                    .font(Type.labelTiny)
+                    .foregroundStyle(.tertiary)
+            }
+        } else {
+            let activeExpanded = expandedAccount == nil
+                || !others.contains { $0.uuid == expandedAccount }
+
+            if activeExpanded {
+                if let active = monitor.activeAccount {
+                    AccountLead(label: active.label, plan: monitor.activePlan, marker: .live)
+                }
+                activeDetail(usage)
+            } else if let active = monitor.activeAccount {
+                AccountStrip(label: active.label, plan: monitor.activePlan,
+                             summary: accountSummary(usage), live: true, seenAt: nil) {
+                    withAnimation(.easeOut(duration: 0.18)) { expandedAccount = nil }
+                }
+            }
+
+            ForEach(others) { rec in
+                if expandedAccount == rec.uuid {
+                    AccountLead(label: rec.label, plan: rec.plan, marker: .lastSeen(rec.lastSeen))
+                    staleDetail(rec)
+                    pill(icon: "arrow.clockwise",
+                         text: "abra a \(rec.label) no `claude` pra atualizar ao vivo",
+                         tone: .secondary)
+                } else {
+                    AccountStrip(label: rec.label, plan: rec.plan,
+                                 summary: accountSummary(rec.snapshot), live: false,
+                                 seenAt: rec.lastSeen) {
+                        withAnimation(.easeOut(duration: 0.18)) { expandedAccount = rec.uuid }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The active account's full, live detail — session gauge with the rate graph and outlook,
+    /// every weekly window, and any extra credit. Identical to what the panel showed before
+    /// multi-account existed.
+    @ViewBuilder
+    private func activeDetail(_ usage: UsageSnapshot) -> some View {
+        if let session = usage.session {
+            LimitGauge(window: session, burn: monitor.sessionBurn)
+            trailOrHint(session)
+            outlookLine
+        }
+
+        ForEach(usage.windows.filter { !$0.isSession }) { w in
+            LimitGauge(window: w, dense: true)
+        }
+
+        if usage.extraUsageEnabled, let u = usage.extraUsageUtilization {
+            extraCredit(u)
+        }
+    }
+
+    /// An inactive account rendered from its last-seen snapshot: plain bars, no live rate graph.
+    @ViewBuilder
+    private func staleDetail(_ rec: AccountRecord) -> some View {
+        let snap = rec.snapshot
+        if let session = snap.session {
+            StaleLimitRow(window: session, seenAt: rec.lastSeen,
+                          note: "sem gráfico de ritmo ao vivo")
+        }
+        ForEach(snap.windows.filter { !$0.isSession }) { w in
+            StaleLimitRow(window: w, seenAt: rec.lastSeen)
+        }
+        if snap.extraUsageEnabled, let u = snap.extraUsageUtilization {
+            extraCredit(u)
+        }
+    }
+
+    private func extraCredit(_ u: Double) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "creditcard").font(.system(size: 9))
+            Text("Crédito extra").font(Type.labelTiny)
+            Spacer()
+            Text(Fmt.pct(u)).font(Type.value)
+        }
+        .foregroundStyle(.secondary)
     }
 
     @ViewBuilder

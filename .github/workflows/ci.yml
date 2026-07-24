@@ -1,0 +1,31 @@
+name: CI
+
+# Compila e roda a suíte a cada push/PR. macos-15 traz Xcode 16 / Swift 6.x — o
+# Package.swift exige swift-tools 6.0 (macos-14 tem Swift 5.10 e não atende), e com
+# Xcode presente o swift-testing resolve nativo, sem o workaround de framework solto
+# que o scripts/test.sh aplica quando só há Command Line Tools.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Test
+        run: swift test

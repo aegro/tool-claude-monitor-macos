@@ -83,7 +83,7 @@ do item.
 
 Na prática: o app relê o Keychain quando o token está perto de vencer (o CLI já gravou um novo
 lá) e usa o token fresco. Se ele estiver vencido e você não roda o `claude` há muito tempo, o
-painel mostra "token recusado" até você abrir o terminal uma vez — é o CLI que mantém a
+painel mostra "token recusado" até você rodar `claude` no terminal uma vez — é o CLI que mantém a
 credencial viva, não o monitor.
 
 ## Por que não confiar nos tokens locais

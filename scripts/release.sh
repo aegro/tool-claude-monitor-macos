@@ -70,7 +70,9 @@ echo "· grampeando o ticket"
 xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 # Veredito do próprio Gatekeeper — deve dizer "accepted / source=Notarized Developer ID".
-spctl --assess --type execute --verbose=4 "$APP" || true
+# Sem "|| true": uma rejeição aqui tem que derrubar o release antes de empacotar/publicar,
+# senão o CI distribuiria um artefato que o próprio Gatekeeper recusa.
+spctl --assess --type execute --verbose=4 "$APP"
 
 mkdir -p "$OUTPUT_DIR"
 OUT_ZIP="$OUTPUT_DIR/Monitor-Claude-$VERSION.zip"

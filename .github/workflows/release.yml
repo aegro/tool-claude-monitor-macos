@@ -1,0 +1,66 @@
+name: Release
+
+# Dispara ao empurrar uma tag v* (ex.: git tag v1.2.0 && git push origin v1.2.0):
+# compila, assina com Developer ID, notariza, grampeia e publica o .app notarizado
+# como GitHub Release. É a assinatura única e centralizada que faz o "Sempre Permitir"
+# grudar para qualquer usuário — a chave privada nunca sai dos secrets do repo.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # criar o Release e subir os assets
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Importar certificado Developer ID
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERT_PATH="$RUNNER_TEMP/developer_id.p12"
+
+          echo "$CERT_P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          # Keychain temporária e efêmera, destruída com o runner.
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          # Deixa o codesign usar a chave sem prompt de UI (impossível em CI).
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # A keychain temporária é a única que o codesign precisa enxergar (a notarização
+          # usa credenciais passadas por flag, não o keychain). Runner é efêmero.
+          security list-keychains -d user -s "$KEYCHAIN"
+          rm -f "$CERT_PATH"
+
+          # Resolve o nome exato da identidade e passa pros próximos steps.
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk -F'"' '/Developer ID Application/{print $2; exit}')"
+          test -n "$IDENTITY" || { echo "nenhuma identidade 'Developer ID Application' no certificado importado"; exit 1; }
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "identidade: $IDENTITY"
+
+      - name: Compilar, assinar e notarizar
+        env:
+          VERSION: ${{ github.ref_name }} # a tag empurrada, ex.: v1.2.0 (release.sh tira o "v")
+          AC_APPLE_ID: ${{ secrets.APPLE_ID }}
+          AC_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          AC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: ./scripts/release.sh
+
+      - name: Publicar GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          fail_on_unmatched_files: true
+          generate_release_notes: true

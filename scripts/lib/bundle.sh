@@ -14,15 +14,15 @@ assemble_bundle() {
   local bin="$1" app="$2" version="$3"
   # $version cai direto nas strings de CFBundleShortVersionString/CFBundleVersion do plist
   # abaixo, sem escaping — um valor com caractere reservado de XML (&, <, >, aspas) geraria
-  # um Info.plist inválido e o app sequer abriria. release.sh só chega aqui com VERSION
-  # vindo de tag git (com "v" removido) ou do literal "0.0.0-dev"; restringe ao alfabeto
-  # seguro pra XML e pro grampeamento (dígitos, ponto, hífen) em vez de confiar nisso.
-  case "$version" in
-    *[!0-9A-Za-z._-]*|"")
-      echo "assemble_bundle: VERSION inválida para o plist: '$version'" >&2
-      return 1
-      ;;
-  esac
+  # um Info.plist inválido e o app sequer abriria. Além disso a Apple exige que ambas as
+  # chaves sejam só dígitos e pontos, com no máximo 3 componentes (CFBundleShortVersionString:
+  # até 3 inteiros separados por ponto; CFBundleVersion: 1 a 3) — um valor como "0.0.0-dev"
+  # é seguro pra XML mas inválido pro plist e falha validação/grampeamento da Apple. Restringe
+  # à gramática numérica exigida em vez de só ao alfabeto seguro pra XML.
+  if [[ -z "$version" || ! "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+    echo "assemble_bundle: VERSION inválida para o plist (precisa ser numérica, até 3 componentes separados por ponto — ex.: 1, 1.2 ou 1.2.3): '$version'" >&2
+    return 1
+  fi
   rm -rf "$app"
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
   cp "$bin" "$app/Contents/MacOS/MonitorClaude"

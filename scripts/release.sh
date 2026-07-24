@@ -11,7 +11,7 @@
 #   AC_TEAM_ID      Team ID (10 chars) da conta Apple Developer
 #   AC_PASSWORD     app-specific password dessa Apple ID
 # Env opcional:
-#   VERSION         default: a tag git (v1.2.3 -> 1.2.3); fora de tag, "0.0.0-dev"
+#   VERSION         default: a tag git (v1.2.3 -> 1.2.3); fora de tag, "0.0.0"
 #   OUTPUT_DIR      onde o zip final cai (default: dist/)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -23,8 +23,10 @@ cd "$(dirname "$0")/.."
 
 # Versão: VERSION do ambiente (o CI passa a tag via github.ref_name); senão a tag git
 # do commit atual; fora de tag, um placeholder de dev. Tira o prefixo "v" em qualquer caso.
+# Placeholder precisa ser numérico puro (X.Y.Z) — CFBundleShortVersionString/CFBundleVersion
+# da Apple não aceitam sufixo tipo "-dev" (ver assemble_bundle em scripts/lib/bundle.sh).
 if [ -z "${VERSION:-}" ]; then
-  VERSION="$(git describe --tags --exact-match 2>/dev/null || echo 0.0.0-dev)"
+  VERSION="$(git describe --tags --exact-match 2>/dev/null || echo 0.0.0)"
 fi
 VERSION="${VERSION#v}"
 OUTPUT_DIR="${OUTPUT_DIR:-dist}"

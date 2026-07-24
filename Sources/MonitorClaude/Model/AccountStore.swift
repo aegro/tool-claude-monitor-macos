@@ -5,6 +5,7 @@ import Foundation
 /// account nobody is driving does not burn quota, and "last-seen when I used it" is as good as
 /// live for the one that is parked.
 struct AccountRecord: Codable, Equatable, Identifiable {
+    /// `AccountIdentity.key`: the account *and* organization pair, not the account alone.
     var uuid: String
     var label: String
     var plan: String?
@@ -72,6 +73,12 @@ final class AccountStore: ObservableObject {
         guard let data = try? Data(contentsOf: url) else { return }
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
-        records = (try? dec.decode([String: AccountRecord].self, from: data)) ?? [:]
+        let stored = (try? dec.decode([String: AccountRecord].self, from: data)) ?? [:]
+
+        // Entries written before the key became account+organization are dropped rather than
+        // migrated: a bare account uuid cannot say which organization it was recorded under, so
+        // keeping it would strand a row that never refreshes and can never be matched again.
+        // The account reappears, correctly keyed, the next time it is used.
+        records = stored.filter { $0.key.contains(":") }
     }
 }

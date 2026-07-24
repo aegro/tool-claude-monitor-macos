@@ -39,7 +39,7 @@ final class Monitor: ObservableObject {
     private var lastLedgerScan: Date?
     private var sampling = false
     private var cachedCreds: Keychain.Credentials?
-    private var lastAccountUuid: String?
+    private var lastAccountKey: String?
     private var cancellables: Set<AnyCancellable> = []
 
     private var usageInterval: TimeInterval { Settings.shared.usageIntervalSeconds }
@@ -141,11 +141,11 @@ final class Monitor: ObservableObject {
         // clear the stale usage so the new account starts from a clean "loading" state instead
         // of showing the previous account's numbers under the new account's name.
         let identity = ClaudeConfig.activeAccount()
-        if identity?.uuid != lastAccountUuid {
+        if identity?.key != lastAccountKey {
             cachedCreds = nil
             usage = nil
             usageError = nil
-            lastAccountUuid = identity?.uuid
+            lastAccountKey = identity?.key
         }
         activeAccount = identity
 
@@ -156,7 +156,7 @@ final class Monitor: ObservableObject {
             usageError = nil
             record(snap)
             if let id = identity {
-                accounts.record(uuid: id.uuid, label: id.label,
+                accounts.record(uuid: id.key, label: id.label,
                                 plan: creds.subscriptionType ?? id.planFallback,
                                 snapshot: snap, at: snap.fetchedAt)
             }
@@ -171,14 +171,14 @@ final class Monitor: ObservableObject {
     /// "other" one, so we fall back to the single-account layout rather than guessing).
     var otherAccounts: [AccountRecord] {
         guard let active = activeAccount else { return [] }
-        return accounts.others(activeUuid: active.uuid)
+        return accounts.others(activeUuid: active.key)
     }
 
     /// Plan badge for the active account: the token's own subscriptionType (most accurate, stored
     /// on the last record) falling back to the org type from ~/.claude.json.
     var activePlan: String? {
         guard let id = activeAccount else { return nil }
-        return accounts.records[id.uuid]?.plan ?? id.planFallback
+        return accounts.records[id.key]?.plan ?? id.planFallback
     }
 
     /// Cached keychain read. Every SecItemCopyMatching is a potential user-facing prompt (one

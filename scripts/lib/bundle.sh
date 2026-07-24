@@ -12,6 +12,17 @@ BUNDLE_ID="com.aegro.monitor-claude"
 # (Re)cria um .app NÃO assinado em <app_path>. Quem chama assina depois.
 assemble_bundle() {
   local bin="$1" app="$2" version="$3"
+  # $version cai direto nas strings de CFBundleShortVersionString/CFBundleVersion do plist
+  # abaixo, sem escaping — um valor com caractere reservado de XML (&, <, >, aspas) geraria
+  # um Info.plist inválido e o app sequer abriria. release.sh só chega aqui com VERSION
+  # vindo de tag git (com "v" removido) ou do literal "0.0.0-dev"; restringe ao alfabeto
+  # seguro pra XML e pro grampeamento (dígitos, ponto, hífen) em vez de confiar nisso.
+  case "$version" in
+    *[!0-9A-Za-z._-]*|"")
+      echo "assemble_bundle: VERSION inválida para o plist: '$version'" >&2
+      return 1
+      ;;
+  esac
   rm -rf "$app"
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
   cp "$bin" "$app/Contents/MacOS/MonitorClaude"

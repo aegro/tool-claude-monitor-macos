@@ -21,6 +21,8 @@ final class Monitor: ObservableObject {
     /// The account Claude Code has active right now (from ~/.claude.json). Drives the multi-account
     /// view; nil means we could not read an identity, so the panel shows the single-account layout.
     @Published private(set) var activeAccount: AccountIdentity?
+    /// Organizations read from the desktop app's own usage history, refreshed on the slow tick.
+    @Published private(set) var desktopOrgs: [DesktopOrgUsage] = []
     let accounts = AccountStore()
 
     @Published var panelOpen = false { didSet { retime() } }
@@ -140,6 +142,10 @@ final class Monitor: ObservableObject {
         // re-read the keychain (and correctly surface `.noAccountToken` after a logout), and
         // clear the stale usage so the new account starts from a clean "loading" state instead
         // of showing the previous account's numbers under the new account's name.
+        // Two small JSON files off the same cadence as the API poll, so a desktop-side switch
+        // shows up on the next refresh instead of only at relaunch.
+        desktopOrgs = ClaudeDesktop.organizationUsage()
+
         let identity = ClaudeConfig.activeAccount()
         if identity?.key != lastAccountKey {
             cachedCreds = nil
@@ -179,6 +185,15 @@ final class Monitor: ObservableObject {
     var activePlan: String? {
         guard let id = activeAccount else { return nil }
         return accounts.records[id.key]?.plan ?? id.planFallback
+    }
+
+    /// Organizations the desktop app has used that the terminal login does not cover. They render
+    /// as a plain strip and never expand: the desktop app records only the two headline
+    /// percentages, so there is no reset, no pace and no per-model window to open into.
+    var desktopOnlyOrgs: [DesktopOrgUsage] {
+        var covered = Set(accounts.records.keys.compactMap { $0.split(separator: ":").last.map(String.init) })
+        if let org = activeAccount?.organizationUuid { covered.insert(org) }
+        return desktopOrgs.filter { !covered.contains($0.organizationUuid) }
     }
 
     /// Cached keychain read. Every SecItemCopyMatching is a potential user-facing prompt (one

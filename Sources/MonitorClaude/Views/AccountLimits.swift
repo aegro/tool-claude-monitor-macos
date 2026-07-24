@@ -76,20 +76,32 @@ struct LiveDot: View {
     }
 }
 
-/// A collapsed account: one clickable strip. The active account gets a live dot; an inactive one
-/// gets the age of its last-seen data. Clicking swaps which account is expanded.
+/// A collapsed account: one strip. The active account gets a live dot; an inactive one gets the
+/// age of its last-seen data. Clicking swaps which account is expanded — except for a strip with
+/// no `onTap`, which is all there is to show (see `DesktopOrgStrip`).
 struct AccountStrip: View {
     let label: String
     var plan: String?
     let summary: String
     var live: Bool
     var seenAt: Date?
-    let onTap: () -> Void
+    var trailingIcon = "chevron.right"
+    var onTap: (() -> Void)?
 
     @State private var hovering = false
 
     var body: some View {
-        Button(action: onTap) {
+        if let onTap {
+            Button(action: onTap) { strip }
+                .buttonStyle(.plain)
+                .onHover { hovering = $0 }
+        } else {
+            strip
+        }
+    }
+
+    private var strip: some View {
+        Group {
             HStack(spacing: 8) {
                 AccountInitial(label: label)
                 Text(label).font(Type.label)
@@ -102,7 +114,7 @@ struct AccountStrip: View {
                     Text("há \(Fmt.duration(Date().timeIntervalSince(seenAt)))")
                         .font(Type.labelTiny).foregroundStyle(.tertiary)
                 }
-                Image(systemName: "chevron.right")
+                Image(systemName: trailingIcon)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
@@ -113,8 +125,30 @@ struct AccountStrip: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Ink.hairline, lineWidth: 1))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+    }
+}
+
+/// An organization the Monitor only knows about through the desktop app. It cannot expand: the
+/// desktop app records the two headline percentages and nothing else, so the strip already shows
+/// everything there is. The window icon says where the number came from, and the tooltip says why
+/// it stops there.
+struct DesktopOrgStrip: View {
+    let org: DesktopOrgUsage
+
+    var body: some View {
+        AccountStrip(
+            label: org.label,
+            plan: org.plan,
+            summary: "5h \(Fmt.pct(org.fiveHour)) · sem \(Fmt.pct(org.weekly))",
+            live: false,
+            seenAt: org.seenAt,
+            trailingIcon: "macwindow"
+        )
+        .help("""
+              Organização vista no app do Claude, não no terminal. \
+              O app registra só estas duas porcentagens, então não há detalhe para abrir. \
+              Entre nela pelo `claude` no terminal para acompanhá-la ao vivo.
+              """)
     }
 }
 

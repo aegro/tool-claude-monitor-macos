@@ -134,7 +134,8 @@ struct PanelView: View {
     @ViewBuilder
     private func accountLimits(_ usage: UsageSnapshot) -> some View {
         let others = monitor.otherAccounts
-        if others.isEmpty {
+        let desktop = monitor.desktopOnlyOrgs
+        if others.isEmpty && desktop.isEmpty {
             activeDetail(usage)
             if monitor.activeAccount != nil {
                 Text("Outras contas aparecem aqui quando você as usa no `claude`.")
@@ -172,6 +173,10 @@ struct PanelView: View {
                     }
                 }
             }
+
+            // Last: organizations we only know from the desktop app. They come after the terminal
+            // ones because they carry less, and they never expand.
+            ForEach(desktop) { DesktopOrgStrip(org: $0) }
         }
     }
 

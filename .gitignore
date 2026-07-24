@@ -5,3 +5,4 @@ DerivedData/
 *.png
 *.gif
 .DS_Store
+dist/

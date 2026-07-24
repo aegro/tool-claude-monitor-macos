@@ -33,28 +33,10 @@ trap 'rm -rf "$STAGE"' EXIT
 STAGED_APP="$STAGE/$(basename "$APP")"
 
 echo "· montando $APP"
-mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
-cp "$BIN" "$STAGED_APP/Contents/MacOS/MonitorClaude"
-
-cat > "$STAGED_APP/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleName</key><string>Monitor Claude</string>
-  <key>CFBundleDisplayName</key><string>Monitor Claude</string>
-  <key>CFBundleIdentifier</key><string>com.aegro.monitor-claude</string>
-  <key>CFBundleExecutable</key><string>MonitorClaude</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
-  <key>LSUIElement</key><true/>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>NSHumanReadableCopyright</key><string>Aegro · Monitor Claude</string>
-</dict>
-</plist>
-PLIST
+# Layout do bundle + Info.plist ficam em scripts/lib/bundle.sh — mesma fonte que o
+# release.sh usa, pra dev e release não divergirem no bundle id / designated requirement.
+source scripts/lib/bundle.sh
+assemble_bundle "$BIN" "$STAGED_APP" "$VERSION"
 
 echo "· assinando ($IDENTITY)"
 if ! codesign --force --sign "$IDENTITY" "$STAGED_APP"; then

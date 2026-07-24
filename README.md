@@ -34,7 +34,27 @@ Réplica das duas funções do Vorssaint (estilo Amphetamine), no topo do painel
   mesmo escopo do Vorssaint; nenhum outro comando fica liberado. Para remover:
   `sudo rm /etc/sudoers.d/monitor-claude-clamshell`.
 
-## Instalar (qualquer Mac)
+## Instalar
+
+### Usuários — baixe o app pronto (recomendado)
+
+A Aegro publica o app **assinado e notarizado** a cada release. Não precisa clonar, compilar
+nem criar certificado:
+
+1. Baixe o `.zip` mais recente em **[Releases](https://github.com/aegro/tool-claude-monitor-macos/releases)**.
+2. Descompacte e arraste **Monitor Claude.app** para `/Applications`.
+3. Abra: `open -a "Monitor Claude"`.
+
+Na primeira vez, o macOS pergunta **uma única vez** se o app pode ler a entrada
+`Claude Code-credentials` do Keychain — é o token de login do seu terminal, lido em tempo de
+execução. Digite a senha do Keychain e clique **Sempre Permitir**. Como o app é assinado com o
+Developer ID da Aegro (Team ID estável), essa permissão gruda de vez: **nunca mais pergunta**,
+nem depois de atualizar. Esse primeiro prompt é inevitável — o item é criado pelo Claude Code,
+não pelo Monitor, então o app não tem como se pré-autorizar.
+
+Para atualizar: baixe o `.zip` do release novo e substitua o app em `/Applications`.
+
+### Desenvolvimento — compilar do fonte
 
 Pré-requisito único: as **ferramentas de linha de comando do Xcode** (trazem o Swift). Se você
 nunca instalou:
@@ -43,12 +63,11 @@ nunca instalou:
 xcode-select --install
 ```
 
-Depois, **uma vez só por usuário** (a identidade fica no login Keychain, não na máquina), crie a identidade local que assina o app — é ela que faz o
-macOS lembrar do "Sempre Permitir" entre builds (assinatura ad-hoc não tem identidade durável,
-então o prompt do Keychain voltaria a cada build e, em versões recentes do macOS, a cada
-leitura): **Acesso às Chaves** → menu **Assistente de Certificado → Criar um Certificado…** →
-nome `Aegro Local Dev` · tipo de identidade **Raiz autoassinada** · tipo de certificado
-**Assinatura de código**. Se quiser outro nome, passe `IDENTITY="…" ./scripts/build.sh`.
+O `build.sh` assina com uma identidade **local**. **Uma vez só por usuário** (a identidade fica
+no login Keychain, não na máquina), crie-a no **Acesso às Chaves** → menu **Assistente de
+Certificado → Criar um Certificado…** → nome `Aegro Local Dev` · tipo de identidade **Raiz
+autoassinada** · tipo de certificado **Assinatura de código**. Outro nome? Passe
+`IDENTITY="…" ./scripts/build.sh`.
 
 ```sh
 git clone git@github.com:aegro/tool-claude-monitor-macos.git
@@ -57,17 +76,49 @@ cd tool-claude-monitor-macos
 open -a "Monitor Claude"
 ```
 
-Dois prompts únicos na primeira vez, ambos com **Sempre Permitir**: o `codesign` pede para usar
-a chave privada do certificado ao assinar, e, quando o app lê os limites, o macOS pergunta se
-ele pode acessar a entrada `Claude Code-credentials` do Keychain (digite a senha do Keychain
-antes de clicar) — é o mesmo token de login do seu terminal, lido em tempo de execução. Como a
-identidade de assinatura é estável, essas permissões sobrevivem a rebuilds.
-
-Para atualizar: `git pull && ./scripts/build.sh`.
+No build de dev aparecem dois prompts únicos na primeira vez, ambos com **Sempre Permitir**: o
+`codesign` pede a chave privada do certificado ao assinar, e o macOS pergunta pelo acesso à
+entrada `Claude Code-credentials`. Diferente do release notarizado, a identidade autoassinada
+**não tem Team ID**, então o prompt do Keychain pode voltar de tempos em tempos (a cada
+relaunch) — é o preço de compilar localmente. Para atualizar: `git pull && ./scripts/build.sh`.
 
 O ícone aparece na barra de menu (um anel com a % da janela de 5h). Clique para abrir o painel;
 o botão **⚙ Configurações** ajusta altura do painel, o que a barra mostra e o intervalo de
 consulta ao servidor.
+
+## Publicar um release (mantenedores)
+
+O app distribuído é assinado com um **Developer ID Application** da conta Apple Developer da
+Aegro e **notarizado** pela Apple — é isso que faz o "Sempre Permitir" grudar para qualquer
+usuário. O release **oficial** roda **só no CI**; a chave privada nunca sai dos secrets do
+repo — é o CI quem faz a assinatura que todo usuário final recebe. Publicar é empurrar uma
+tag `v*`:
+
+```sh
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+O workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) compila, assina,
+notariza, grampeia e publica o `.app` como GitHub Release. A versão sai da tag (`v1.2.0` →
+`1.2.0`).
+
+Secrets do repositório (**Settings → Secrets and variables → Actions**), configurados uma vez:
+
+| Secret | O que é |
+|---|---|
+| `DEVELOPER_ID_CERT_P12_BASE64` | o certificado *Developer ID Application* exportado como `.p12` e passado por `base64` |
+| `DEVELOPER_ID_CERT_PASSWORD` | a senha definida ao exportar o `.p12` |
+| `APPLE_ID` | Apple ID (e-mail) da conta usada na notarização |
+| `APPLE_TEAM_ID` | o Team ID (10 caracteres) da conta Apple Developer |
+| `APPLE_APP_SPECIFIC_PASSWORD` | uma [app-specific password](https://support.apple.com/102654) da Apple ID, para o `notarytool` |
+
+O [`scripts/release.sh`](scripts/release.sh) é o mesmo script que o CI roda — ele aceita os
+mesmos valores por variável de ambiente (`SIGN_IDENTITY`, `AC_APPLE_ID`, `AC_TEAM_ID`,
+`AC_PASSWORD`) e pode ser executado localmente com o certificado já no seu keychain, mas isso
+é para depurar o processo de assinatura/notarização — **não é o caminho de release oficial**.
+O artefato que os usuários recebem é sempre o que sai do CI, assinado com a chave que só existe
+nos secrets do repositório.
 
 ## Leitura da credencial (somente leitura)
 

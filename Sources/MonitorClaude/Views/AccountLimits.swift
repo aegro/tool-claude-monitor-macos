@@ -89,30 +89,32 @@ struct AccountStrip: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            AccountInitial(label: label)
-            Text(label).font(Type.label)
-            if let plan { PlanBadge(plan: plan) }
-            Text(summary).font(Type.labelTiny).foregroundStyle(.secondary).lineLimit(1)
-            Spacer(minLength: 4)
-            if live {
-                LiveDot()
-            } else if let seenAt {
-                Text("há \(Fmt.duration(Date().timeIntervalSince(seenAt)))")
-                    .font(Type.labelTiny).foregroundStyle(.tertiary)
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                AccountInitial(label: label)
+                Text(label).font(Type.label)
+                if let plan { PlanBadge(plan: plan) }
+                Text(summary).font(Type.labelTiny).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 4)
+                if live {
+                    LiveDot()
+                } else if let seenAt {
+                    Text("há \(Fmt.duration(Date().timeIntervalSince(seenAt)))")
+                        .font(Type.labelTiny).foregroundStyle(.tertiary)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.tertiary)
             }
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.tertiary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 8)
+            .background(hovering ? Ink.track.opacity(0.6) : .clear,
+                        in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Ink.hairline, lineWidth: 1))
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
-        .background(hovering ? Ink.track.opacity(0.6) : .clear,
-                    in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Ink.hairline, lineWidth: 1))
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .onTapGesture(perform: onTap)
     }
 }
 

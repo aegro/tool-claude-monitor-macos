@@ -1,0 +1,34 @@
+name: gitleaks
+
+# Varredura de segredos em cada push/PR. O binário é pinado + verificado por
+# checksum (license-free, funciona em repo público e privado). Este repo tem
+# histórico limpo (auditado 2026-07-24), então roda `detect` no histórico
+# completo — falha o CI se qualquer segredo entrar.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # histórico completo pra varredura
+
+      - name: Instalar gitleaks (pinado + checksum)
+        run: |
+          set -euo pipefail
+          VER=8.30.1
+          SHA=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          curl -fsSL -o gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          echo "${SHA}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks
+
+      - name: Scan
+        run: ./gitleaks detect --source . --redact --no-banner --exit-code 1

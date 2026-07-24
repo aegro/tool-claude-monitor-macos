@@ -17,6 +17,11 @@ final class Monitor: ObservableObject {
     @Published private(set) var loadingUsage = false
     @Published private(set) var ledger = LedgerSnapshot()
 
+    /// The account Claude Code has active right now (from ~/.claude.json). Drives the multi-account
+    /// view; nil means we could not read an identity, so the panel shows the single-account layout.
+    @Published private(set) var activeAccount: AccountIdentity?
+    let accounts = AccountStore()
+
     @Published var panelOpen = false { didSet { retime() } }
 
     let history = UsageHistory()
@@ -33,6 +38,7 @@ final class Monitor: ObservableObject {
     private var lastLedgerScan: Date?
     private var sampling = false
     private var cachedCreds: Keychain.Credentials?
+    private var lastAccountUuid: String?
 
     private var usageInterval: TimeInterval { Settings.shared.usageIntervalSeconds }
     private let ledgerInterval: TimeInterval = 20
@@ -118,15 +124,35 @@ final class Monitor: ObservableObject {
         defer { loadingUsage = false }
         lastUsageFetch = Date()
 
+        // Read the active identity first: if Claude Code switched accounts since our last poll,
+        // the token we cached belongs to the *old* account, so drop it and re-read the keychain.
+        let identity = ClaudeConfig.activeAccount()
+        if let id = identity, id.uuid != lastAccountUuid {
+            cachedCreds = nil
+            lastAccountUuid = id.uuid
+        }
+        activeAccount = identity
+
         do {
             let creds = try credentials()
             let snap = try await fetchUsage(creds: creds)
             usage = snap
             usageError = nil
             record(snap)
+            if let id = identity {
+                accounts.record(uuid: id.uuid, label: id.label,
+                                plan: creds.subscriptionType ?? id.planFallback,
+                                snapshot: snap, at: snap.fetchedAt)
+            }
         } catch {
             usageError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// Accounts other than the active one, most-recently-seen first — rendered as the collapsible
+    /// strips beneath the active account. Empty until a second account has been used at least once.
+    var otherAccounts: [AccountRecord] {
+        accounts.others(activeUuid: activeAccount?.uuid)
     }
 
     /// Cached keychain read. Every SecItemCopyMatching is a potential user-facing prompt (one

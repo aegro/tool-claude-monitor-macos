@@ -3,20 +3,20 @@ import Testing
 @testable import MonitorClaude
 
 struct ClaudeConfigTests {
-    /// The exact shape of `~/.claude.json`'s `oauthAccount` on this machine.
+    /// Representative shape of `~/.claude.json`'s `oauthAccount` (synthetic data — see PR review).
     @Test func lêAContaAtivaDoOauthAccount() throws {
         let json = """
         { "penguinModeOrgEnabled": false,
           "oauthAccount": {
             "accountUuid": "11111111-2222-3333-4444-555555555555",
-            "emailAddress": "thomas@aegro.com.br",
-            "organizationName": "thomas@aegro.com.br's Organization",
-            "displayName": "Thomas",
+            "emailAddress": "person@example.test",
+            "organizationName": "person@example.test's Organization",
+            "displayName": "Example User",
             "organizationType": "claude_max" } }
         """
         let id = try #require(ClaudeConfig.parseActiveAccount(Data(json.utf8)))
         #expect(id.uuid == "11111111-2222-3333-4444-555555555555")
-        #expect(id.email == "thomas@aegro.com.br")
+        #expect(id.email == "person@example.test")
         #expect(id.planFallback == "max")
     }
 
@@ -30,10 +30,10 @@ struct ClaudeConfigTests {
     /// the label collapses to the person. A real org name is shown as-is.
     @Test func orgPessoalViraNomeDaPessoa() {
         let pessoal = AccountIdentity(
-            uuid: "u", email: "thomas@aegro.com.br",
-            organizationName: "thomas@aegro.com.br's Organization",
-            displayName: "Thomas", organizationType: "claude_max")
-        #expect(pessoal.label == "Thomas")
+            uuid: "u", email: "person@example.test",
+            organizationName: "person@example.test's Organization",
+            displayName: "Example User", organizationType: "claude_max")
+        #expect(pessoal.label == "Example User")
 
         let curlyApostrophe = AccountIdentity(
             uuid: "u", email: "x@y.com",
@@ -43,11 +43,11 @@ struct ClaudeConfigTests {
     }
 
     @Test func orgRealÉUsadaComoRótulo() {
-        let aegro = AccountIdentity(
-            uuid: "u", email: "thomas@aegro.com.br",
-            organizationName: "Aegro", displayName: "Thomas",
+        let empresa = AccountIdentity(
+            uuid: "u", email: "person@example.test",
+            organizationName: "Acme", displayName: "Example User",
             organizationType: "claude_max")
-        #expect(aegro.label == "Aegro")
+        #expect(empresa.label == "Acme")
     }
 
     @Test func rótuloNuncaFicaVazio() {

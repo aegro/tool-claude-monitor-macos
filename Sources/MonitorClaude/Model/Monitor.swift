@@ -155,6 +155,13 @@ final class Monitor: ObservableObject {
         accounts.others(activeUuid: activeAccount?.uuid)
     }
 
+    /// Plan badge for the active account: the token's own subscriptionType (most accurate, stored
+    /// on the last record) falling back to the org type from ~/.claude.json.
+    var activePlan: String? {
+        guard let id = activeAccount else { return nil }
+        return accounts.records[id.uuid]?.plan ?? id.planFallback
+    }
+
     /// Cached keychain read. Every SecItemCopyMatching is a potential user-facing prompt (one
     /// per poll adds up fast), so the item is only touched when nothing is cached yet or the
     /// cached token is about to expire.

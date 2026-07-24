@@ -69,20 +69,22 @@ O ícone aparece na barra de menu (um anel com a % da janela de 5h). Clique para
 o botão **⚙ Configurações** ajusta altura do painel, o que a barra mostra e o intervalo de
 consulta ao servidor.
 
-## Renovação automática do token
+## Leitura da credencial (somente leitura)
 
-O token de acesso que o app lê do Keychain vive poucas horas. Antes, quando ele vencia, o
-painel parava de ler os limites até você rodar o CLI de novo (só o CLI renovava a credencial);
-depois de dias sem terminal, o app respondia com token vencido e o servidor passava a devolver
-`429`.
+O token de acesso que o app lê do Keychain vive poucas horas. **Quem renova é o Claude Code**,
+dono da entrada `Claude Code-credentials`; o app só **lê** o token para consultar os limites —
+nunca escreve nem renova.
 
-Agora o app se vira sozinho: ao detectar o token perto de vencer — ou ao levar um `401` do
-servidor — ele troca o **refresh token** por um novo par no endpoint OAuth do próprio Claude
-Code (`POST https://console.anthropic.com/v1/oauth/token`) e grava a credencial renovada **de
-volta na mesma entrada do Keychain**, no formato que o CLI também lê. É exatamente o que o CLI
-faz; a renovação acontece no máximo uma vez por ciclo, então um refresh token inválido aparece
-como erro normal em vez de virar loop. Você não precisa mais abrir o terminal para manter o
-painel vivo.
+Isso é deliberado. O refresh token da Anthropic é rotacionado a cada uso: dois renovadores
+independentes (o CLI e este app) sobre a mesma credencial disparam a *reuse detection* do
+servidor, que invalida a **família de tokens inteira** — quebrando o login do próprio CLI e
+deixando o Keychain pedindo senha em loop. Por isso a renovação fica só com o CLI, que é o dono
+do item.
+
+Na prática: o app relê o Keychain quando o token está perto de vencer (o CLI já gravou um novo
+lá) e usa o token fresco. Se ele estiver vencido e você não roda o `claude` há muito tempo, o
+painel mostra "token recusado" até você rodar `claude` no terminal uma vez — é o CLI que mantém a
+credencial viva, não o monitor.
 
 ## Por que não confiar nos tokens locais
 
@@ -113,21 +115,18 @@ BIN="/Applications/Monitor Claude.app/Contents/MacOS/MonitorClaude"
 "$BIN" --dump-usage    # o JSON cru de /api/oauth/usage e o parse
 "$BIN" --dump-ledger   # tokens do bloco atual, por sessão e por modelo
 "$BIN" --dump-tree     # a atribuição de processos + a prova de partição exata
-"$BIN" --refresh       # força a renovação do token e mostra a nova expiração (sem imprimir o token)
 "$BIN" --preview       # abre o painel numa janela normal (desenvolvimento)
 ```
 
 ## Privacidade
 
 Lê o Keychain (o token OAuth do seu login), os arquivos em `~/.claude/` e a tabela de processos
-do seu usuário. Fala com dois endpoints, ambos da própria Anthropic e nenhum a mais:
-`api.anthropic.com/api/oauth/usage` (o mesmo do `/usage`) e, só quando precisa renovar o token,
-`console.anthropic.com/v1/oauth/token` (o mesmo do CLI). O refresh token nunca vai para nenhum
-outro lugar.
+do seu usuário. Fala com **um único endpoint**, da própria Anthropic e nenhum a mais:
+`api.anthropic.com/api/oauth/usage` (o mesmo do `/usage`). O token de acesso só é enviado nesse
+GET, como Bearer; nada mais sai da máquina.
 
-A única gravação de credencial é **de volta na própria entrada do Keychain** quando o token é
-renovado (substitui `accessToken`/`refreshToken`/`expiresAt`, preserva o resto); nenhum token é
-escrito em disco em texto puro. O histórico de limites vai para
+O app **nunca escreve** a sua credencial — nem no Keychain, nem em disco: só lê o token (a
+renovação é responsabilidade do Claude Code). O histórico de limites vai para
 `~/Library/Application Support/MonitorClaude/usage-history.json` (só porcentagens e horários de
 reset, nunca credenciais).
 

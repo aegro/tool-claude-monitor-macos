@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Combine
 
 /// Everything the panel renders, refreshed on three independent cadences:
 /// processes fast (they change constantly), the ledger medium, the API slow (it is
@@ -39,11 +40,20 @@ final class Monitor: ObservableObject {
     private var sampling = false
     private var cachedCreds: Keychain.Credentials?
     private var lastAccountUuid: String?
+    private var cancellables: Set<AnyCancellable> = []
 
     private var usageInterval: TimeInterval { Settings.shared.usageIntervalSeconds }
     private let ledgerInterval: TimeInterval = 20
 
     init() {
+        // AccountStore is a nested ObservableObject; SwiftUI does not observe it through Monitor
+        // automatically. Forward its change notifications so the panel re-renders when an
+        // account's cached usage updates, instead of relying on some other @Published property
+        // happening to change in the same turn.
+        accounts.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
         retime()
         tickFast()
         Task {
@@ -124,12 +134,18 @@ final class Monitor: ObservableObject {
         defer { loadingUsage = false }
         lastUsageFetch = Date()
 
-        // Read the active identity first: if Claude Code switched accounts since our last poll,
-        // the token we cached belongs to the *old* account, so drop it and re-read the keychain.
+        // Read the active identity first: if Claude Code switched accounts since our last poll
+        // — including a *logout*, where the identity goes to nil — the token we cached and the
+        // usage/error on screen all belong to the old account. Drop the cached token so we
+        // re-read the keychain (and correctly surface `.noAccountToken` after a logout), and
+        // clear the stale usage so the new account starts from a clean "loading" state instead
+        // of showing the previous account's numbers under the new account's name.
         let identity = ClaudeConfig.activeAccount()
-        if let id = identity, id.uuid != lastAccountUuid {
+        if identity?.uuid != lastAccountUuid {
             cachedCreds = nil
-            lastAccountUuid = id.uuid
+            usage = nil
+            usageError = nil
+            lastAccountUuid = identity?.uuid
         }
         activeAccount = identity
 
@@ -150,9 +166,12 @@ final class Monitor: ObservableObject {
     }
 
     /// Accounts other than the active one, most-recently-seen first — rendered as the collapsible
-    /// strips beneath the active account. Empty until a second account has been used at least once.
+    /// strips beneath the active account. Empty until a second account has been used at least once,
+    /// and empty while the active identity is unknown (we cannot say which cached account is the
+    /// "other" one, so we fall back to the single-account layout rather than guessing).
     var otherAccounts: [AccountRecord] {
-        accounts.others(activeUuid: activeAccount?.uuid)
+        guard let active = activeAccount else { return [] }
+        return accounts.others(activeUuid: active.uuid)
     }
 
     /// Plan badge for the active account: the token's own subscriptionType (most accurate, stored

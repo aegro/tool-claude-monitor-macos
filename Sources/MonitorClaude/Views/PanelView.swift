@@ -27,6 +27,9 @@ struct PanelView: View {
         }
         .onAppear { monitor.panelOpen = true }
         .onDisappear { monitor.panelOpen = false }
+        // A switch makes the newly-active account the one shown in full; don't leave a
+        // previously-opened inactive account expanded across the change.
+        .onChange(of: monitor.activeAccount?.uuid) { _, _ in expandedAccount = nil }
     }
 
     private var panel: some View {

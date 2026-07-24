@@ -18,6 +18,12 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          # O token de checkout não precisa sobreviver além do checkout — release.sh
+          # publica via secrets próprios (notarização) e o step seguinte publica o
+          # Release com o GITHUB_TOKEN implícito da action, não com um token persistido
+          # em .git/config que qualquer código deste job poderia reusar depois.
+          persist-credentials: false
 
       - name: Importar certificado Developer ID
         env:

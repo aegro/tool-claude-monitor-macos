@@ -72,3 +72,23 @@ jobs:
           files: dist/*.zip
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  # Dispara o bump do cask em aegro/homebrew-tap (via repository_dispatch) para
+  # `brew upgrade --cask monitor-claude` pegar a versão nova sem edição manual.
+  # HOMEBREW_TAP_TOKEN é um PAT com write no tap, só pra disparar o dispatch.
+  bump-tap:
+    name: Bump do cask no tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disparar bump no homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          v="${VERSION#v}"
+          jq -n --arg v "$v" \
+            '{event_type:"bump",client_payload:{kind:"cask",name:"monitor-claude",version:$v}}' \
+            | gh api repos/aegro/homebrew-tap/dispatches --input -
+          echo "Disparado bump do cask monitor-claude -> $v"

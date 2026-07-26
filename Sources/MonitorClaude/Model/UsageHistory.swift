@@ -7,6 +7,24 @@ struct UsageSample: Codable, Equatable {
     var sessionResetsAt: Date?
     var weekly: Double?
     var tokensCumulative: Int64?   // local ledger, for the token trend line
+    /// Which organization these percentages belong to. Two feeds can be watching two different
+    /// organizations at once, and a trend line drawn across both would be a line through two
+    /// unrelated series. Nil on samples written before this was recorded.
+    var org: String?
+}
+
+/// Hand-decoded so that a history written before `org` existed still loads — the file holds up to
+/// thirty days of samples and a synthesized decoder would throw the lot away on upgrade.
+extension UsageSample {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        at = try c.decode(Date.self, forKey: .at)
+        session = try c.decodeIfPresent(Double.self, forKey: .session)
+        sessionResetsAt = try c.decodeIfPresent(Date.self, forKey: .sessionResetsAt)
+        weekly = try c.decodeIfPresent(Double.self, forKey: .weekly)
+        tokensCumulative = try c.decodeIfPresent(Int64.self, forKey: .tokensCumulative)
+        org = try c.decodeIfPresent(String.self, forKey: .org)
+    }
 }
 
 /// A derived rate of change: how fast a limit window is filling.
@@ -32,19 +50,51 @@ final class UsageHistory {
     private let retention: TimeInterval = 30 * 24 * 3600
     private var dirty = false
 
-    init() {
-        let dir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Farol", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        url = dir.appendingPathComponent("usage-history.json")
+    /// `storedAt` exists so the ordering and de-duplication rules can be exercised against a
+    /// throwaway file instead of the user's real thirty days of history.
+    init(storedAt: URL? = nil) {
+        if let storedAt {
+            url = storedAt
+        } else {
+            let dir = FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Farol", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            url = dir.appendingPathComponent("usage-history.json")
+        }
         load()
     }
 
+    /// Files an observation, keeping the array ascending by time and free of repeats.
+    ///
+    /// Both properties used to hold for free, back when every sample was stamped `Date()` at the
+    /// moment of a successful poll. They stopped the day a second feed arrived: the desktop app's
+    /// readings carry the *sample's* own timestamp, minutes older than the poll that noticed them,
+    /// so alternating feeds appended backwards in time — and a feed frozen on one reading appended
+    /// that same reading again on every poll, because the guard only ever looked at the last
+    /// element. Both corrupt the least-squares fit and draw the trail folding back on itself.
     func append(_ s: UsageSample) {
-        // The endpoint is cached server-side; identical consecutive reads are common.
-        if let last = samples.last, abs(last.at.timeIntervalSince(s.at)) < 5 { return }
-        samples.append(s)
+        let slot = samples.lastIndex { $0.at <= s.at }.map { $0 + 1 } ?? 0
+
+        // A repeat of something already held for this organization — the newest sample, or one
+        // filed several polls ago. The endpoint is cached server-side, so identical consecutive
+        // reads are normal and must not compound.
+        //
+        // Scanned by time rather than by a fixed number of neighbours: several organizations can
+        // be sampled in the same instant, which pushes an earlier duplicate arbitrarily far from
+        // the insertion point. The array is sorted, so this walks only what shares the window.
+        var i = slot - 1
+        while i >= 0, s.at.timeIntervalSince(samples[i].at) < 5 {
+            if samples[i].org == s.org { return }
+            i -= 1
+        }
+        var j = slot
+        while j < samples.count, samples[j].at.timeIntervalSince(s.at) < 5 {
+            if samples[j].org == s.org { return }
+            j += 1
+        }
+
+        samples.insert(s, at: slot)
         let cutoff = Date().addingTimeInterval(-retention)
         if samples.first.map({ $0.at < cutoff }) == true {
             samples.removeAll { $0.at < cutoff }
@@ -52,9 +102,12 @@ final class UsageHistory {
         dirty = true
     }
 
-    func series(_ pick: (UsageSample) -> Double?, since: Date) -> [(Date, Double)] {
+    /// Samples for one organization only. Matching on equality means samples from before `org`
+    /// was recorded (nil) are used only while we cannot name the current organization either —
+    /// unattributed numbers are never mixed into a named organization's line.
+    func series(_ pick: (UsageSample) -> Double?, since: Date, org: String?) -> [(Date, Double)] {
         samples.compactMap { s in
-            guard s.at >= since, let v = pick(s) else { return nil }
+            guard s.at >= since, s.org == org, let v = pick(s) else { return nil }
             return (s.at, v)
         }
     }
@@ -63,10 +116,11 @@ final class UsageHistory {
     /// Regression rather than a two-point delta because utilization advances in steps.
     /// Refuses to answer from a thin sample. A slope fitted to three points ten minutes apart
     /// will happily predict that you run out of quota before lunch; better to say "still measuring".
-    func burnRate(_ pick: (UsageSample) -> Double?, window: TimeInterval = 60 * 60,
+    func burnRate(_ pick: (UsageSample) -> Double?, org: String?,
+                  window: TimeInterval = 60 * 60,
                   minPoints: Int = 5, minSpan: TimeInterval = 15 * 60) -> BurnRate? {
         let since = Date().addingTimeInterval(-window)
-        let pts = series(pick, since: since)
+        let pts = series(pick, since: since, org: org)
         guard pts.count >= minPoints else { return nil }
 
         let spanMinutes = pts.last!.0.timeIntervalSince(pts.first!.0) / 60

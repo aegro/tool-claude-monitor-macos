@@ -1,5 +1,14 @@
 import Foundation
 
+/// One reading the desktop app wrote down: the two headline percentages and when it took them.
+/// The app polls the same endpoint the Monitor does, every five minutes, so a run of these is a
+/// usable substitute for our own polling when the terminal token is gone.
+struct DesktopSample: Equatable {
+    var at: Date
+    var fiveHour: Double
+    var weekly: Double
+}
+
 /// An organization the Claude desktop app has usage for. Thinner than a `AccountRecord` on
 /// purpose: the desktop app records only the two headline percentages, so these render as a
 /// summary strip and never expand.
@@ -33,49 +42,119 @@ enum ClaudeDesktop {
             .appendingPathComponent("Library/Application Support/Claude", isDirectory: true)
     }
 
+    private static var historyURL: URL {
+        supportDir.appendingPathComponent("plan-usage-history.json")
+    }
+
     static func organizationUsage() -> [DesktopOrgUsage] {
-        let url = supportDir.appendingPathComponent("plan-usage-history.json")
-        guard let data = try? Data(contentsOf: url) else { return [] }
+        guard let data = try? Data(contentsOf: historyURL) else { return [] }
         return parseUsage(data, names: organizationNames())
     }
 
-    /// Latest sample per organization. Samples look like
-    /// `{"t": <epoch ms>, "org": "<uuid>", "u": {"fh": <5h %>, "sd": <7d %>}}`.
-    static func parseUsage(_ data: Data,
-                           names: [String: (name: String?, type: String?)]) -> [DesktopOrgUsage] {
+    /// Every reading the app kept, per organization, oldest first — the raw material for both the
+    /// summary strips and the live fallback. Reading the whole file each poll is fine: it is a few
+    /// hundred samples and the app prunes it itself.
+    static func samplesByOrg() -> [String: [DesktopSample]] {
+        guard let data = try? Data(contentsOf: historyURL) else { return [:] }
+        return parseSamples(data)
+    }
+
+    /// Samples look like `{"t": <epoch ms>, "org": "<uuid>", "u": {"fh": <5h %>, "sd": <7d %>}}`.
+    /// Anything that does not match is skipped rather than failing the whole read: this is another
+    /// app's private file and one odd row must not cost us the other three hundred.
+    static func parseSamples(_ data: Data) -> [String: [DesktopSample]] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               (root["version"] as? Int) == supportedVersion,
               let samples = root["samples"] as? [[String: Any]]
-        else { return [] }
+        else { return [:] }
 
-        var latest: [String: DesktopOrgUsage] = [:]
+        var byOrg: [String: [DesktopSample]] = [:]
         for s in samples {
             guard let org = s["org"] as? String, !org.isEmpty,
-                  let millis = numeric(s["t"]),
+                  let millis = numeric(s["t"]), plausibleEpochMillis(millis),
                   let u = s["u"] as? [String: Any],
-                  let fh = numeric(u["fh"]), let sd = numeric(u["sd"])
+                  let fh = numeric(u["fh"]), let sd = numeric(u["sd"]),
+                  // Skipped, not clamped. `UsageAPI.clamp` maps a nonsense percentage to 0, which
+                  // is fine for a single displayed reading but poisonous in a series: a fabricated
+                  // zero reads to the reset derivation as a window turning over, and it will date
+                  // a reset off a boundary that never happened. Known live source of nonsense —
+                  // the endpoint leaks an epoch timestamp into the field (claude-code#52326).
+                  inRange(fh), inRange(sd)
             else { continue }
 
-            let at = Date(timeIntervalSince1970: millis / 1000)
-            if let seen = latest[org], seen.seenAt >= at { continue }
+            byOrg[org, default: []].append(DesktopSample(
+                at: Date(timeIntervalSince1970: millis / 1000),
+                fiveHour: fh,
+                weekly: sd
+            ))
+        }
+        // Total ordering, not just by time: `sort` is not stable, so two samples sharing a
+        // timestamp would otherwise resolve differently between runs — and whichever lands last
+        // becomes "the current reading" for that organization.
+        for org in byOrg.keys {
+            byOrg[org]?.sort {
+                ($0.at, $0.fiveHour, $0.weekly) < ($1.at, $1.fiveHour, $1.weekly)
+            }
+        }
+        return byOrg
+    }
 
+    private static func inRange(_ percent: Double) -> Bool { percent >= 0 && percent <= 100 }
+
+    /// Guards against a unit-slipped timestamp (seconds or microseconds where milliseconds were
+    /// meant). One such row describes a date tens of thousands of years out, which downstream
+    /// becomes an interval nothing can sensibly walk. 2020-01-01 through 2100-01-01, in ms.
+    private static func plausibleEpochMillis(_ ms: Double) -> Bool {
+        ms >= 1_577_836_800_000 && ms <= 4_102_444_800_000
+    }
+
+    /// Latest sample per organization, named and labelled for the strips. Takes an already-parsed
+    /// series so a caller that also needs the raw samples parses the file once.
+    static func summarize(_ byOrg: [String: [DesktopSample]],
+                          names: [String: (name: String?, type: String?)]? = nil) -> [DesktopOrgUsage] {
+        let names = names ?? organizationNames(needing: Set(byOrg.keys))
+        return byOrg.compactMap { org, series -> DesktopOrgUsage? in
+            guard let last = series.last else { return nil }
             let known = names[org]
-            latest[org] = DesktopOrgUsage(
+            return DesktopOrgUsage(
                 organizationUuid: org,
                 label: label(forOrg: org, name: known?.name),
                 plan: known?.type.map { $0.replacingOccurrences(of: "claude_", with: "") },
-                fiveHour: UsageAPI.clamp(fh),
-                weekly: UsageAPI.clamp(sd),
-                seenAt: at
+                fiveHour: last.fiveHour,
+                weekly: last.weekly,
+                seenAt: last.at
             )
         }
-        return latest.values.sorted { $0.seenAt > $1.seenAt }
+        // Tie broken on the uuid: `sorted` is not stable, and two organizations sampled in the
+        // same second must not reorder the strips between renders.
+        .sorted { ($1.seenAt, $1.organizationUuid) < ($0.seenAt, $0.organizationUuid) }
+    }
+
+    static func parseUsage(_ data: Data,
+                           names: [String: (name: String?, type: String?)]) -> [DesktopOrgUsage] {
+        summarize(parseSamples(data), names: names)
     }
 
     /// The desktop app writes a Claude Code config per organization under
     /// `local-agent-mode-sessions/<account>/<organization>/…/.claude/.claude.json`, which is where
     /// the organization's name can be recovered. Without it we would be showing a bare uuid.
-    static func organizationNames() -> [String: (name: String?, type: String?)] {
+    /// Memoized: the walk below opens every session directory the desktop app has ever created and
+    /// parses a config to pull two strings, while the answer only changes when you join or leave an
+    /// organization. `known` lets a caller say which organizations it needs — seeing an unfamiliar
+    /// one is the signal to walk again, and it is also why a miss is not cached as an answer.
+    static func organizationNames(needing known: Set<String> = []) -> [String: (name: String?, type: String?)] {
+        namesLock.lock()
+        defer { namesLock.unlock() }
+        if let cached = namesCache, known.isSubset(of: Set(cached.keys)) { return cached }
+        let fresh = scanOrganizationNames()
+        namesCache = fresh
+        return fresh
+    }
+
+    nonisolated(unsafe) private static var namesCache: [String: (name: String?, type: String?)]?
+    private static let namesLock = NSLock()
+
+    private static func scanOrganizationNames() -> [String: (name: String?, type: String?)] {
         let root = supportDir.appendingPathComponent("local-agent-mode-sessions", isDirectory: true)
         let fm = FileManager.default
         guard let accounts = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)

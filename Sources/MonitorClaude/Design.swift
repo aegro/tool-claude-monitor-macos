@@ -95,6 +95,22 @@ enum Fmt {
         return f.string(from: d)
     }
 
+    /// A wall-clock time that stays honest as it ages: bare "14:32" while it is still today,
+    /// "24/07 14:32" once it is not. A time alone is unambiguous for an hour and quietly
+    /// misleading for a week, and some of what the panel stamps is days old.
+    static func stamp(_ d: Date, now: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = br
+        f.dateFormat = Calendar.current.isDate(d, inSameDayAs: now) ? "HH:mm" : "dd/MM HH:mm"
+        return f.string(from: d)
+    }
+
+    /// "há 3h05" — the one phrasing for a relative age, so the several places that show one all
+    /// read the same.
+    static func ago(_ d: Date, now: Date = Date()) -> String {
+        "há \(duration(now.timeIntervalSince(d)))"
+    }
+
     static func cpu(_ v: Double) -> String {
         v >= 100 ? String(format: "%.0f%%", locale: br, v)
                  : String(format: "%.1f%%", locale: br, v)

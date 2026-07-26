@@ -27,8 +27,12 @@ struct PanelView: View {
         }
         .onAppear { monitor.panelOpen = true }
         .onDisappear { monitor.panelOpen = false }
-        // A switch makes the newly-active account the one shown in full; don't leave a
-        // previously-opened inactive account expanded across the change.
+        // A switch makes the newly-shown account the one in full; don't leave a previously-opened
+        // inactive account expanded across the change. Keyed on the organization actually on show,
+        // not just the terminal identity: a feed handover moves the lead row without the terminal
+        // account changing at all, and a stale id left behind collapses the recovered account and
+        // spontaneously expands another one under the user.
+        .onChange(of: monitor.liveOrg) { _, _ in expandedAccount = nil }
         .onChange(of: monitor.activeAccount?.key) { _, _ in expandedAccount = nil }
     }
 
@@ -114,10 +118,28 @@ struct PanelView: View {
     private var limitsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHead(title: "Limites do Claude",
-                        trailing: monitor.usage.map { "há \(Fmt.duration(Date().timeIntervalSince($0.fetchedAt)))" })
+                        trailing: monitor.usage.map { Fmt.ago($0.fetchedAt) })
+
+            FeedBar(feeds: monitor.feeds,
+                    feeding: monitor.usage?.source,
+                    detail: monitor.usageError,
+                    // The error card owns retry whenever it is on screen; two buttons a few pixels
+                    // apart running the same action is just noise.
+                    showsRetry: monitor.usage != nil) {
+                Task { await monitor.refreshUsage(force: true) }
+            }
 
             if let usage = monitor.usage {
                 accountLimits(usage)
+                // Always stated, in words, whenever there is something to state. The earlier
+                // version suppressed this when nothing was current — which is precisely when the
+                // panel most needed to say so, and it put the silent-dead-feed bug straight back.
+                // The tone carries the difference: secondary while another feed still has us,
+                // alarm once nothing on screen is current.
+                if let err = monitor.usageError {
+                    pill(icon: "terminal", text: err,
+                         tone: monitor.liveIsCurrent ? .secondary : Ink.alarm)
+                }
             } else if let err = monitor.usageError {
                 errorCard(err)
             } else {
@@ -135,9 +157,23 @@ struct PanelView: View {
     private func accountLimits(_ usage: UsageSnapshot) -> some View {
         let others = monitor.otherAccounts
         let desktop = monitor.desktopOnlyOrgs
+        let live = monitor.liveAccount
+        // ".live" only when the feed behind these numbers really is current. Passing it
+        // unconditionally is how a frozen feed kept its lit "ao vivo" dot while the bar four
+        // pixels above already reported it stale.
+        let marker: AccountLead.Marker = monitor.liveIsCurrent
+            ? .live
+            : .lastSeen(monitor.liveSeenAt ?? usage.fetchedAt)
+
         if others.isEmpty && desktop.isEmpty {
+            // The lead row is drawn even for a single account once the numbers can belong to an
+            // organization other than the terminal's: without it the fallback's percentages sit
+            // under a bare "Limites do Claude" with nothing saying whose they are.
+            if let live, live.organizationUuid != monitor.activeAccount?.organizationUuid {
+                AccountLead(label: live.label, plan: live.plan, marker: marker)
+            }
             activeDetail(usage)
-            if monitor.activeAccount != nil {
+            if live != nil {
                 Text("Outras contas aparecem aqui quando você as usa no `claude`.")
                     .font(Type.labelTiny)
                     .foregroundStyle(.tertiary)
@@ -147,13 +183,15 @@ struct PanelView: View {
                 || !others.contains { $0.uuid == expandedAccount }
 
             if activeExpanded {
-                if let active = monitor.activeAccount {
-                    AccountLead(label: active.label, plan: monitor.activePlan, marker: .live)
+                if let live {
+                    AccountLead(label: live.label, plan: live.plan, marker: marker)
                 }
                 activeDetail(usage)
-            } else if let active = monitor.activeAccount {
-                AccountStrip(label: active.label, plan: monitor.activePlan,
-                             summary: accountSummary(usage), live: true, seenAt: nil) {
+            } else if let live {
+                AccountStrip(label: live.label, plan: live.plan,
+                             summary: accountSummary(usage),
+                             live: monitor.liveIsCurrent,
+                             seenAt: monitor.liveIsCurrent ? nil : monitor.liveSeenAt) {
                     withAnimation(.easeOut(duration: 0.18)) { expandedAccount = nil }
                 }
             }
@@ -198,6 +236,39 @@ struct PanelView: View {
         if usage.extraUsageEnabled, let u = usage.extraUsageUtilization {
             extraCredit(u)
         }
+
+        ghostDetail
+    }
+
+    /// Limits the *current* feed cannot carry, held on screen with their last value and the date
+    /// they were true. Switching feeds must never make a limit disappear without saying so — a row
+    /// that vanishes silently reads as "you no longer have this cap", which is the opposite of what
+    /// happened. Faded, and never counted as live.
+    @ViewBuilder
+    private var ghostDetail: some View {
+        if let seenAt = monitor.ghostSeenAt {
+            ForEach(monitor.ghostWindows) { w in
+                StaleLimitRow(window: w, seenAt: seenAt,
+                              note: w.key.hasPrefix("weekly_scoped")
+                                  ? "o app não publica por modelo"
+                                  : "o app não publica esta janela")
+                    .opacity(0.55)
+            }
+            if let extra = monitor.ghostExtraCredit {
+                // Stamped like every other ghost. Unstamped, this row was the one place a
+                // days-old number rendered indistinguishably from a live one — including to
+                // VoiceOver, which had nothing to read but the percentage.
+                HStack(spacing: 6) {
+                    extraCredit(extra)
+                    Text("visto \(Fmt.stamp(seenAt))")
+                        .font(Type.labelTiny)
+                        .foregroundStyle(.tertiary)
+                }
+                .opacity(0.55)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Crédito extra \(Fmt.pct(extra)), visto \(Fmt.stamp(seenAt))")
+            }
+        }
     }
 
     /// An inactive account rendered from its last-seen snapshot: plain bars, no live rate graph.
@@ -238,7 +309,9 @@ struct PanelView: View {
             }
             .padding(.top, 2)
         } else {
-            Text("Traçando a evolução desta janela — uma amostra a cada 2 min.")
+            // Read from the source, not written down: our own interval is a user setting that
+            // spans 60 s to 10 min, so the old fixed "2 min" was wrong the moment it was moved.
+            Text("Traçando a evolução desta janela — uma amostra a cada \(monitor.feedCadence).")
                 .font(Type.labelTiny)
                 .foregroundStyle(.tertiary)
         }

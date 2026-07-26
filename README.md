@@ -77,11 +77,21 @@ Isso é deliberado. A Anthropic rotaciona o refresh token a cada uso, então doi
 
 O app relê o Keychain quando o token está perto de vencer, momento em que o CLI já gravou um novo, e usa o token fresco. Se ele estiver vencido e o `claude` não roda há algumas horas, o painel avisa que a sessão expirou até você rodar o `claude` uma vez.
 
+### Quando o login do terminal morre, o app do Claude assume
+
+Só o `claude` no terminal renova esse token. Quem passou a usar o Claude Code pelo app desktop para de renová-lo, e o Monitor ficaria cego por tempo indeterminado.
+
+Existe uma segunda fonte para esse caso. O app desktop consulta o mesmo endpoint a cada cinco minutos e grava o resultado em `plan-usage-history.json`: são os mesmos números do servidor, e nenhuma credencial é envolvida — o token do app é cifrado pelo safeStorage do Electron e o Monitor não encosta nele.
+
+A API continua preferida sempre que o token vale, porque só ela traz as janelas por modelo, o `severity` do servidor e o crédito extra. O feed do app entra quando a API não responde, e a faixa de procedência no topo da seção diz, o tempo todo, quais fontes estão respondendo e há quanto tempo. O que o feed novo não carrega continua desenhado, apagado, com o último valor e a data em que valia.
+
+Os dois horários de reset que o app não grava são reconstruídos, e a reconstrução se identifica com `≈`. O semanal avança um âncora periódico que a API deu; o da sessão sai da série — a queda do percentual quando a janela vira, ou, quando o uso é baixo demais para haver queda, a primeira leitura não-zero depois de um zero. Sem âncora confiável, o reset fica vazio: um reset errado envenenaria o marcador de ritmo, o outlook e o eixo do gráfico.
+
 ### Os limites vêm do servidor, não dos tokens locais
 
 Os transcripts em `~/.claude/projects/**/*.jsonl` subcontam input e output em 100 a 174 vezes, porque o Claude Code grava esses campos a partir de eventos de streaming e nunca os finaliza ([anthropics/claude-code#28197](https://github.com/anthropics/claude-code/issues/28197), fechada como *not planned*). Só os campos de cache são exatos.
 
-Por isso os limites vêm sempre de `GET /api/oauth/usage`. Os tokens locais servem para comparar sessões entre si e desenhar a evolução, sempre rotulados como estimativa.
+Por isso os limites vêm sempre do servidor — de `GET /api/oauth/usage` ou, quando o login do terminal caiu, da leitura que o app desktop fez desse mesmo endpoint. Os tokens locais servem para comparar sessões entre si e desenhar a evolução, sempre rotulados como estimativa.
 
 ### Como um processo é ligado à sessão certa
 
@@ -93,9 +103,9 @@ O resultado é uma partição exata: cada processo cai em um único balde, nada 
 
 ## Privacidade
 
-O app lê o Keychain, os arquivos em `~/.claude/` e a tabela de processos do seu usuário. Ele fala com um único endpoint, `api.anthropic.com/api/oauth/usage`, o mesmo do comando `/usage`. O token sai da máquina apenas nesse GET, como Bearer.
+O app lê o Keychain, os arquivos em `~/.claude/`, o histórico de uso que o app desktop do Claude grava em `~/Library/Application Support/Claude/`, e a tabela de processos do seu usuário. Ele fala com um único endpoint, `api.anthropic.com/api/oauth/usage`, o mesmo do comando `/usage`. O token sai da máquina apenas nesse GET, como Bearer.
 
-O app nunca escreve a sua credencial, nem no Keychain nem em disco. Em `~/Library/Application Support/Farol/` ficam dois arquivos, ambos sem credenciais: `usage-history.json` (porcentagens e horários de reset) e `accounts.json` (o último snapshot de limites por conta, com rótulo e plano).
+O app nunca escreve a sua credencial, nem no Keychain nem em disco. Em `~/Library/Application Support/Farol/` ficam dois arquivos, ambos sem credenciais: `usage-history.json` (porcentagens, horários de reset e o uuid da organização a que cada leitura pertence) e `accounts.json` (o último snapshot de limites por conta, com rótulo e plano).
 
 ## Modos de depuração
 
@@ -104,6 +114,7 @@ BIN="/Applications/Monitor Claude.app/Contents/MacOS/MonitorClaude"
 "$BIN" --dump-usage    # o JSON cru de /api/oauth/usage e o parse
 "$BIN" --dump-ledger   # tokens do bloco atual, por sessão e por modelo
 "$BIN" --dump-tree     # a atribuição de processos e a prova de partição exata
+"$BIN" --dump-desktop-feed  # a série do app desktop e o reset derivado dela
 "$BIN" --preview       # abre o painel numa janela normal
 ```
 

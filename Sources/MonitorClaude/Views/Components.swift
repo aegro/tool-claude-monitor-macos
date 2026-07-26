@@ -70,9 +70,15 @@ struct LimitGauge: View {
 
             HStack(spacing: 5) {
                 if let reset = window.timeToReset, let at = window.resetsAt {
-                    Text("reseta \(Fmt.clock(at)) · em \(Fmt.duration(reset))")
+                    // "≈" whenever the reset was reconstructed rather than reported. It is a small
+                    // mark for a real distinction: an inferred boundary can be one grid step out,
+                    // and the pace marker sitting above is drawn off exactly this number.
+                    Text("reseta \(window.resetIsExact ? "" : "≈")\(Fmt.clock(at)) · em \(Fmt.duration(reset))")
                         .font(Type.labelTiny)
                         .foregroundStyle(.tertiary)
+                        .help(window.resetIsExact
+                              ? "Horário informado pelo servidor."
+                              : "Deduzido da série do app do Claude — pode variar em até 10 min.")
                 }
                 Spacer(minLength: 2)
                 paceVerdict

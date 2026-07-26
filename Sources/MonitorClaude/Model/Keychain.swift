@@ -33,6 +33,7 @@ enum Keychain {
     enum Failure: Error, LocalizedError, Equatable {
         case notFound
         case noAccountToken
+        case expired
         case denied
         case malformed
         case other(OSStatus)
@@ -43,6 +44,8 @@ enum Keychain {
                 return "Claude Code não está logado neste Mac — rode `claude /login` no terminal."
             case .noAccountToken:
                 return "O Keychain só tem tokens de MCP, sem sessão de conta — rode `claude /login` no terminal."
+            case .expired:
+                return "O login do terminal venceu. Só o `claude` no terminal o renova — rode-o uma vez para o Monitor voltar a ler a API."
             case .denied:
                 return "Acesso ao Keychain negado — clique “Sempre Permitir” quando o macOS perguntar."
             case .malformed:

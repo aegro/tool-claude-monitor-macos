@@ -17,8 +17,19 @@ struct MenuBarLabel: View {
     private var showLimit: Bool { settings.menuBarStyle != .cpu }
     private var showCPU: Bool { settings.menuBarStyle != .sessionLimit }
 
+    /// The panel can explain itself; the menu bar has about twelve points of width. So a number
+    /// that is no longer current is drawn muted and suffixed with "·" rather than pretending —
+    /// this is the surface that sat for twenty-one hours reporting a dead feed's percentage in
+    /// exactly the same ink as a live one.
+    private var current: Bool { monitor.liveIsCurrent }
+
+    private var staleHelp: String {
+        let age = monitor.liveSeenAt.map { " (\(Fmt.ago($0)))" } ?? ""
+        return "Número parado\(age) — abra o painel para ver qual fonte caiu."
+    }
+
     private var tone: Color {
-        guard let session else { return .secondary }
+        guard let session, current else { return .secondary }
         if session.isCritical { return Ink.alarm }
         if case .willHitCap(_, _, _, _, true) = monitor.outlook { return Ink.alarm }
         if (session.paceRatio ?? 0) >= 1.15 { return Ink.ember }
@@ -26,7 +37,7 @@ struct MenuBarLabel: View {
     }
 
     private var nsTone: NSColor {
-        guard let session else { return .secondaryLabelColor }
+        guard let session, current else { return .secondaryLabelColor }
         if session.isCritical { return NSColor(Ink.alarm) }
         if case .willHitCap(_, _, _, _, true) = monitor.outlook { return NSColor(Ink.alarm) }
         if (session.paceRatio ?? 0) >= 1.15 { return NSColor(Ink.ember) }
@@ -45,13 +56,17 @@ struct MenuBarLabel: View {
             if showLimit, let session {
                 Image(nsImage: RingIcon.make(
                     fraction: session.utilization / 100,
-                    pace: session.paceTarget / 100,
+                    // No pace notch on a stale number: the notch advances with the clock while the
+                    // percentage stands still, so it would keep drawing a verdict about a reading
+                    // that stopped moving hours ago.
+                    pace: current ? session.paceTarget / 100 : 0,
                     tint: nsTone,
                     hot: showCPU ? false : monitor.system.cpuPercent > 60
                 ))
-                Text("\(Int(session.utilization.rounded()))%")
+                Text("\(Int(session.utilization.rounded()))%\(current ? "" : "·")")
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(tone)
+                    .modifier(StaleHint(text: current ? nil : staleHelp))
             } else if showLimit {
                 Image(systemName: "gauge.with.dots.needle.33percent")
             }
@@ -63,6 +78,20 @@ struct MenuBarLabel: View {
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(monitor.system.cpuPercent > 80 ? tone : .primary)
             }
+        }
+    }
+}
+
+/// Attaches a tooltip only when there is something to say — `.help("")` still arms a tooltip, and
+/// an empty one that appears on hover over a perfectly healthy number is its own small lie.
+private struct StaleHint: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text {
+            content.help(text).accessibilityHint(text)
+        } else {
+            content
         }
     }
 }

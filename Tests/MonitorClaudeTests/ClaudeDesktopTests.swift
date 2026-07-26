@@ -68,11 +68,41 @@ struct ClaudeDesktopTests {
         #expect(ClaudeDesktop.label(forOrg: "abcdefgh-0000", name: nil) == "abcdefgh")
     }
 
-    /// A percentage the desktop app could not compute must not paint a full bar.
-    @Test func porcentagemForaDeFaixaÉNeutralizada() {
+    /// A percentage the desktop app could not compute is dropped, not squashed to zero.
+    ///
+    /// Zero is not a neutral value in a series: the reset derivation reads a fall to zero as a
+    /// window turning over, so a clamped garbage row would date a reset off a boundary that never
+    /// happened — and, if the bracket happened to hold a single grid mark, would present it as
+    /// exact. The endpoint really does leak an epoch timestamp into this field.
+    @Test func porcentagemForaDeFaixaDescartaAAmostra() {
         let data = history("{\"t\": 1784931561009, \"org\": \"o\", \"u\": {\"fh\": 1784931561009, \"sd\": -3}}")
-        let org = ClaudeDesktop.parseUsage(data, names: [:]).first
-        #expect(org?.fiveHour == 0)
-        #expect(org?.weekly == 0)
+        #expect(ClaudeDesktop.parseUsage(data, names: [:]).isEmpty)
+        #expect(ClaudeDesktop.parseSamples(data).isEmpty)
+    }
+
+    /// A row whose own good neighbours survive it: one bad sample must not cost the series.
+    @Test func amostraRuimNoMeioNãoDerrubaAsBoas() {
+        let data = history("""
+        {"t": 1784931561009, "org": "o", "u": {"fh": 30, "sd": 10}},
+        {"t": 1784931861009, "org": "o", "u": {"fh": 999, "sd": 10}},
+        {"t": 1784932161009, "org": "o", "u": {"fh": 32, "sd": 11}}
+        """)
+        let series = ClaudeDesktop.parseSamples(data)["o"]
+        #expect(series?.count == 2)
+        #expect(series?.map(\.fiveHour) == [30, 32])
+    }
+
+    /// A unit-slipped timestamp (µs where ms was meant) describes a date tens of thousands of years
+    /// out. Left in, it becomes an interval the reset derivation would try to walk ten minutes at a
+    /// time — gigabytes of allocation on the main actor, at launch.
+    @Test func timestampForaDeÉpocaPlausívelÉDescartado() {
+        let data = history("""
+        {"t": 1784931561009000, "org": "o", "u": {"fh": 5, "sd": 10}},
+        {"t": 1784931561, "org": "o", "u": {"fh": 6, "sd": 10}},
+        {"t": 1784931561009, "org": "o", "u": {"fh": 7, "sd": 10}}
+        """)
+        let series = ClaudeDesktop.parseSamples(data)["o"]
+        #expect(series?.count == 1)
+        #expect(series?.first?.fiveHour == 7)
     }
 }

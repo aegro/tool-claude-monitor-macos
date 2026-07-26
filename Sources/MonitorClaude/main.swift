@@ -28,6 +28,46 @@ if CommandLine.arguments.contains("--dump-usage") {
     exit(0)
 }
 
+// Same hatch, for the fallback feed. This one reads another app's private file and *derives* the
+// resets, so being able to hold the derivation against the raw series is the difference between
+// "it compiles" and "it is right".
+if CommandLine.arguments.contains("--dump-desktop-feed") {
+    let iso = ISO8601DateFormatter()
+    let names = ClaudeDesktop.organizationNames()
+    let byOrg = ClaudeDesktop.samplesByOrg()
+
+    if byOrg.isEmpty { print("nenhuma amostra em plan-usage-history.json"); exit(0) }
+
+    for (org, series) in byOrg.sorted(by: { ($0.value.last?.at ?? .distantPast) > ($1.value.last?.at ?? .distantPast) }) {
+        let label = ClaudeDesktop.label(forOrg: org, name: names[org]?.name)
+        // Truncated like every other identifier this repo prints: the output of a debug hatch on a
+        // public repo ends up pasted into issues, and eight characters already disambiguate.
+        print("▸ \(label)  (\(org.prefix(8)))  \(series.count) amostras")
+        guard let last = series.last else { continue }
+        print("   última: \(iso.string(from: last.at))  5h \(last.fiveHour)%  semana \(last.weekly)%"
+              + "  \(DesktopUsage.isCurrent(last.at) ? "· ao vivo" : "· parada")")
+
+        if let reset = DesktopUsage.sessionReset(series: series) {
+            print("   reset 5h derivado: \(iso.string(from: reset.at))"
+                  + (reset.exact ? "  (exato — marca única na grade)" : "  (aproximado)"))
+        } else {
+            print("   reset 5h derivado: — (nenhuma âncora utilizável na série)")
+        }
+
+        let snap = DesktopUsage.snapshot(series: series, weeklyAnchor: nil)
+        for w in snap?.windows ?? [] {
+            print(String(format: "     %-12@ %5.1f%%  pace %5.1f%%",
+                         w.key as NSString, w.utilization, w.paceTarget))
+        }
+        print("   últimas 8 amostras:")
+        for s in series.suffix(8) {
+            print("     \(iso.string(from: s.at))  fh \(Int(s.fiveHour))  sd \(Int(s.weekly))")
+        }
+        print("")
+    }
+    exit(0)
+}
+
 if CommandLine.arguments.contains("--dump-ledger") {
     let ledger = TokenLedger()
     let start = Date().addingTimeInterval(-5 * 3600)

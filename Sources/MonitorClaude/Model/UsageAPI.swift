@@ -9,11 +9,25 @@ struct LimitWindow: Equatable, Identifiable, Codable {
     var severity: String         // normal | warning | ... (server's own judgement)
     var isSession: Bool
     var isActive: Bool
+    /// False when `resetsAt` was reconstructed rather than reported, so the panel can show it as
+    /// approximate instead of passing an inference off as the server's word.
+    var resetIsExact = true
 
     var id: String { key }
 
-    /// The server never states the window length, so it is implied by the kind.
-    var duration: TimeInterval { isSession ? 5 * 3600 : 7 * 24 * 3600 }
+    /// The server never states the window length, so it is implied by the kind. These two are the
+    /// canonical lengths — the reset derivation and the trail axis both read them from here, so
+    /// there is one place to change if Anthropic ever moves a window.
+    static let sessionLength: TimeInterval = 5 * 3600
+    static let weeklyLength: TimeInterval = 7 * 24 * 3600
+
+    /// Every key the account-wide weekly window has gone by: the current payload calls it
+    /// `weekly_all`, the older flat shape `seven_day`. Anything asking "is this *the* weekly
+    /// window?" must ask here — one place that answered only `weekly_all` while another answered
+    /// both meant the weekly reset was dropped from the live row and from the ghosts at once.
+    static let weeklyAllKeys: Set<String> = ["weekly_all", "seven_day"]
+
+    var duration: TimeInterval { isSession ? Self.sessionLength : Self.weeklyLength }
 
     var startsAt: Date? { resetsAt.map { $0.addingTimeInterval(-duration) } }
 
@@ -40,15 +54,58 @@ struct LimitWindow: Equatable, Identifiable, Codable {
     var isCritical: Bool { utilization >= 90 || severity == "critical" }
 }
 
+/// Hand-decoded for the same reason as `UsageSnapshot`: windows are persisted inside
+/// `accounts.json`, and records written before `resetIsExact` existed came from the API, where
+/// every reset is the server's own.
+extension LimitWindow {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        title = try c.decode(String.self, forKey: .title)
+        utilization = try c.decode(Double.self, forKey: .utilization)
+        resetsAt = try c.decodeIfPresent(Date.self, forKey: .resetsAt)
+        severity = try c.decodeIfPresent(String.self, forKey: .severity) ?? "normal"
+        isSession = try c.decodeIfPresent(Bool.self, forKey: .isSession) ?? false
+        isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
+        resetIsExact = try c.decodeIfPresent(Bool.self, forKey: .resetIsExact) ?? true
+    }
+}
+
+/// Where a snapshot's numbers came from. The percentages are the server's either way — the desktop
+/// app polls the same endpoint — but the two feeds carry different amounts of it, so the panel has
+/// to know which one it is drawing.
+enum UsageSource: String, Codable {
+    /// Our own read of `/api/oauth/usage`, with the terminal's token. Everything is present.
+    case api
+    /// The Claude desktop app's `plan-usage-history.json`: the two headline percentages only.
+    case desktopApp
+}
+
 struct UsageSnapshot: Equatable, Codable {
     var windows: [LimitWindow] = []
     var extraUsageEnabled = false
     var extraUsageUtilization: Double?
     var fetchedAt = Date()
+    var source: UsageSource = .api
 
     var session: LimitWindow? { windows.first(where: \.isSession) }
-    var weekly: LimitWindow? { windows.first { $0.key == "weekly_all" } }
+    var weekly: LimitWindow? { windows.first { LimitWindow.weeklyAllKeys.contains($0.key) } }
     var scoped: [LimitWindow] { windows.filter { $0.key.hasPrefix("weekly_scoped") } }
+}
+
+/// Decoded by hand, and from an extension so the memberwise initialiser survives: `accounts.json`
+/// was already on disk in the field before `source` existed, and a synthesized decoder would
+/// reject every one of those records — silently emptying the account list on upgrade.
+extension UsageSnapshot {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        windows = try c.decodeIfPresent([LimitWindow].self, forKey: .windows) ?? []
+        extraUsageEnabled = try c.decodeIfPresent(Bool.self, forKey: .extraUsageEnabled) ?? false
+        extraUsageUtilization = try c.decodeIfPresent(Double.self, forKey: .extraUsageUtilization)
+        fetchedAt = try c.decodeIfPresent(Date.self, forKey: .fetchedAt) ?? Date()
+        // Records written before the field existed were all API reads, because that is all there was.
+        source = try c.decodeIfPresent(UsageSource.self, forKey: .source) ?? .api
+    }
 }
 
 enum UsageError: Error, LocalizedError {

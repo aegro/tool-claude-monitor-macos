@@ -1,5 +1,14 @@
 import Foundation
 
+/// One reading the desktop app wrote down: the two headline percentages and when it took them.
+/// The app polls the same endpoint the Monitor does, every five minutes, so a run of these is a
+/// usable substitute for our own polling when the terminal token is gone.
+struct DesktopSample: Equatable {
+    var at: Date
+    var fiveHour: Double
+    var weekly: Double
+}
+
 /// An organization the Claude desktop app has usage for. Thinner than a `AccountRecord` on
 /// purpose: the desktop app records only the two headline percentages, so these render as a
 /// summary strip and never expand.
@@ -33,22 +42,33 @@ enum ClaudeDesktop {
             .appendingPathComponent("Library/Application Support/Claude", isDirectory: true)
     }
 
+    private static var historyURL: URL {
+        supportDir.appendingPathComponent("plan-usage-history.json")
+    }
+
     static func organizationUsage() -> [DesktopOrgUsage] {
-        let url = supportDir.appendingPathComponent("plan-usage-history.json")
-        guard let data = try? Data(contentsOf: url) else { return [] }
+        guard let data = try? Data(contentsOf: historyURL) else { return [] }
         return parseUsage(data, names: organizationNames())
     }
 
-    /// Latest sample per organization. Samples look like
-    /// `{"t": <epoch ms>, "org": "<uuid>", "u": {"fh": <5h %>, "sd": <7d %>}}`.
-    static func parseUsage(_ data: Data,
-                           names: [String: (name: String?, type: String?)]) -> [DesktopOrgUsage] {
+    /// Every reading the app kept, per organization, oldest first — the raw material for both the
+    /// summary strips and the live fallback. Reading the whole file each poll is fine: it is a few
+    /// hundred samples and the app prunes it itself.
+    static func samplesByOrg() -> [String: [DesktopSample]] {
+        guard let data = try? Data(contentsOf: historyURL) else { return [:] }
+        return parseSamples(data)
+    }
+
+    /// Samples look like `{"t": <epoch ms>, "org": "<uuid>", "u": {"fh": <5h %>, "sd": <7d %>}}`.
+    /// Anything that does not match is skipped rather than failing the whole read: this is another
+    /// app's private file and one odd row must not cost us the other three hundred.
+    static func parseSamples(_ data: Data) -> [String: [DesktopSample]] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               (root["version"] as? Int) == supportedVersion,
               let samples = root["samples"] as? [[String: Any]]
-        else { return [] }
+        else { return [:] }
 
-        var latest: [String: DesktopOrgUsage] = [:]
+        var byOrg: [String: [DesktopSample]] = [:]
         for s in samples {
             guard let org = s["org"] as? String, !org.isEmpty,
                   let millis = numeric(s["t"]),
@@ -56,20 +76,34 @@ enum ClaudeDesktop {
                   let fh = numeric(u["fh"]), let sd = numeric(u["sd"])
             else { continue }
 
-            let at = Date(timeIntervalSince1970: millis / 1000)
-            if let seen = latest[org], seen.seenAt >= at { continue }
+            byOrg[org, default: []].append(DesktopSample(
+                at: Date(timeIntervalSince1970: millis / 1000),
+                fiveHour: UsageAPI.clamp(fh),
+                weekly: UsageAPI.clamp(sd)
+            ))
+        }
+        for org in byOrg.keys {
+            byOrg[org]?.sort { $0.at < $1.at }
+        }
+        return byOrg
+    }
 
+    /// Latest sample per organization, named and labelled for the strips.
+    static func parseUsage(_ data: Data,
+                           names: [String: (name: String?, type: String?)]) -> [DesktopOrgUsage] {
+        parseSamples(data).compactMap { org, series -> DesktopOrgUsage? in
+            guard let last = series.last else { return nil }
             let known = names[org]
-            latest[org] = DesktopOrgUsage(
+            return DesktopOrgUsage(
                 organizationUuid: org,
                 label: label(forOrg: org, name: known?.name),
                 plan: known?.type.map { $0.replacingOccurrences(of: "claude_", with: "") },
-                fiveHour: UsageAPI.clamp(fh),
-                weekly: UsageAPI.clamp(sd),
-                seenAt: at
+                fiveHour: last.fiveHour,
+                weekly: last.weekly,
+                seenAt: last.at
             )
         }
-        return latest.values.sorted { $0.seenAt > $1.seenAt }
+        .sorted { $0.seenAt > $1.seenAt }
     }
 
     /// The desktop app writes a Claude Code config per organization under

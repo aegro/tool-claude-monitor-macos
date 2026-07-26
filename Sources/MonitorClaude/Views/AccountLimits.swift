@@ -152,6 +152,85 @@ struct DesktopOrgStrip: View {
     }
 }
 
+/// Which feeds are answering, how fresh each one is, and — when one is not — the one control that
+/// might fix it.
+///
+/// Drawn always, healthy or not. The failure it replaces was a feed that died silently behind a
+/// cached snapshot: the numbers froze, the live dot stayed lit, and the only tell was a timestamp
+/// creeping upwards. A bar that appears only in trouble is a bar nobody learns to read, so this
+/// one is permanent and the reading is always the same: filled dot = these are the numbers above.
+struct FeedBar: View {
+    let feeds: FeedState
+    /// Which feed the panel is currently drawing from, if any.
+    let feeding: UsageSource?
+    var detail: String?
+    var onRetry: () -> Void
+
+    private var anythingBroken: Bool {
+        if case .broken = feeds.terminal { return true }
+        if case .broken = feeds.desktop { return true }
+        return false
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            chip("terminal", feeds.terminal, feeding: feeding == .api)
+            chip("app", feeds.desktop, feeding: feeding == .desktopApp)
+            Spacer(minLength: 4)
+            if anythingBroken {
+                Button("tentar de novo", action: onRetry)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(Ink.ember)
+                    .help(detail ?? "Relê a credencial e consulta a API de novo.")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Ink.track, in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder
+    private func chip(_ name: String, _ health: FeedState.Health, feeding: Bool) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(tone(health))
+                .opacity(feeding ? 1 : 0.35)
+                .frame(width: 5, height: 5)
+            Text(name)
+                .font(.system(size: 9.5, weight: .medium).monospaced())
+                .foregroundStyle(.tertiary)
+            Text(caption(health))
+                .font(Type.labelTiny)
+                .foregroundStyle(isBroken(health) ? AnyShapeStyle(Ink.alarm) : AnyShapeStyle(.secondary))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Fonte \(name): \(caption(health))\(feeding ? ", é a que está alimentando o painel" : "")")
+    }
+
+    private func isBroken(_ h: FeedState.Health) -> Bool {
+        if case .broken = h { return true }
+        return false
+    }
+
+    private func tone(_ h: FeedState.Health) -> Color {
+        switch h {
+        case .live: return Ink.ember
+        case .stale: return Ink.idle
+        case .broken: return Ink.alarm
+        case .missing: return Ink.idle
+        }
+    }
+
+    private func caption(_ h: FeedState.Health) -> String {
+        switch h {
+        case .live(let at), .stale(let at): return "há \(Fmt.duration(Date().timeIntervalSince(at)))"
+        case .broken(let why): return why
+        case .missing: return "—"
+        }
+    }
+}
+
 /// A limit row from last-seen data: label, percentage, and a plain bar — no pace marker, no
 /// verdict, no rate graph, because those need the live token this account does not have. The
 /// first row carries the "why it is frozen" note; every row is stamped with when it was seen.

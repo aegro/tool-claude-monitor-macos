@@ -116,8 +116,20 @@ struct PanelView: View {
             SectionHead(title: "Limites do Claude",
                         trailing: monitor.usage.map { "há \(Fmt.duration(Date().timeIntervalSince($0.fetchedAt)))" })
 
+            FeedBar(feeds: monitor.feeds,
+                    feeding: monitor.usage?.source,
+                    detail: monitor.usageError) {
+                Task { await monitor.refreshUsage(force: true) }
+            }
+
             if let usage = monitor.usage {
                 accountLimits(usage)
+                // A broken terminal feed while another one carries the panel is not an alarm — the
+                // numbers above are real and current. It is still stated in full, in words, once:
+                // the whole point of this rework is that a dead feed can never again be silent.
+                if let err = monitor.usageError, !monitor.feeds.allDown {
+                    pill(icon: "terminal", text: err, tone: .secondary)
+                }
             } else if let err = monitor.usageError {
                 errorCard(err)
             } else {
@@ -135,9 +147,10 @@ struct PanelView: View {
     private func accountLimits(_ usage: UsageSnapshot) -> some View {
         let others = monitor.otherAccounts
         let desktop = monitor.desktopOnlyOrgs
+        let live = monitor.liveAccount
         if others.isEmpty && desktop.isEmpty {
             activeDetail(usage)
-            if monitor.activeAccount != nil {
+            if live != nil {
                 Text("Outras contas aparecem aqui quando você as usa no `claude`.")
                     .font(Type.labelTiny)
                     .foregroundStyle(.tertiary)
@@ -147,12 +160,12 @@ struct PanelView: View {
                 || !others.contains { $0.uuid == expandedAccount }
 
             if activeExpanded {
-                if let active = monitor.activeAccount {
-                    AccountLead(label: active.label, plan: monitor.activePlan, marker: .live)
+                if let live {
+                    AccountLead(label: live.label, plan: live.plan, marker: .live)
                 }
                 activeDetail(usage)
-            } else if let active = monitor.activeAccount {
-                AccountStrip(label: active.label, plan: monitor.activePlan,
+            } else if let live {
+                AccountStrip(label: live.label, plan: live.plan,
                              summary: accountSummary(usage), live: true, seenAt: nil) {
                     withAnimation(.easeOut(duration: 0.18)) { expandedAccount = nil }
                 }
@@ -198,6 +211,28 @@ struct PanelView: View {
         if usage.extraUsageEnabled, let u = usage.extraUsageUtilization {
             extraCredit(u)
         }
+
+        ghostDetail
+    }
+
+    /// Limits the *current* feed cannot carry, held on screen with their last value and the date
+    /// they were true. Switching feeds must never make a limit disappear without saying so — a row
+    /// that vanishes silently reads as "you no longer have this cap", which is the opposite of what
+    /// happened. Faded, and never counted as live.
+    @ViewBuilder
+    private var ghostDetail: some View {
+        if let seenAt = monitor.ghostSeenAt {
+            ForEach(monitor.ghostWindows) { w in
+                StaleLimitRow(window: w, seenAt: seenAt,
+                              note: w.key.hasPrefix("weekly_scoped")
+                                  ? "o app não publica por modelo"
+                                  : "o app não publica esta janela")
+                    .opacity(0.55)
+            }
+            if let extra = monitor.ghostExtraCredit {
+                extraCredit(extra).opacity(0.55)
+            }
+        }
     }
 
     /// An inactive account rendered from its last-seen snapshot: plain bars, no live rate graph.
@@ -238,7 +273,8 @@ struct PanelView: View {
             }
             .padding(.top, 2)
         } else {
-            Text("Traçando a evolução desta janela — uma amostra a cada 2 min.")
+            let cadence = monitor.usage?.source == .desktopApp ? "5 min" : "2 min"
+            Text("Traçando a evolução desta janela — uma amostra a cada \(cadence).")
                 .font(Type.labelTiny)
                 .foregroundStyle(.tertiary)
         }

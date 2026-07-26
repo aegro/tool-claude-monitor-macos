@@ -18,6 +18,21 @@ final class Monitor: ObservableObject {
     @Published private(set) var loadingUsage = false
     @Published private(set) var ledger = LedgerSnapshot()
 
+    /// What each of the two feeds is doing, drawn as the provenance bar. Kept separate from
+    /// `usage` because the panel has to be able to say "these numbers are live, and by the way the
+    /// terminal login is dead" — the state that used to be invisible.
+    @Published private(set) var feeds = FeedState()
+
+    /// The organization whose numbers `usage` currently holds. Not always the terminal identity:
+    /// once the terminal token dies the live detail belongs to whichever organization the desktop
+    /// app is driving, which can be a different one entirely.
+    @Published private(set) var liveOrg: String?
+
+    /// The last thing the API gave us this run. Outlives a failed poll so the windows the desktop
+    /// feed cannot carry can still be drawn as ghosts, and so the weekly reset keeps its anchor.
+    private var apiSnapshot: UsageSnapshot?
+    private var apiSnapshotOrg: String?
+
     /// The account Claude Code has active right now (from ~/.claude.json). Drives the multi-account
     /// view; nil means we could not read an identity, so the panel shows the single-account layout.
     @Published private(set) var activeAccount: AccountIdentity?
@@ -145,22 +160,39 @@ final class Monitor: ObservableObject {
         // Two small JSON files off the same cadence as the API poll, so a desktop-side switch
         // shows up on the next refresh instead of only at relaunch.
         desktopOrgs = ClaudeDesktop.organizationUsage()
+        let desktopSeries = ClaudeDesktop.samplesByOrg()
 
         let identity = ClaudeConfig.activeAccount()
         if identity?.key != lastAccountKey {
             cachedCreds = nil
             usage = nil
             usageError = nil
+            apiSnapshot = nil
+            apiSnapshotOrg = nil
             lastAccountKey = identity?.key
         }
         activeAccount = identity
 
+        await pollTerminalFeed(identity: identity)
+        applyFeeds(desktopSeries)
+    }
+
+    /// The preferred feed: our own read of the API, with the terminal's token.
+    private func pollTerminalFeed(identity: AccountIdentity?) async {
         do {
             let creds = try credentials()
+            // Fail on the expiry we can read rather than on the 401 it is about to earn. Same
+            // outcome, but it names the problem — and this is the exact state the Monitor sat in
+            // for twenty-one hours reporting nothing: the CLI owns the refresh, and if you have
+            // stopped using the CLI, nobody renews it.
+            guard !creds.isExpired else { throw Keychain.Failure.expired }
+
             let snap = try await fetchUsage(creds: creds)
-            usage = snap
+            apiSnapshot = snap
+            apiSnapshotOrg = identity?.organizationUuid
             usageError = nil
-            record(snap)
+            feeds.terminal = .live(at: snap.fetchedAt)
+
             if let id = identity {
                 accounts.record(uuid: id.key, label: id.label,
                                 plan: creds.subscriptionType ?? id.planFallback,
@@ -168,16 +200,96 @@ final class Monitor: ObservableObject {
             }
         } catch {
             usageError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            feeds.terminal = .broken(FeedState.shortReason(for: error))
         }
     }
 
-    /// Accounts other than the active one, most-recently-seen first — rendered as the collapsible
-    /// strips beneath the active account. Empty until a second account has been used at least once,
-    /// and empty while the active identity is unknown (we cannot say which cached account is the
-    /// "other" one, so we fall back to the single-account layout rather than guessing).
+    /// Picks which feed the panel draws from, and records the result in the history.
+    ///
+    /// The API wins whenever it answered — it is the only one carrying the per-model windows, the
+    /// server's own severity and the extra credit. The desktop app's file is the standby: same
+    /// server numbers, five-minute cadence, no credential involved.
+    private func applyFeeds(_ byOrg: [String: [DesktopSample]]) {
+        // Whichever organization was sampled most recently is the one the desktop app is driving.
+        let newest = byOrg
+            .compactMap { org, series in series.last.map { (org: org, at: $0.at) } }
+            .max { $0.at < $1.at }
+
+        feeds.desktop = newest.map {
+            DesktopUsage.isCurrent($0.at) ? .live(at: $0.at) : .stale(at: $0.at)
+        } ?? .missing
+
+        if case .live = feeds.terminal, let api = apiSnapshot {
+            adopt(api, org: apiSnapshotOrg)
+            return
+        }
+
+        if let newest, let series = byOrg[newest.org],
+           let snap = DesktopUsage.snapshot(series: series,
+                                            weeklyAnchor: weeklyAnchor(forOrg: newest.org)) {
+            adopt(snap, org: newest.org)
+            return
+        }
+
+        // Neither feed answered. Hold on to the last API reading rather than blanking the panel:
+        // an old number with its age on it still beats nothing, and the provenance bar says why.
+        adopt(apiSnapshot, org: apiSnapshotOrg)
+    }
+
+    private func adopt(_ snap: UsageSnapshot?, org: String?) {
+        usage = snap
+        liveOrg = org
+        if let snap { record(snap, org: org) }
+    }
+
+    /// Any weekly `resets_at` the API has ever reported for this organization. The weekly window
+    /// is strictly periodic, so even a week-old anchor winds forward to today's reset exactly.
+    private func weeklyAnchor(forOrg org: String) -> Date? {
+        if apiSnapshotOrg == org, let at = apiSnapshot?.weekly?.resetsAt { return at }
+        return record(forOrg: org)?.snapshot.weekly?.resetsAt
+    }
+
+    /// Who the expanded, live detail belongs to. Normally the terminal identity; once the terminal
+    /// token dies it is the organization the desktop app is driving, which is not necessarily the
+    /// same one — so the lead row has to be told, rather than assuming `activeAccount`.
+    struct LiveAccount: Equatable {
+        var label: String
+        var plan: String?
+        var organizationUuid: String?
+    }
+
+    var liveAccount: LiveAccount? {
+        if usage?.source == .desktopApp, let org = liveOrg,
+           let seen = desktopOrgs.first(where: { $0.organizationUuid == org }) {
+            // The token's own subscriptionType, if we have ever held one for this organization,
+            // beats the type the desktop config carries: the same organization reads "team" there
+            // and "max" on the token, and the badge is about the plan, not the org kind.
+            return LiveAccount(label: seen.label,
+                               plan: record(forOrg: org)?.plan ?? seen.plan,
+                               organizationUuid: org)
+        }
+        guard let id = activeAccount else { return nil }
+        return LiveAccount(label: id.label, plan: activePlan, organizationUuid: id.organizationUuid)
+    }
+
+    /// The persisted entry for one organization, whichever account it was reached under.
+    private func record(forOrg org: String) -> AccountRecord? {
+        accounts.records.first { $0.key.hasSuffix(":\(org)") }?.value
+    }
+
+    /// Accounts other than the one on show, most-recently-seen first — the collapsible strips
+    /// beneath it. While a desktop organization holds the live slot, the terminal account is no
+    /// longer "the active one": it drops down here with its last-seen numbers, like any other.
     var otherAccounts: [AccountRecord] {
-        guard let active = activeAccount else { return [] }
-        return accounts.others(activeUuid: active.key)
+        // No strips while we cannot name who is on show: we would have no way to tell which cached
+        // record is the "other" one, and could end up listing the live account beside itself.
+        guard liveAccount != nil else { return [] }
+        let activeKey = usage?.source == .api ? activeAccount?.key : nil
+        let liveSuffix = liveOrg.map { ":\($0)" }
+        return accounts.others(activeUuid: activeKey).filter { rec in
+            guard let liveSuffix else { return true }
+            return !rec.uuid.hasSuffix(liveSuffix)
+        }
     }
 
     /// Plan badge for the active account: the token's own subscriptionType (most accurate, stored
@@ -187,12 +299,58 @@ final class Monitor: ObservableObject {
         return accounts.records[id.key]?.plan ?? id.planFallback
     }
 
-    /// Organizations the desktop app has used that the terminal login does not cover. They render
+    /// Windows the API had that the desktop feed cannot carry — the per-model weekly caps, and the
+    /// extra credit. Drawn faded, with their last value and when it was seen, so that changing
+    /// feeds never makes a limit vanish without saying so.
+    ///
+    /// Only ever from the same organization: another organization's per-model numbers under this
+    /// organization's heading would be a different account's data wearing the wrong name.
+    /// True while the panel is being carried by the desktop feed, which is the only time anything
+    /// is missing and therefore the only time a ghost means something. Every ghost accessor is
+    /// gated on it: without the gate the extra credit would draw a second, faded copy of itself
+    /// underneath the live one.
+    private var showingFallback: Bool { usage?.source == .desktopApp }
+
+    var ghostWindows: [LimitWindow] {
+        guard showingFallback, let api = carriedOverAPISnapshot else { return [] }
+        // Matching on key alone is not enough: against an older payload shape the same two windows
+        // come back as `five_hour`/`seven_day` instead of `session`/`weekly_all`, and every one of
+        // them would ghost underneath the live row it duplicates. Match on the role instead.
+        return api.windows.filter { !$0.isSession && !Self.weeklyAllKeys.contains($0.key) }
+    }
+
+    /// The keys the two windows the desktop feed already carries have gone by.
+    private static let weeklyAllKeys: Set<String> = ["weekly_all", "seven_day"]
+
+    var ghostExtraCredit: Double? {
+        guard showingFallback, let api = carriedOverAPISnapshot, api.extraUsageEnabled else { return nil }
+        return api.extraUsageUtilization
+    }
+
+    /// When the ghosts were last true, or nil when there are none to date-stamp.
+    var ghostSeenAt: Date? {
+        guard showingFallback, !ghostWindows.isEmpty || ghostExtraCredit != nil else { return nil }
+        return carriedOverAPISnapshot?.fetchedAt
+    }
+
+    /// The most recent API reading for the organization on show. Falls back to the one persisted in
+    /// `accounts.json`, which matters more than it looks: with an expired token the app can run for
+    /// hours without a single successful poll, so an in-memory-only snapshot would mean the ghosts
+    /// never appear at all — exactly the case this whole fallback exists for.
+    private var carriedOverAPISnapshot: UsageSnapshot? {
+        guard let org = liveOrg else { return nil }
+        if apiSnapshotOrg == org, let api = apiSnapshot { return api }
+        guard let stored = record(forOrg: org)?.snapshot, stored.source == .api else { return nil }
+        return stored
+    }
+
+    /// Organizations the desktop app has used that nothing else on the panel covers. They render
     /// as a plain strip and never expand: the desktop app records only the two headline
-    /// percentages, so there is no reset, no pace and no per-model window to open into.
+    /// percentages, so there is no per-model window to open into.
     var desktopOnlyOrgs: [DesktopOrgUsage] {
         var covered = Set(accounts.records.keys.compactMap { $0.split(separator: ":").last.map(String.init) })
         if let org = activeAccount?.organizationUuid { covered.insert(org) }
+        if let org = liveOrg { covered.insert(org) }
         return desktopOrgs.filter { !covered.contains($0.organizationUuid) }
     }
 
@@ -223,21 +381,24 @@ final class Monitor: ObservableObject {
         }
     }
 
-    private func record(_ snap: UsageSnapshot) {
+    private func record(_ snap: UsageSnapshot, org: String?) {
         history.append(UsageSample(
             at: snap.fetchedAt,
             session: snap.session?.utilization,
             sessionResetsAt: snap.session?.resetsAt,
             weekly: snap.weekly?.utilization,
-            tokensCumulative: ledger.block.total
+            tokensCumulative: ledger.block.total,
+            org: org
         ))
         history.flush()
     }
 
     // MARK: derived
 
-    var sessionBurn: BurnRate? { history.burnRate(\.session) }
-    var weeklyBurn: BurnRate? { history.burnRate(\.weekly, window: 6 * 3600, minPoints: 8, minSpan: 3600) }
+    var sessionBurn: BurnRate? { history.burnRate(\.session, org: liveOrg) }
+    var weeklyBurn: BurnRate? {
+        history.burnRate(\.weekly, org: liveOrg, window: 6 * 3600, minPoints: 8, minSpan: 3600)
+    }
 
     /// Whichever comes first decides the story: you run out, or the window resets.
     enum Outlook {
@@ -262,11 +423,11 @@ final class Monitor: ObservableObject {
 
     var blockTrail: [(Date, Double)] {
         guard let reset = usage?.session?.resetsAt else { return [] }
-        return history.series(\.session, since: reset.addingTimeInterval(-5 * 3600))
+        return history.series(\.session, since: reset.addingTimeInterval(-5 * 3600), org: liveOrg)
     }
 
     var weekTrail: [(Date, Double)] {
-        history.series(\.weekly, since: Date().addingTimeInterval(-7 * 24 * 3600))
+        history.series(\.weekly, since: Date().addingTimeInterval(-7 * 24 * 3600), org: liveOrg)
     }
 
     func tokens(for session: ClaudeSession) -> TokenCounts {

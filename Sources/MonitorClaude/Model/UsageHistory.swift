@@ -7,6 +7,24 @@ struct UsageSample: Codable, Equatable {
     var sessionResetsAt: Date?
     var weekly: Double?
     var tokensCumulative: Int64?   // local ledger, for the token trend line
+    /// Which organization these percentages belong to. Two feeds can be watching two different
+    /// organizations at once, and a trend line drawn across both would be a line through two
+    /// unrelated series. Nil on samples written before this was recorded.
+    var org: String?
+}
+
+/// Hand-decoded so that a history written before `org` existed still loads — the file holds up to
+/// thirty days of samples and a synthesized decoder would throw the lot away on upgrade.
+extension UsageSample {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        at = try c.decode(Date.self, forKey: .at)
+        session = try c.decodeIfPresent(Double.self, forKey: .session)
+        sessionResetsAt = try c.decodeIfPresent(Date.self, forKey: .sessionResetsAt)
+        weekly = try c.decodeIfPresent(Double.self, forKey: .weekly)
+        tokensCumulative = try c.decodeIfPresent(Int64.self, forKey: .tokensCumulative)
+        org = try c.decodeIfPresent(String.self, forKey: .org)
+    }
 }
 
 /// A derived rate of change: how fast a limit window is filling.
@@ -52,9 +70,12 @@ final class UsageHistory {
         dirty = true
     }
 
-    func series(_ pick: (UsageSample) -> Double?, since: Date) -> [(Date, Double)] {
+    /// Samples for one organization only. Matching on equality means samples from before `org`
+    /// was recorded (nil) are used only while we cannot name the current organization either —
+    /// unattributed numbers are never mixed into a named organization's line.
+    func series(_ pick: (UsageSample) -> Double?, since: Date, org: String?) -> [(Date, Double)] {
         samples.compactMap { s in
-            guard s.at >= since, let v = pick(s) else { return nil }
+            guard s.at >= since, s.org == org, let v = pick(s) else { return nil }
             return (s.at, v)
         }
     }
@@ -63,10 +84,11 @@ final class UsageHistory {
     /// Regression rather than a two-point delta because utilization advances in steps.
     /// Refuses to answer from a thin sample. A slope fitted to three points ten minutes apart
     /// will happily predict that you run out of quota before lunch; better to say "still measuring".
-    func burnRate(_ pick: (UsageSample) -> Double?, window: TimeInterval = 60 * 60,
+    func burnRate(_ pick: (UsageSample) -> Double?, org: String?,
+                  window: TimeInterval = 60 * 60,
                   minPoints: Int = 5, minSpan: TimeInterval = 15 * 60) -> BurnRate? {
         let since = Date().addingTimeInterval(-window)
-        let pts = series(pick, since: since)
+        let pts = series(pick, since: since, org: org)
         guard pts.count >= minPoints else { return nil }
 
         let spanMinutes = pts.last!.0.timeIntervalSince(pts.first!.0) / 60

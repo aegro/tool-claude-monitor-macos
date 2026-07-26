@@ -233,53 +233,29 @@ final class Monitor: ObservableObject {
     /// server's own severity and the extra credit. The desktop app's file is the standby: same
     /// server numbers, five-minute cadence, no credential involved.
     private func applyFeeds(_ byOrg: [String: [DesktopSample]]) {
-        // Whichever organization was sampled most recently is the one the desktop app is driving.
-        // Ties break on the uuid so the choice cannot flip between launches on a dictionary's
-        // iteration order — that would swap the whole panel to a different organization.
-        let newest = byOrg
-            .compactMap { org, series in series.last.map { (org: org, at: $0.at) } }
-            .max { ($0.at, $1.org) < ($1.at, $0.org) }
+        let newest = FeedArbiter.newestOrg(in: byOrg)
 
         feeds.desktop = newest.map {
             DesktopUsage.isCurrent($0.at) ? .live(at: $0.at) : .stale(at: $0.at)
         } ?? .missing
 
-        let desktopSnapshot = newest.flatMap { n in
+        let desktopOffer = newest.flatMap { n in
             byOrg[n.org]
                 .flatMap { DesktopUsage.snapshot(series: $0, weeklyAnchor: weeklyAnchor(forOrg: n.org)) }
-                .map { (snapshot: $0, org: n.org) }
+                .map { FeedArbiter.Offer(snapshot: $0, org: n.org) }
         }
 
-        // Freshness decides, not mere existence. Adopting whichever feed merely *answered* let a
-        // days-old desktop reading displace an API snapshot from two minutes ago — the panel would
-        // jump backwards in time and call the older number live.
-        let terminalIsLive: Bool = if case .live = feeds.terminal { true } else { false }
-        if terminalIsLive, let api = apiSnapshot {
-            adopt(api, org: apiSnapshotOrg, health: feeds.terminal)
-            return
-        }
-        if let desktop = desktopSnapshot, case .live = feeds.desktop {
-            adopt(desktop.snapshot, org: desktop.org, health: feeds.desktop)
-            return
-        }
+        let choice = FeedArbiter.choose(
+            api: apiSnapshot.map { FeedArbiter.Offer(snapshot: $0, org: apiSnapshotOrg) },
+            terminal: feeds.terminal,
+            desktop: desktopOffer,
+            desktopHealth: feeds.desktop
+        )
 
-        // Nothing current anywhere. Show the freshest thing we hold rather than blanking the panel
-        // — an old number carrying its age still beats nothing — but hand the view the health that
-        // goes with it, so it is never drawn as live.
-        let carried = apiSnapshot.map { (snapshot: $0, org: apiSnapshotOrg, health: feeds.terminal) }
-        let stale = desktopSnapshot.map { (snapshot: $0.snapshot, org: Optional($0.org), health: feeds.desktop) }
-        let best = [carried, stale]
-            .compactMap { $0 }
-            .max { $0.snapshot.fetchedAt < $1.snapshot.fetchedAt }
-
-        adopt(best?.snapshot, org: best?.org ?? nil, health: best?.health ?? .missing)
-    }
-
-    private func adopt(_ snap: UsageSnapshot?, org: String?, health: FeedState.Health) {
-        usage = snap
-        liveOrg = org
-        liveHealth = snap == nil ? .missing : health
-        if let snap { record(snap, org: org) }
+        usage = choice.snapshot
+        liveOrg = choice.org
+        liveHealth = choice.snapshot == nil ? .missing : choice.health
+        if let snap = choice.snapshot { record(snap, org: choice.org) }
     }
 
     /// Any weekly `resets_at` the API has ever reported for this organization. The weekly window

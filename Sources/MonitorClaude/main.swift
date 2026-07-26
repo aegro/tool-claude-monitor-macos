@@ -40,7 +40,9 @@ if CommandLine.arguments.contains("--dump-desktop-feed") {
 
     for (org, series) in byOrg.sorted(by: { ($0.value.last?.at ?? .distantPast) > ($1.value.last?.at ?? .distantPast) }) {
         let label = ClaudeDesktop.label(forOrg: org, name: names[org]?.name)
-        print("▸ \(label)  (\(org))  \(series.count) amostras")
+        // Truncated like every other identifier this repo prints: the output of a debug hatch on a
+        // public repo ends up pasted into issues, and eight characters already disambiguate.
+        print("▸ \(label)  (\(org.prefix(8)))  \(series.count) amostras")
         guard let last = series.last else { continue }
         print("   última: \(iso.string(from: last.at))  5h \(last.fiveHour)%  semana \(last.weekly)%"
               + "  \(DesktopUsage.isCurrent(last.at) ? "· ao vivo" : "· parada")")

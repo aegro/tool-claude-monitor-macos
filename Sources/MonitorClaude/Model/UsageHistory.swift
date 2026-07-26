@@ -50,19 +50,51 @@ final class UsageHistory {
     private let retention: TimeInterval = 30 * 24 * 3600
     private var dirty = false
 
-    init() {
-        let dir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Farol", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        url = dir.appendingPathComponent("usage-history.json")
+    /// `storedAt` exists so the ordering and de-duplication rules can be exercised against a
+    /// throwaway file instead of the user's real thirty days of history.
+    init(storedAt: URL? = nil) {
+        if let storedAt {
+            url = storedAt
+        } else {
+            let dir = FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Farol", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            url = dir.appendingPathComponent("usage-history.json")
+        }
         load()
     }
 
+    /// Files an observation, keeping the array ascending by time and free of repeats.
+    ///
+    /// Both properties used to hold for free, back when every sample was stamped `Date()` at the
+    /// moment of a successful poll. They stopped the day a second feed arrived: the desktop app's
+    /// readings carry the *sample's* own timestamp, minutes older than the poll that noticed them,
+    /// so alternating feeds appended backwards in time — and a feed frozen on one reading appended
+    /// that same reading again on every poll, because the guard only ever looked at the last
+    /// element. Both corrupt the least-squares fit and draw the trail folding back on itself.
     func append(_ s: UsageSample) {
-        // The endpoint is cached server-side; identical consecutive reads are common.
-        if let last = samples.last, abs(last.at.timeIntervalSince(s.at)) < 5 { return }
-        samples.append(s)
+        let slot = samples.lastIndex { $0.at <= s.at }.map { $0 + 1 } ?? 0
+
+        // A repeat of something already held for this organization — the newest sample, or one
+        // filed several polls ago. The endpoint is cached server-side, so identical consecutive
+        // reads are normal and must not compound.
+        //
+        // Scanned by time rather than by a fixed number of neighbours: several organizations can
+        // be sampled in the same instant, which pushes an earlier duplicate arbitrarily far from
+        // the insertion point. The array is sorted, so this walks only what shares the window.
+        var i = slot - 1
+        while i >= 0, s.at.timeIntervalSince(samples[i].at) < 5 {
+            if samples[i].org == s.org { return }
+            i -= 1
+        }
+        var j = slot
+        while j < samples.count, samples[j].at.timeIntervalSince(s.at) < 5 {
+            if samples[j].org == s.org { return }
+            j += 1
+        }
+
+        samples.insert(s, at: slot)
         let cutoff = Date().addingTimeInterval(-retention)
         if samples.first.map({ $0.at < cutoff }) == true {
             samples.removeAll { $0.at < cutoff }

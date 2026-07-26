@@ -15,8 +15,19 @@ struct LimitWindow: Equatable, Identifiable, Codable {
 
     var id: String { key }
 
-    /// The server never states the window length, so it is implied by the kind.
-    var duration: TimeInterval { isSession ? 5 * 3600 : 7 * 24 * 3600 }
+    /// The server never states the window length, so it is implied by the kind. These two are the
+    /// canonical lengths — the reset derivation and the trail axis both read them from here, so
+    /// there is one place to change if Anthropic ever moves a window.
+    static let sessionLength: TimeInterval = 5 * 3600
+    static let weeklyLength: TimeInterval = 7 * 24 * 3600
+
+    /// Every key the account-wide weekly window has gone by: the current payload calls it
+    /// `weekly_all`, the older flat shape `seven_day`. Anything asking "is this *the* weekly
+    /// window?" must ask here — one place that answered only `weekly_all` while another answered
+    /// both meant the weekly reset was dropped from the live row and from the ghosts at once.
+    static let weeklyAllKeys: Set<String> = ["weekly_all", "seven_day"]
+
+    var duration: TimeInterval { isSession ? Self.sessionLength : Self.weeklyLength }
 
     var startsAt: Date? { resetsAt.map { $0.addingTimeInterval(-duration) } }
 
@@ -78,7 +89,7 @@ struct UsageSnapshot: Equatable, Codable {
     var source: UsageSource = .api
 
     var session: LimitWindow? { windows.first(where: \.isSession) }
-    var weekly: LimitWindow? { windows.first { $0.key == "weekly_all" } }
+    var weekly: LimitWindow? { windows.first { LimitWindow.weeklyAllKeys.contains($0.key) } }
     var scoped: [LimitWindow] { windows.filter { $0.key.hasPrefix("weekly_scoped") } }
 }
 

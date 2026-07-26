@@ -22,26 +22,43 @@ struct FeedState: Equatable {
     var terminal: Health = .missing
     var desktop: Health = .missing
 
-    /// True when nothing anywhere is feeding the panel.
-    var allDown: Bool {
-        if case .live = terminal { return false }
-        if case .live = desktop { return false }
-        return true
-    }
-
-    /// The one or two words the provenance bar shows next to a failing terminal feed. Deliberately
-    /// terse: the bar is one line, and the sentence explaining what to do is in the error card.
+    /// The one or two words the provenance bar shows next to a failing feed. Deliberately terse:
+    /// the bar is one line, and the sentence explaining what to do is stated in full below it.
+    ///
+    /// Each error type answers for itself through `ShortFailure`, so adding a case fails the build
+    /// in the file where the case was added. A `switch` over `Error` here instead would need a
+    /// `default:`, and a new failure would silently degrade to "falhou" — under-reporting a state
+    /// the model can already name precisely.
     static func shortReason(for error: Error) -> String {
-        switch error {
-        case Keychain.Failure.expired: return "vencido"
-        case Keychain.Failure.notFound, Keychain.Failure.noAccountToken: return "sem login"
-        case Keychain.Failure.denied: return "sem acesso"
-        case Keychain.Failure.malformed: return "ilegível"
-        case UsageError.unauthorized: return "recusado"
-        case UsageError.forbidden: return "sem escopo"
-        case UsageError.transport: return "sem rede"
-        case UsageError.http(let code): return "erro \(code)"
-        default: return "falhou"
+        (error as? ShortFailure)?.shortReason ?? "falhou"
+    }
+}
+
+/// A failure that can name itself in one or two words, for the provenance bar.
+protocol ShortFailure {
+    var shortReason: String { get }
+}
+
+extension Keychain.Failure: ShortFailure {
+    var shortReason: String {
+        switch self {
+        case .expired: return "vencido"
+        case .notFound, .noAccountToken: return "sem login"
+        case .denied: return "sem acesso"
+        case .malformed: return "ilegível"
+        case .other(let status): return "erro \(status)"
+        }
+    }
+}
+
+extension UsageError: ShortFailure {
+    var shortReason: String {
+        switch self {
+        case .unauthorized: return "recusado"
+        case .forbidden: return "sem escopo"
+        case .decode: return "resposta estranha"
+        case .transport: return "sem rede"
+        case .http(let code): return "erro \(code)"
         }
     }
 }

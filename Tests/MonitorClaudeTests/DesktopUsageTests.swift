@@ -76,16 +76,90 @@ struct DesktopUsageTests {
         #expect(r?.exact == false)
     }
 
-    /// The fall is the better witness, so it wins even when a rise came later. Taken from the real
-    /// series of 24/07, where the API's own `resets_at` was 00:00 — the fall gives exactly that,
-    /// while the later rise at 19:08→19:18 would have said 00:10.
-    @Test func quedaTemPrecedênciaSobreSubidaPosterior() {
+    /// The fall is the better witness, so it wins even when a *viable* rise came later.
+    ///
+    /// The rise here is deliberately eligible — a five-minute bracket, well inside `tightBracket`,
+    /// which on its own would anchor at 22:10 and answer 03:10 inexactly. Only because the fall
+    /// takes precedence does this come back as 03:00 exact. An earlier version of this test used a
+    /// ten-minute rise bracket, which `tightBracket` rejected before precedence was ever consulted
+    /// — so it passed whether or not the precedence existed, and proved nothing.
+    @Test func quedaTemPrecedênciaSobreSubidaViável() {
         let s = series([
-            (t(21, 58), 32), (t(22, 3), 0), (t(22, 8), 0), (t(22, 18), 2),
+            (t(21, 58), 32), (t(22, 3), 0), (t(22, 8), 0), (t(22, 13), 2),
         ])
         let r = DesktopUsage.sessionReset(series: s, now: t(23, 0))
         #expect(r?.at == t(3, 0, day: 25))
         #expect(r?.exact == true)
+
+        // A prova de que a subida sozinha teria respondido outra coisa: sem a queda na série,
+        // o mesmo par 22:08→22:13 ancora em 22:10 e responde 03:10, aproximado.
+        let semQueda = series([(t(22, 8), 0), (t(22, 13), 2)])
+        let alt = DesktopUsage.sessionReset(series: semQueda, now: t(23, 0))
+        #expect(alt?.at == t(3, 10, day: 25))
+        #expect(alt?.exact == false)
+    }
+
+    /// A fall straddling a hole in the series says almost nothing about where the boundary sits.
+    /// The real file has gaps of 12, 22, 44 and 595 minutes; answering across one of those put the
+    /// reset hours out, and the number feeds the pace marker, the outlook and the trail's axis.
+    @Test func quedaComGapAcimaDoTetoÉRecusada() {
+        let s = series([(t(10, 0), 80), (t(16, 0), 5)])
+        #expect(DesktopUsage.sessionReset(series: s, now: t(16, 30)) == nil)
+
+        // No teto exato (30 min) ainda responde, aproximado.
+        let noLimite = series([(t(21, 40), 80), (t(22, 10), 5)])
+        #expect(DesktopUsage.sessionReset(series: noLimite, now: t(23, 0))?.at == t(3, 0, day: 25))
+    }
+
+    /// Half of all five-minute brackets contain no ten-minute mark at all. Answering those with the
+    /// raw midpoint put the reset at a time the grid says cannot exist — "reseta ≈17:02".
+    @Test func resetDeduzidoSempreCaiNaGrade() {
+        for minute in 0..<60 {
+            let s = series([(t(12, minute), 40), (t(12, minute).addingTimeInterval(300), 1)])
+            guard let r = DesktopUsage.sessionReset(series: s, now: t(14, 0)) else { continue }
+            let secondsIntoGrid = r.at.timeIntervalSince1970
+                .truncatingRemainder(dividingBy: DesktopUsage.resetGrid)
+            #expect(secondsIntoGrid == 0, "reset fora da grade para o minuto \(minute)")
+        }
+    }
+
+    /// A rise straddling a gap wider than one cadence is refused, but the *fall* must still be able
+    /// to answer across a bracket that wide — the two limits are different on purpose.
+    @Test func subidaEQuedaTêmTetosDiferentes() {
+        let bracket = series([(t(21, 48), 0), (t(22, 3), 2)])       // 15 min, subida
+        #expect(DesktopUsage.sessionReset(series: bracket, now: t(23, 0)) == nil)
+
+        let queda = series([(t(21, 48), 40), (t(22, 3), 0)])         // 15 min, queda
+        #expect(DesktopUsage.sessionReset(series: queda, now: t(23, 0)) != nil)
+    }
+
+    /// A percentage that rounds to zero is still zero for the rise anchor's purposes. Testing
+    /// `prev == 0` on a Double meant the anchor would quietly stop working the day the desktop app
+    /// started writing fractions.
+    @Test func subidaReconheceZeroFracionário() {
+        let s = [
+            DesktopSample(at: t(19, 57), fiveHour: 0.4, weekly: 3),
+            DesktopSample(at: t(20, 2), fiveHour: 1.2, weekly: 3),
+        ]
+        #expect(DesktopUsage.sessionReset(series: s, now: t(21, 0))?.at == t(1, 0, day: 25))
+    }
+
+    /// An anchor at most one week old is still the server's word; older than that we are
+    /// extrapolating across a period in which a plan change could have moved the boundary.
+    @Test func âncoraSemanalRecenteÉExataEAntigaNão() {
+        #expect(DesktopUsage.weeklyReset(anchor: t(15, 0, day: 31), now: t(20, 0)).exact)
+        #expect(DesktopUsage.weeklyReset(anchor: t(15, 0, day: 20), now: t(20, 0)).exact)
+        #expect(!DesktopUsage.weeklyReset(anchor: t(15, 0, day: 10), now: t(20, 0)).exact)
+    }
+
+    /// `gridMarks` walks an interval that comes from another application's file. A hard cap is what
+    /// stands between a unit-slipped timestamp there and gigabytes of Dates on the main actor.
+    @Test func gradeRecusaIntervaloAbsurdo() {
+        let sane = DesktopUsage.gridMarks(after: t(12, 0), notAfter: t(12, 30))
+        #expect(sane.count == 3)
+        #expect(DesktopUsage.gridMarks(after: t(12, 0),
+                                       notAfter: Date(timeIntervalSince1970: 1_784_931_561_009)).isEmpty)
+        #expect(DesktopUsage.gridMarks(after: t(12, 30), notAfter: t(12, 0)).isEmpty)
     }
 
     /// A rise straddling a gap wider than one cadence says too little about where inside it the
@@ -147,8 +221,9 @@ struct DesktopUsageTests {
         let weekly = try #require(snap.weekly)
         #expect(weekly.utilization == 36)
         #expect(weekly.resetsAt == t(15, 0, day: 31))
-        // Periódica: o âncora rolado cai no instante real, então não é aproximação.
-        #expect(weekly.resetIsExact)
+        // Âncora de duas semanas atrás: a aritmética é exata, a premissa é que ninguém re-ancorou
+        // a semana no servidor nesse meio-tempo. Dois passos de projeção já pedem o "≈".
+        #expect(!weekly.resetIsExact)
 
         // O app não publica janela por modelo nem crédito extra; nada deve ser fabricado.
         #expect(snap.scoped.isEmpty)

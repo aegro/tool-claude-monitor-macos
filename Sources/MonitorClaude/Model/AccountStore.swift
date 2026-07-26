@@ -13,6 +13,16 @@ struct AccountRecord: Codable, Equatable, Identifiable {
     var lastSeen: Date
 
     var id: String { uuid }
+
+    /// The organization half of `uuid`, whose format is `accountUuid:organizationUuid` and is
+    /// owned by `AccountIdentity.key`. One accessor rather than a suffix test or a `split` at each
+    /// call site: those two disagree on a key with no colon, which `AccountIdentity.key` does mint
+    /// when the organization is unknown.
+    var organizationUuid: String? {
+        guard let colon = uuid.lastIndex(of: ":") else { return nil }
+        let org = String(uuid[uuid.index(after: colon)...])
+        return org.isEmpty ? nil : org
+    }
 }
 
 /// Learn-as-you-go registry of accounts, persisted next to the usage history. An account shows

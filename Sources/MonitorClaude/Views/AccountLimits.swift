@@ -58,7 +58,7 @@ struct AccountLead: View {
             case .live:
                 LiveDot()
             case .lastSeen(let at):
-                Text("última-vista · há \(Fmt.duration(Date().timeIntervalSince(at)))")
+                Text("última-vista · \(Fmt.ago(at))")
                     .font(Type.labelTiny)
                     .foregroundStyle(.tertiary)
             }
@@ -111,7 +111,7 @@ struct AccountStrip: View {
                 if live {
                     LiveDot()
                 } else if let seenAt {
-                    Text("há \(Fmt.duration(Date().timeIntervalSince(seenAt)))")
+                    Text(Fmt.ago(seenAt))
                         .font(Type.labelTiny).foregroundStyle(.tertiary)
                 }
                 Image(systemName: trailingIcon)
@@ -164,6 +164,9 @@ struct FeedBar: View {
     /// Which feed the panel is currently drawing from, if any.
     let feeding: UsageSource?
     var detail: String?
+    /// False while the error card is on screen — it owns retry there, and two buttons a few pixels
+    /// apart running the same action is just noise.
+    var showsRetry = true
     var onRetry: () -> Void
 
     private var anythingBroken: Bool {
@@ -174,10 +177,14 @@ struct FeedBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            chip("terminal", feeds.terminal, feeding: feeding == .api)
-            chip("app", feeds.desktop, feeding: feeding == .desktopApp)
+            // Each feed ages against its own cadence: we poll the API on a user-set interval, the
+            // desktop app writes every five minutes. Both are re-judged here, on every render,
+            // rather than frozen at poll time — otherwise a feed that died one second after a poll
+            // keeps a lit dot until the next one, which is the whole failure this bar exists for.
+            chip("terminal", feeds.terminal, staleAfter: terminalStaleAfter, feeding: feeding == .api)
+            chip("app", feeds.desktop, staleAfter: DesktopUsage.staleAfter, feeding: feeding == .desktopApp)
             Spacer(minLength: 4)
-            if anythingBroken {
+            if anythingBroken && showsRetry {
                 Button("tentar de novo", action: onRetry)
                     .buttonStyle(.plain)
                     .font(.system(size: 9.5, weight: .semibold))
@@ -190,11 +197,15 @@ struct FeedBar: View {
         .background(Ink.track, in: RoundedRectangle(cornerRadius: 6))
     }
 
+    /// Two and a half poll intervals: one missed poll is a hiccup, two means it stopped.
+    private var terminalStaleAfter: TimeInterval { Settings.shared.usageIntervalSeconds * 2.5 }
+
     @ViewBuilder
-    private func chip(_ name: String, _ health: FeedState.Health, feeding: Bool) -> some View {
+    private func chip(_ name: String, _ health: FeedState.Health,
+                      staleAfter: TimeInterval, feeding: Bool) -> some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(tone(health))
+                .fill(tone(health, staleAfter: staleAfter))
                 .opacity(feeding ? 1 : 0.35)
                 .frame(width: 5, height: 5)
             Text(name)
@@ -213,12 +224,11 @@ struct FeedBar: View {
         return false
     }
 
-    private func tone(_ h: FeedState.Health) -> Color {
+    private func tone(_ h: FeedState.Health, staleAfter: TimeInterval) -> Color {
         switch h {
-        case .live: return Ink.ember
-        case .stale: return Ink.idle
+        case .live(let at): return Date().timeIntervalSince(at) <= staleAfter ? Ink.ember : Ink.idle
+        case .stale, .missing: return Ink.idle
         case .broken: return Ink.alarm
-        case .missing: return Ink.idle
         }
     }
 
@@ -260,7 +270,7 @@ struct StaleLimitRow: View {
             .frame(height: 5)
 
             HStack(spacing: 5) {
-                Text("visto \(Fmt.clock(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
                 Spacer(minLength: 2)
                 if let note { Text(note).font(Type.labelTiny).foregroundStyle(.tertiary) }
             }

@@ -179,8 +179,6 @@ struct SettingsView: View {
                 .foregroundStyle(Ink.ember)
                 .fixedSize(horizontal: false, vertical: true)
         }
-
-        note("Vale para o que abrir pelo claude-auto: no terminal, alias claude=claude-auto; no T3, o binário ~/.local/bin/claude-auto. Desligado, o claude-auto só repassa para o claude.")
     }
 
     private func setRouter(_ on: Bool) {

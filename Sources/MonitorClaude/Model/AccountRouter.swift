@@ -135,16 +135,21 @@ enum AccountRouter {
 
     /// Through `/usr/bin/security`, the reader the CLI's own keychain items already trust, so an
     /// extra account never raises a new keychain prompt for the Monitor.
-    static func credentials(for account: Account) -> Keychain.Credentials? {
+    static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         process.arguments = ["find-generic-password", "-s", keychainService(for: account), "-w"]
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch { return nil }
+        guard exited.wait(timeout: .now() + timeout) == .success else {
+            process.terminate()
+            return nil
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
         guard process.terminationStatus == 0,
               let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
               let root = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]

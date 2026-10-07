@@ -1,0 +1,132 @@
+import Foundation
+import Testing
+@testable import MonitorClaude
+
+struct AccountRouterTests {
+    let home = URL(fileURLWithPath: "/Users/exemplo/.claude-accounts")
+    let defaultDirectory = URL(fileURLWithPath: "/Users/exemplo/.claude")
+
+    private func config(_ json: String) throws -> AccountRouter.Config {
+        try #require(AccountRouter.parseConfig(Data(json.utf8), home: home, defaultDirectory: defaultDirectory))
+    }
+
+    @Test func lêRotaReservaEPrincipal() throws {
+        let cfg = try config("""
+        { "principal": "pessoal", "ativo": false,
+          "contas": { "pessoal": {}, "squad": { "nome": "Squad" }, "extra": {} },
+          "rota": ["pessoal", "squad"], "reserva": ["extra"], "limites": { "reserva": 5 } }
+        """)
+        #expect(cfg.enabled == false)
+        #expect(cfg.accounts.map(\.id) == ["pessoal", "squad", "extra"])
+        #expect(cfg.accounts.map(\.role) == [.route, .route, .reserve])
+        #expect(cfg.accounts[0].usesDefaultDirectory)
+        #expect(cfg.accounts[0].directory == defaultDirectory)
+        #expect(cfg.accounts[1].directory == home.appendingPathComponent("squad"))
+        #expect(cfg.accounts[1].label == "Squad")
+        #expect(cfg.reserveBelow == 5)
+        #expect(cfg.hasExtraAccounts)
+    }
+
+    @Test func semAtivoNaConfigOContaComoLigado() throws {
+        let cfg = try config(#"{ "contas": { "principal": {} } }"#)
+        #expect(cfg.enabled)
+        #expect(cfg.accounts.map(\.id) == ["principal"])
+        #expect(!cfg.hasExtraAccounts)
+    }
+
+    @Test func contaFantasmaNaRotaÉIgnorada() throws {
+        let cfg = try config(#"{ "contas": { "principal": {} }, "rota": ["principal", "sumiu"] }"#)
+        #expect(cfg.accounts.map(\.id) == ["principal"])
+    }
+
+    /// Same naming Claude Code uses for a CLAUDE_CONFIG_DIR login: the default service plus the
+    /// first 8 hex chars of sha256(dir). Expected value computed with `shasum -a 256`.
+    @Test func serviçoDoKeychainSegueOClaudeCode() throws {
+        let cfg = try config(#"{ "contas": { "principal": {}, "squad": {} }, "rota": ["principal", "squad"] }"#)
+        #expect(AccountRouter.keychainService(for: cfg.accounts[0]) == "Claude Code-credentials")
+        #expect(AccountRouter.keychainService(for: cfg.accounts[1]) == "Claude Code-credentials-e04c6421")
+    }
+
+    @Test func folgaÉCemMenosOMaiorUsoEntre5hESemana() {
+        let now = Date()
+        var snap = UsageSnapshot()
+        snap.windows = [
+            LimitWindow(key: "session", title: "", utilization: 40, resetsAt: now.addingTimeInterval(3600),
+                        severity: "normal", isSession: true, isActive: true),
+            LimitWindow(key: "weekly_all", title: "", utilization: 97, resetsAt: now.addingTimeInterval(86400),
+                        severity: "critical", isSession: false, isActive: true),
+        ]
+        #expect(AccountRouter.headroom(snap, now: now) == 3)
+
+        snap.windows[1].resetsAt = now.addingTimeInterval(-60)
+        #expect(AccountRouter.headroom(snap, now: now) == 60)
+    }
+
+    @Test func escolheAMaiorFolgaDaRotaEUsaReservaSóAbaixoDoLimite() throws {
+        let cfg = try config("""
+        { "contas": { "principal": {}, "squad": {}, "extra": {} },
+          "rota": ["principal", "squad"], "reserva": ["extra"] }
+        """)
+        let all: Set<String> = ["principal", "squad", "extra"]
+
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 10, "squad": 52, "extra": 90],
+                                   available: all, exhausted: [:]) == "squad")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 2, "squad": 1, "extra": 90],
+                                   available: all, exhausted: [:]) == "extra")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 30, "squad": 30],
+                                   available: all, exhausted: [:]) == "principal")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 10, "squad": 52],
+                                   available: all, exhausted: ["squad": Date().addingTimeInterval(600)]) == "principal")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 10, "squad": 52],
+                                   available: ["principal"], exhausted: [:]) == "principal")
+    }
+
+    @Test func lêAÚltimaTrocaEAsEsgotadasVigentes() throws {
+        let line = #"{"em":1791398700000,"de":"principal","para":"squad","motivo":"five_hour","sessao":"abc"}"#
+        let last = try #require(AccountRouter.parseSwitch(Data(line.utf8)))
+        #expect(last.from == "principal")
+        #expect(last.to == "squad")
+        #expect(last.reason == "five_hour")
+        #expect(last.at == Date(timeIntervalSince1970: 1_791_398_700))
+
+        let now = Date(timeIntervalSince1970: 1_791_400_000)
+        let exhausted = AccountRouter.parseExhausted(Data("""
+        { "principal": { "ate": 1791403600000, "motivo": "five_hour" },
+          "squad": { "ate": 1791390000000, "motivo": "seven_day" } }
+        """.utf8), now: now)
+        #expect(exhausted.keys.sorted() == ["principal"])
+    }
+
+    @Test func ligarEDesligarPreservaORestoDaConfig() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("router-\(UUID().uuidString)/config.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"principal":"pessoal","rota":["pessoal","squad"],"contas":{"pessoal":{},"squad":{}}}"#.utf8).write(to: url)
+
+        try AccountRouter.setEnabled(false, at: url)
+        let off = try config(String(decoding: try Data(contentsOf: url), as: UTF8.self))
+        #expect(off.enabled == false)
+        #expect(off.principal == "pessoal")
+        #expect(off.accounts.map(\.id) == ["pessoal", "squad"])
+
+        try AccountRouter.setEnabled(true, at: url)
+        #expect(try config(String(decoding: try Data(contentsOf: url), as: UTF8.self)).enabled)
+    }
+
+    @Test func instalarComandosCriaLinksSemSobrescreverArquivoDeVerdade() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bin = root.appendingPathComponent("bundle/bin")
+        let target = root.appendingPathComponent("local/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try Data("own".utf8).write(to: target.appendingPathComponent("claude-accounts"))
+
+        try AccountRouter.installCommands(from: bin, into: target)
+
+        #expect(try FileManager.default.destinationOfSymbolicLink(
+            atPath: target.appendingPathComponent("claude-auto").path) == bin.appendingPathComponent("claude-auto").path)
+        #expect(try String(contentsOf: target.appendingPathComponent("claude-accounts"), encoding: .utf8) == "own")
+    }
+}

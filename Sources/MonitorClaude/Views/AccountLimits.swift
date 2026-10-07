@@ -39,12 +39,28 @@ struct PlanBadge: View {
     }
 }
 
+/// Marks the account claude-auto would hand the next session to.
+struct RouterBadge: View {
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.branch").font(.system(size: 7.5, weight: .bold))
+            Text("roteador").font(.system(size: 8.5, weight: .bold))
+        }
+        .foregroundStyle(Ink.ember)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 0.5)
+        .background(Ink.ember.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+        .help("Conta que o claude-auto usaria agora")
+    }
+}
+
 /// The lead row above an expanded account: avatar · label · plan · marker (live dot, or the age
 /// of the last-seen data on the right).
 struct AccountLead: View {
     let label: String
     var plan: String?
     var marker: Marker
+    var routed = false
 
     enum Marker { case live, lastSeen(Date) }
 
@@ -53,6 +69,7 @@ struct AccountLead: View {
             AccountInitial(label: label)
             Text(label).font(Type.label)
             if let plan { PlanBadge(plan: plan) }
+            if routed { RouterBadge() }
             Spacer(minLength: 4)
             switch marker {
             case .live:
@@ -85,6 +102,7 @@ struct AccountStrip: View {
     let summary: String
     var live: Bool
     var seenAt: Date?
+    var routed = false
     var trailingIcon = "chevron.right"
     var onTap: (() -> Void)?
 
@@ -106,6 +124,7 @@ struct AccountStrip: View {
                 AccountInitial(label: label)
                 Text(label).font(Type.label)
                 if let plan { PlanBadge(plan: plan) }
+                if routed { RouterBadge() }
                 Text(summary).font(Type.labelTiny).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 4)
                 if live {

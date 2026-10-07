@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+raiz="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+for candidato in "${CLAUDE_AUTO_NODE:-}" "$(command -v node 2>/dev/null)" /opt/homebrew/bin/node /usr/local/bin/node "$HOME"/.nvm/versions/node/*/bin/node; do
+  if [ -n "$candidato" ] && [ -x "$candidato" ]; then
+    exec "$candidato" "$raiz/lib/claude-accounts.js" "$@"
+  fi
+done
+echo "claude-accounts: node não encontrado (defina CLAUDE_AUTO_NODE)" >&2
+exit 127

@@ -28,6 +28,49 @@ if CommandLine.arguments.contains("--dump-usage") {
     exit(0)
 }
 
+// The claude-auto router's accounts, each read live with its own login, and the one it would pick.
+if CommandLine.arguments.contains("--dump-router") {
+    guard let config = AccountRouter.loadConfig() else {
+        print("sem ~/.claude-accounts/config.json")
+        exit(0)
+    }
+    let sem = DispatchSemaphore(value: 0)
+    Task {
+        var headroom: [String: Double] = [:]
+        var available: Set<String> = []
+        print("ativo: \(config.enabled)  principal: \(config.principal)")
+        for account in config.accounts {
+            let identity = AccountRouter.identity(for: account)
+            var line = "\(account.id) [\(account.role.rawValue)] \(identity?.email ?? "?") · \(AccountRouter.keychainService(for: account))"
+            if let creds = AccountRouter.credentials(for: account) {
+                available.insert(account.id)
+                if creds.isExpired {
+                    line += " · token vencido"
+                } else if let (snap, _) = try? await UsageAPI.fetch(token: creds.accessToken) {
+                    let free = AccountRouter.headroom(snap)
+                    headroom[account.id] = free
+                    line += String(format: " · 5h %.0f%% · sem %.0f%% · folga %.0f%%",
+                                   snap.session?.utilization ?? 0, snap.weekly?.utilization ?? 0, free)
+                } else {
+                    line += " · API falhou"
+                }
+            } else {
+                line += " · sem login"
+            }
+            print(line)
+        }
+        let pick = AccountRouter.pick(config, headroom: headroom, available: available,
+                                      exhausted: AccountRouter.exhausted())
+        print("usaria agora: \(pick ?? "nenhuma")")
+        if let last = AccountRouter.lastSwitch() {
+            print("última troca: \(last.from) → \(last.to) (\(last.reason)) \(Fmt.stamp(last.at))")
+        }
+        sem.signal()
+    }
+    sem.wait()
+    exit(0)
+}
+
 // Same hatch, for the fallback feed. This one reads another app's private file and *derives* the
 // resets, so being able to hold the derivation against the raw series is the difference between
 // "it compiles" and "it is right".

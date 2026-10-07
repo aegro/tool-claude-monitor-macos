@@ -29,3 +29,8 @@ jobs:
 
       - name: Test
         run: swift test
+
+      - name: Router tests
+        run: |
+          node router/test/teste-proxy.js
+          python3 router/test/teste-tui.py

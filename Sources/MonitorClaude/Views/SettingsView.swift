@@ -8,6 +8,9 @@ struct SettingsView: View {
     @ObservedObject var keep = KeepAwake.shared
     var onClose: () -> Void
 
+    @State private var routerOn = AccountRouter.loadConfig()?.enabled ?? false
+    @State private var commandsInstalled = AccountRouter.commandsInstalled
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -101,6 +104,12 @@ struct SettingsView: View {
                         }
                     }
 
+                    group("Troca de conta") {
+                        toggle("Trocar de conta sozinho quando o limite bater", isOn: Binding(
+                            get: { routerOn }, set: { setRouter($0) }))
+                        routerStatus
+                    }
+
                     group("Sistema") {
                         toggle("Abrir ao iniciar a sessão", isOn: $settings.launchAtLogin)
                             .onChange(of: settings.launchAtLogin) { _, _ in
@@ -122,6 +131,57 @@ struct SettingsView: View {
         }
         .frame(width: 396)
         .frame(height: settings.panelSize.height)
+    }
+
+    // MARK: router
+
+    @ViewBuilder
+    private var routerStatus: some View {
+        if let state = monitor.router {
+            note(state.config.accounts.map { account in
+                let free = state.headroom[account.id].map { "\(Fmt.pct($0)) livre" } ?? "sem leitura"
+                return "\(account.label): \(free)\(account.role == .reserve ? " (reserva)" : "")"
+            }.joined(separator: " · "))
+            note(state.pick.map { "Usaria agora: \($0)" } ?? "Nenhuma conta disponível agora")
+            if let last = state.lastSwitch {
+                note("Última troca \(Fmt.stamp(last.at)): \(last.from) → \(last.to) · \(last.reason)")
+            }
+        } else {
+            note("Nenhuma conta extra ainda. No terminal: claude-accounts add <nome> e claude-accounts login <nome>.")
+        }
+
+        if !commandsInstalled {
+            if let bin = AccountRouter.bundledCommands {
+                Button("Instalar claude-auto e claude-accounts em ~/.local/bin") {
+                    try? AccountRouter.installCommands(from: bin)
+                    commandsInstalled = AccountRouter.commandsInstalled
+                }
+                .buttonStyle(.plain)
+                .font(Type.labelTiny)
+                .foregroundStyle(Ink.ember)
+            } else {
+                note("Comandos não instalados: rode router/install.sh a partir do repositório.")
+            }
+        }
+
+        note("Vale para o que abrir pelo claude-auto: no terminal, alias claude=claude-auto; no T3, o binário ~/.local/bin/claude-auto. Desligado, o claude-auto só repassa para o claude.")
+    }
+
+    private func setRouter(_ on: Bool) {
+        if on, !commandsInstalled, let bin = AccountRouter.bundledCommands {
+            try? AccountRouter.installCommands(from: bin)
+            commandsInstalled = AccountRouter.commandsInstalled
+        }
+        guard (try? AccountRouter.setEnabled(on)) != nil else { return }
+        routerOn = on
+        Task { await monitor.refreshUsage(force: true) }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(Type.labelTiny)
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: parts

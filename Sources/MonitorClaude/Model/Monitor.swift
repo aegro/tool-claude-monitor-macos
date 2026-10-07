@@ -58,6 +58,8 @@ final class Monitor: ObservableObject {
     @Published private(set) var activeAccount: AccountIdentity?
     /// Organizations read from the desktop app's own usage history, refreshed on the slow tick.
     @Published private(set) var desktopOrgs: [DesktopOrgUsage] = []
+    /// The claude-auto router's accounts and its current pick; nil when the router is not set up.
+    @Published private(set) var router: RouterState?
     let accounts = AccountStore()
 
     @Published var panelOpen = false { didSet { retime() } }
@@ -197,7 +199,57 @@ final class Monitor: ObservableObject {
         activeAccount = identity
 
         await pollTerminalFeed(identity: identity)
+        await pollRouterAccounts(active: identity)
         applyFeeds(desktopSeries)
+    }
+
+    /// Every account the router knows, read live with its own login, so each one shows current
+    /// numbers instead of the last time it happened to be the terminal's account.
+    private func pollRouterAccounts(active: AccountIdentity?) async {
+        guard let config = AccountRouter.loadConfig(), config.hasExtraAccounts else {
+            router = nil
+            return
+        }
+        var keys: [String: String] = [:]
+        var headroom: [String: Double] = [:]
+        var available: Set<String> = []
+
+        for account in config.accounts {
+            let identity = AccountRouter.identity(for: account)
+            if let key = identity?.key, keys[key] == nil { keys[key] = account.id }
+
+            if let identity, identity.key == active?.key {
+                if let snap = apiSnapshot ?? accounts.records[identity.key]?.snapshot {
+                    headroom[account.id] = AccountRouter.headroom(snap)
+                }
+                available.insert(account.id)
+                continue
+            }
+            guard !account.usesDefaultDirectory, let identity else { continue }
+
+            let creds = await Task.detached(priority: .utility) {
+                AccountRouter.credentials(for: account)
+            }.value
+            guard let creds else { continue }
+            available.insert(account.id)
+
+            if !creds.isExpired, let (snap, _) = try? await UsageAPI.fetch(token: creds.accessToken) {
+                accounts.record(uuid: identity.key, label: identity.label,
+                                plan: creds.subscriptionType ?? identity.planFallback,
+                                snapshot: snap, at: snap.fetchedAt)
+                headroom[account.id] = AccountRouter.headroom(snap)
+            } else if let stored = accounts.records[identity.key]?.snapshot {
+                headroom[account.id] = AccountRouter.headroom(stored)
+            }
+        }
+
+        router = RouterState(
+            config: config,
+            pick: AccountRouter.pick(config, headroom: headroom, available: available,
+                                     exhausted: AccountRouter.exhausted()),
+            keys: keys,
+            headroom: headroom,
+            lastSwitch: AccountRouter.lastSwitch())
     }
 
     /// The preferred feed: our own read of the API, with the terminal's token.

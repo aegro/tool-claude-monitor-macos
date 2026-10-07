@@ -24,8 +24,12 @@ assemble_bundle() {
     return 1
   fi
   rm -rf "$app"
-  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/router"
   cp "$bin" "$app/Contents/MacOS/MonitorClaude"
+  local root
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  cp -R "$root/router/bin" "$root/router/lib" "$app/Contents/Resources/router/"
+  chmod +x "$app/Contents/Resources/router/bin/"*
   cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

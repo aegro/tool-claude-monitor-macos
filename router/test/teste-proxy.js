@@ -199,6 +199,23 @@ async function pedidoDoHostDuranteATrocaChegaUmaVez() {
   assert.strictEqual(s.recebidas.filter((m) => m.type === 'control_response' && m.response.request_id === 'modelo-1').length, 1);
 }
 
+async function respostaAtrasadaDoProcessoAntigoChegaAoHost() {
+  const amb = ambiente({ limitadas: 'principal' });
+  const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
+  s.enviar(pedido('init-1', { subtype: 'initialize' }));
+  await s.esperar((m) => m.type === 'control_response' && m.response.request_id === 'init-1');
+  s.enviar(pedido('lento-1', { subtype: 'atrasar' }));
+  s.enviar(usuario('oi'));
+  await s.esperar((m) => m.type === 'result');
+  await s.esperar((m) => m.type === 'control_response' && m.response.request_id === 'lento-1', 3000);
+  await esperarMs(200);
+  s.filho.stdin.end();
+  await s.saida;
+
+  assert.strictEqual(lerTrocas(amb).length, 1);
+  assert.strictEqual(s.recebidas.filter((m) => m.type === 'control_response' && m.response.request_id === 'lento-1').length, 1);
+}
+
 async function semOutraContaRepassaOErro() {
   const amb = ambiente({ contas: ['principal'], limitadas: 'principal' });
   const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
@@ -242,7 +259,7 @@ async function threadDoT3RetomaASessaoAnterior() {
 }
 
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, pedidoDoHostDuranteATrocaChegaUmaVez, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {

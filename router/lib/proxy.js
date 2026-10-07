@@ -38,13 +38,21 @@ function textoDe(conteudo) {
   return '';
 }
 
-function idDePedido(linha) {
+function mensagemDe(linha) {
   try {
-    const msg = JSON.parse(linha);
-    return msg && msg.type === 'control_request' ? msg.request_id : undefined;
+    return JSON.parse(linha) || {};
   } catch {
-    return undefined;
+    return {};
   }
+}
+
+function tipoDe(linha) {
+  return mensagemDe(linha).type;
+}
+
+function idDePedido(linha) {
+  const msg = mensagemDe(linha);
+  return msg.type === 'control_request' ? msg.request_id : undefined;
 }
 
 class Proxy {
@@ -397,6 +405,9 @@ class Proxy {
       const de = this.conta;
       const interrompidas = forcada ? this.tarefasAtivas() : [];
       this.geracao++;
+      for (const linha of this.retido || []) {
+        if (tipoDe(linha) === 'control_response') this.paraHost(linha);
+      }
       this.retido = null;
       for (const id of this.pendentesDoFilho.keys()) {
         this.paraHost(JSON.stringify({ type: 'control_cancel_request', request_id: id }));

@@ -10,6 +10,7 @@ struct SettingsView: View {
 
     @State private var routerOn = AccountRouter.loadConfig()?.enabled ?? true
     @State private var commandsInstalled = AccountRouter.commandsInstalled
+    @State private var installError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -160,8 +161,7 @@ struct SettingsView: View {
         if !commandsInstalled {
             if let bin = AccountRouter.bundledCommands {
                 Button("Instalar claude-auto e claude-accounts em ~/.local/bin") {
-                    try? AccountRouter.installCommands(from: bin)
-                    commandsInstalled = AccountRouter.commandsInstalled
+                    installBundledCommands(from: bin)
                 }
                 .buttonStyle(.plain)
                 .font(Type.labelTiny)
@@ -171,17 +171,35 @@ struct SettingsView: View {
             }
         }
 
+        if let installError {
+            Text(installError)
+                .font(Type.labelTiny)
+                .foregroundStyle(Ink.ember)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
         note("Vale para o que abrir pelo claude-auto: no terminal, alias claude=claude-auto; no T3, o binário ~/.local/bin/claude-auto. Desligado, o claude-auto só repassa para o claude.")
     }
 
     private func setRouter(_ on: Bool) {
         if on, !commandsInstalled, let bin = AccountRouter.bundledCommands {
-            try? AccountRouter.installCommands(from: bin)
-            commandsInstalled = AccountRouter.commandsInstalled
+            guard installBundledCommands(from: bin) else { return }
         }
         guard (try? AccountRouter.setEnabled(on)) != nil else { return }
         routerOn = on
         Task { await monitor.refreshUsage(force: true) }
+    }
+
+    @discardableResult
+    private func installBundledCommands(from bin: URL) -> Bool {
+        do {
+            try AccountRouter.installCommands(from: bin)
+            installError = nil
+        } catch {
+            installError = "Não deu para instalar os comandos em ~/.local/bin: \(error.localizedDescription)"
+        }
+        commandsInstalled = AccountRouter.commandsInstalled
+        return installError == nil
     }
 
     private func note(_ text: String) -> some View {

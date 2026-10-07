@@ -193,7 +193,15 @@ async function trocarSlotSemTrava(para, motivo) {
 }
 
 function trocarSlot(para, motivo = 'manual') {
-  return comTrava(() => trocarSlotSemTrava(para, motivo));
+  return comTrava(async () => {
+    const troca = await trocarSlotSemTrava(para, motivo);
+    if (troca.mudou) {
+      const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
+      estado.ultimaTroca = Date.now();
+      contas.escreverJson(ARQ_ESTADO, estado);
+    }
+    return troca;
+  });
 }
 
 async function guardarLoginDoDir(id, dir) {

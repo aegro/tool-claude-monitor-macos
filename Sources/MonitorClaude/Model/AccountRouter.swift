@@ -153,15 +153,13 @@ enum AccountRouter {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        let exited = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch { return nil }
-        guard exited.wait(timeout: .now() + timeout) == .success else {
-            process.terminate()
-            return nil
-        }
+        let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: stop)
         let data = output.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0,
+        stop.cancel()
+        process.waitUntilExit()
+        guard process.terminationReason == .exit, process.terminationStatus == 0,
               let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
               let root = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
         else { return nil }

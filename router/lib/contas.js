@@ -90,6 +90,13 @@ function salvarConfig(cfg) {
   escreverJson(ARQ_CONFIG, cfg);
 }
 
+function definirPrincipal(id) {
+  const atual = carregarConfig();
+  if (atual.principal === id) return;
+  const salvo = lerJson(ARQ_CONFIG, {}) || {};
+  salvarConfig({ ...salvo, principal: id, contas: atual.contas, rota: atual.rota });
+}
+
 function expandir(p) {
   return p.startsWith('~/') ? path.join(HOME, p.slice(2)) : p;
 }
@@ -542,6 +549,7 @@ module.exports = {
   ARQ_LOG,
   carregarConfig,
   salvarConfig,
+  definirPrincipal,
   dirDaConta,
   nomeDaConta,
   envDaConta,

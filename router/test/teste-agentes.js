@@ -89,6 +89,17 @@ const testes = {
     assert.strictEqual(agentes.planejar([p], { desistidos: { s1: agora - 60000 } }).novas.length, 0);
     assert.strictEqual(agentes.planejar([p], { desistidos: { s1: agora - 600000 } }).novas.length, 1);
   },
+  trocaDePrincipalSoMudaAPrincipal() {
+    fs.writeFileSync(contas.ARQ_CONFIG, JSON.stringify({ contas: { segunda: {} }, preferida: 'segunda', ativo: false }));
+    contas.definirPrincipal('segunda');
+    const salvo = JSON.parse(fs.readFileSync(contas.ARQ_CONFIG, 'utf8'));
+    assert.strictEqual(salvo.principal, 'segunda');
+    assert.ok(salvo.contas.principal);
+    assert.deepStrictEqual(salvo.rota, ['principal']);
+    assert.strictEqual(salvo.preferida, 'segunda');
+    assert.strictEqual(salvo.ativo, false);
+    assert.strictEqual(salvo.limites, undefined);
+  },
   semPreferidaEscolheAMaiorFolga() {
     configurar();
     assert.strictEqual(escolhida(candidatas()), 'segunda');

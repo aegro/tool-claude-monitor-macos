@@ -189,10 +189,7 @@ async function trocarSlotSemTrava(para, motivo) {
   const novoConfig = contas.lerJson(ARQ_SLOT, {}) || {};
   novoConfig.oauthAccount = destino.oauthAccount;
   contas.escreverJson(ARQ_SLOT, novoConfig);
-  if (SLOT_PADRAO && cfg.principal !== para) {
-    cfg.principal = para;
-    contas.salvarConfig(cfg);
-  }
+  if (SLOT_PADRAO) contas.definirPrincipal(para);
   contas.registrarTroca({ de, para, motivo: `agents ${motivo}` });
   return { de, para, mudou: true };
 }

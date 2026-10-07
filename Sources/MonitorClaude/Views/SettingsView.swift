@@ -141,8 +141,10 @@ struct SettingsView: View {
         if let state = monitor.router {
             ForEach(state.config.accounts, id: \.id) { account in
                 let login = state.logins[account.id]?.email ?? "sem login"
-                let free = state.headroom[account.id].map { "\(Fmt.pct($0)) livre" } ?? "sem leitura"
-                note("\(account.label) (\(login)): \(free)\(account.role == .reserve ? " · reserva" : "")")
+                let reading = state.usage[account.id].map {
+                    "sessão \(Fmt.pct(AccountRouter.used($0.session))) · semana \(Fmt.pct(AccountRouter.used($0.weekly)))"
+                } ?? "sem leitura"
+                note("\(account.label) (\(login)): \(reading)\(account.role == .reserve ? " · reserva" : "")")
             }
             ForEach(state.sharedLogins, id: \.self) { ids in
                 Text("\(ids.joined(separator: " e ")) estão logadas na mesma conta (\(state.logins[ids[0]]?.email ?? "?")), então trocar entre elas não muda nada. Rode claude-accounts login <nome> com a outra conta; se o navegador já estiver logado, termine o login numa janela anônima.")

@@ -107,7 +107,7 @@ struct AccountRouterTests {
         let cfg = try config(#"{ "principal": "pessoal", "contas": { "pessoal": {}, "squad": {}, "extra": {} }, "rota": ["pessoal", "squad", "extra"] }"#)
         let mesma = AccountIdentity(accountUuid: "a", organizationUuid: "o", email: "squad@exemplo.com")
         let outra = AccountIdentity(accountUuid: "b", organizationUuid: "o", email: "pessoal@exemplo.com")
-        var state = RouterState(config: cfg, pick: "squad", headroom: [:], lastSwitch: nil,
+        var state = RouterState(config: cfg, pick: "squad", usage: [:], lastSwitch: nil,
                                 logins: ["pessoal": mesma, "squad": mesma, "extra": outra])
         #expect(state.sharedLogins == [["pessoal", "squad"]])
         #expect(state.isRouted(mesma.key))

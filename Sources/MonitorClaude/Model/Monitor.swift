@@ -211,7 +211,7 @@ final class Monitor: ObservableObject {
             router = nil
             return
         }
-        var headroom: [String: Double] = [:]
+        var usage: [String: UsageSnapshot] = [:]
         var available: Set<String> = []
         var logins: [String: AccountIdentity] = [:]
         var read: Set<String> = []
@@ -228,7 +228,7 @@ final class Monitor: ObservableObject {
 
             if let identity, identity.key == active?.key {
                 if let snap = apiSnapshot ?? accounts.records[identity.key]?.snapshot {
-                    headroom[account.id] = AccountRouter.headroom(snap)
+                    usage[account.id] = snap
                 }
                 continue
             }
@@ -240,19 +240,19 @@ final class Monitor: ObservableObject {
                                     snapshot: snap, at: snap.fetchedAt)
                     read.insert(identity.key)
                 }
-                headroom[account.id] = AccountRouter.headroom(snap)
+                usage[account.id] = snap
             } else if let identity, let stored = accounts.records[identity.key]?.snapshot {
-                headroom[account.id] = AccountRouter.headroom(stored)
+                usage[account.id] = stored
             }
         }
 
         router = RouterState(
             config: config,
             pick: config.enabled
-                ? AccountRouter.pick(config, headroom: headroom, available: available,
-                                     exhausted: AccountRouter.exhausted())
+                ? AccountRouter.pick(config, headroom: usage.mapValues { AccountRouter.headroom($0) },
+                                     available: available, exhausted: AccountRouter.exhausted())
                 : nil,
-            headroom: headroom,
+            usage: usage,
             lastSwitch: AccountRouter.lastSwitch(),
             logins: logins,
             read: read)

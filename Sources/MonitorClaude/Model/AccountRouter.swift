@@ -198,13 +198,14 @@ enum AccountRouter {
 
     // MARK: choice
 
+    static func used(_ window: LimitWindow?, now: Date = Date()) -> Double {
+        guard let window else { return 0 }
+        if let reset = window.resetsAt, reset <= now { return 0 }
+        return window.utilization
+    }
+
     static func headroom(_ snapshot: UsageSnapshot, now: Date = Date()) -> Double {
-        func used(_ window: LimitWindow?) -> Double {
-            guard let window else { return 0 }
-            if let reset = window.resetsAt, reset <= now { return 0 }
-            return window.utilization
-        }
-        return max(0, min(100, (100 - max(used(snapshot.session), used(snapshot.weekly))).rounded()))
+        max(0, min(100, (100 - max(used(snapshot.session, now: now), used(snapshot.weekly, now: now))).rounded()))
     }
 
     static func pick(_ config: Config, headroom: [String: Double], available: Set<String>,
@@ -232,7 +233,7 @@ enum AccountRouter {
 struct RouterState: Equatable {
     var config: AccountRouter.Config
     var pick: String?
-    var headroom: [String: Double]
+    var usage: [String: UsageSnapshot]
     var lastSwitch: AccountRouter.Switch?
     var logins: [String: AccountIdentity] = [:]
     var read: Set<String> = []

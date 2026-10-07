@@ -8,7 +8,7 @@ struct SettingsView: View {
     @ObservedObject var keep = KeepAwake.shared
     var onClose: () -> Void
 
-    @State private var routerOn = AccountRouter.loadConfig()?.enabled ?? false
+    @State private var routerOn = AccountRouter.loadConfig()?.enabled ?? true
     @State private var commandsInstalled = AccountRouter.commandsInstalled
 
     var body: some View {

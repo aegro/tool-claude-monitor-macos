@@ -68,7 +68,8 @@ enum AccountRouter {
         let principal = root["principal"] as? String ?? "principal"
         let entries = root["contas"] as? [String: Any] ?? [:]
         let known = Set(entries.keys).union([principal])
-        let route = ((root["rota"] as? [String]) ?? [principal]).filter(known.contains)
+        let listedRoute = ((root["rota"] as? [String]) ?? []).filter(known.contains)
+        let route = listedRoute.isEmpty ? [principal] : listedRoute
         let reserve = ((root["reserva"] as? [String]) ?? []).filter { known.contains($0) && !route.contains($0) }
         let reserveBelow = ((root["limites"] as? [String: Any])?["reserva"] as? NSNumber)?.doubleValue ?? 3
 
@@ -87,7 +88,7 @@ enum AccountRouter {
         return Config(
             enabled: root["ativo"] as? Bool ?? true,
             principal: principal,
-            accounts: (route.isEmpty ? [principal] : route).map { account($0, .route) } + reserve.map { account($0, .reserve) },
+            accounts: route.map { account($0, .route) } + reserve.map { account($0, .reserve) },
             reserveBelow: reserveBelow)
     }
 

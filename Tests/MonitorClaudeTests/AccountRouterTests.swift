@@ -39,6 +39,12 @@ struct AccountRouterTests {
         #expect(cfg.accounts.map(\.id) == ["principal"])
     }
 
+    @Test func rotaVaziaNãoDuplicaAPrincipalNaReserva() throws {
+        let cfg = try config(#"{ "contas": { "principal": {}, "squad": {} }, "rota": [], "reserva": ["principal", "squad"] }"#)
+        #expect(cfg.accounts.map(\.id) == ["principal", "squad"])
+        #expect(cfg.accounts.map(\.role) == [.route, .reserve])
+    }
+
     /// Same naming Claude Code uses for a CLAUDE_CONFIG_DIR login: the default service plus the
     /// first 8 hex chars of sha256(dir). Expected value computed with `shasum -a 256`.
     @Test func serviçoDoKeychainSegueOClaudeCode() throws {

@@ -78,8 +78,8 @@ function carregarConfig() {
     limites: { ...CONFIG_PADRAO.limites, ...(salvo.limites || {}) },
   };
   cfg.rota = (cfg.rota || []).filter((id) => cfg.contas[id]);
-  cfg.reserva = (cfg.reserva || []).filter((id) => cfg.contas[id] && !cfg.rota.includes(id));
   if (!cfg.rota.length) cfg.rota = [principal];
+  cfg.reserva = (cfg.reserva || []).filter((id) => cfg.contas[id] && !cfg.rota.includes(id));
   return cfg;
 }
 

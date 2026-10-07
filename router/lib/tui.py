@@ -196,14 +196,14 @@ class Supervisor:
         sessao = self.sessao_atual()
         arquivos = glob.glob(os.path.join(self.dir_config(), "projects", "*", f"{sessao}.jsonl")) if sessao else []
         if not arquivos:
-            return None
+            return False
         try:
             with open(arquivos[0], "rb") as arquivo:
                 arquivo.seek(0, os.SEEK_END)
                 arquivo.seek(max(0, arquivo.tell() - 262144))
                 linhas = arquivo.read().decode("utf-8", "ignore").splitlines()
         except OSError:
-            return None
+            return False
         for linha in reversed(linhas):
             try:
                 entrada = json.loads(linha)
@@ -219,13 +219,11 @@ class Supervisor:
 
     def limite_confirmado(self):
         prazo = time.time() + 3
-        while True:
-            confirmado = self.limite_no_transcript()
-            if confirmado is None or confirmado:
-                return True
+        while not self.limite_no_transcript():
             if time.time() >= prazo:
                 return False
             self.repassar(0.3)
+        return True
 
     def trocar(self, motivo):
         sessao = self.sessao_atual()

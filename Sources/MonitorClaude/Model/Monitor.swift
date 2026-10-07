@@ -205,8 +205,8 @@ final class Monitor: ObservableObject {
         }
 
         await pollTerminalFeed(identity: identity)
-        await pollRouterAccounts(active: identity)
         applyFeeds(desktopSeries)
+        await pollRouterAccounts(active: identity)
     }
 
     /// Every account the router knows, read live with its own login, so each one shows current

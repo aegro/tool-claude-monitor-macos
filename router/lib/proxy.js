@@ -15,7 +15,8 @@ const ERROS_DE_CONTA = {
   billing_error: 'cobranca',
   rate_limit: 'rate_limit',
 };
-const RESULTADO_DE_LIMITE = /usage limit|limit reached|hit your( \w+)? limit|rate.?limit|oauth token|authentication|invalid api key|\/login|credit balance|billing/i;
+const RESULTADO_DE_LIMITE = /usage limit|limit reached|hit your( \w+)? limit|rate.?limit|invalid api key|run \/login|credit balance/i;
+const RESULTADO_DE_LOGIN = /invalid api key|run \/login/i;
 const FERRAMENTAS_RASTREADAS = new Set(['Agent', 'Task', 'Workflow']);
 const STATUS_FINAIS = new Set(['completed', 'failed', 'killed', 'stopped']);
 
@@ -230,7 +231,7 @@ class Proxy {
     }
     if (msg.type === 'result' && msg.is_error) {
       const texto = [msg.result, ...(msg.errors || [])].filter((t) => typeof t === 'string').join(' ');
-      if (RESULTADO_DE_LIMITE.test(texto)) return { motivo: /auth|login|api key|oauth/i.test(texto) ? 'auth' : 'rate_limit', ate: null };
+      if (RESULTADO_DE_LIMITE.test(texto)) return { motivo: RESULTADO_DE_LOGIN.test(texto) ? 'auth' : 'rate_limit', ate: null };
     }
     return null;
   }

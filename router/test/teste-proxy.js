@@ -216,6 +216,17 @@ async function respostaAtrasadaDoProcessoAntigoChegaAoHost() {
   assert.strictEqual(s.recebidas.filter((m) => m.type === 'control_response' && m.response.request_id === 'lento-1').length, 1);
 }
 
+async function soErroDaContaDisparaTroca() {
+  const { Proxy } = require('../lib/proxy');
+  const proxy = new Proxy([]);
+  const resultado = (texto) => proxy.gatilhoDeTroca({ type: 'result', is_error: true, result: texto });
+  assert.strictEqual(resultado('MCP server github: authentication failed, check the OAuth token'), null);
+  assert.strictEqual(resultado('Billing dashboard request failed'), null);
+  assert.strictEqual(resultado('Invalid API key · Please run /login').motivo, 'auth');
+  assert.strictEqual(resultado('Claude AI usage limit reached|1760000000').motivo, 'rate_limit');
+  assert.strictEqual(resultado('Credit balance is too low').motivo, 'rate_limit');
+}
+
 async function semOutraContaRepassaOErro() {
   const amb = ambiente({ contas: ['principal'], limitadas: 'principal' });
   const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
@@ -259,7 +270,7 @@ async function threadDoT3RetomaASessaoAnterior() {
 }
 
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {

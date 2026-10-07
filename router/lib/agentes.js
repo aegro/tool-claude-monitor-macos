@@ -298,10 +298,9 @@ function continuacaoChegou(arquivo, desde) {
   });
 }
 
-async function estadoDoAgente(id) {
-  const lista = await listarAgentes();
-  const agente = (lista || []).find((a) => a.id === id);
-  return agente ? agente.state : null;
+async function trabalhando(id) {
+  const agente = ((await listarAgentes()) || []).find((a) => a.id === id);
+  return Boolean(agente && agente.status && agente.status !== 'idle' && agente.state !== 'blocked');
 }
 
 async function retomar(p, estado) {
@@ -322,8 +321,7 @@ async function retomar(p, estado) {
     const desde = Date.now() - 1000;
     await rodar(python, [path.join(__dirname, 'empurrar.py'), bin, p.id, CONTINUAR], { env: envDoSlot(), timeout: 45000 });
     for (let i = 0; i < 10; i++) {
-      const situacao = await estadoDoAgente(p.id);
-      if (continuacaoChegou(p.arquivo, desde) || (situacao && situacao !== 'blocked')) {
+      if (continuacaoChegou(p.arquivo, desde) || (await trabalhando(p.id))) {
         contas.log(`agentes: ${p.nome} retomado`);
         return true;
       }

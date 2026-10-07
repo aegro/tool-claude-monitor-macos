@@ -313,9 +313,9 @@ function folgaDe(sonda, agora = Date.now()) {
   return Math.max(0, Math.min(100, Math.round(100 - usado)));
 }
 
-async function sondar(id, cfg = carregarConfig()) {
+async function sondar(id, cfg = carregarConfig(), credencialDada = null) {
   const inicio = Date.now();
-  const credencial = await lerCredencial(id, cfg);
+  const credencial = credencialDada || (await lerCredencial(id, cfg));
   if (!credencial || !credencial.accessToken) {
     return { ok: false, erro: 'sem login', semLogin: true, verificadoEm: Date.now() };
   }
@@ -345,19 +345,19 @@ async function sondar(id, cfg = carregarConfig()) {
   }
 }
 
-async function lerUso(id, { maxIdadeMs } = {}) {
+async function lerUso(id, { maxIdadeMs, credencial = null, chaveDoCache = id } = {}) {
   const cfg = carregarConfig();
   const limite = maxIdadeMs ?? cfg.cacheUsoSegundos * 1000;
-  const anterior = lerJson(ARQ_USO, {})[id];
+  const anterior = lerJson(ARQ_USO, {})[chaveDoCache];
   if (anterior && anterior.ok && Date.now() - anterior.verificadoEm < limite) return anterior;
   if (anterior && anterior.esperarAte && Date.now() < anterior.esperarAte) return anterior;
-  const atual = await sondar(id, cfg);
+  const atual = await sondar(id, cfg, credencial);
   if (!atual.ok && anterior && anterior.uso) {
     atual.uso = anterior.uso;
     atual.usoDe = anterior.usoDe || anterior.verificadoEm;
   }
   const cache = lerJson(ARQ_USO, {});
-  cache[id] = atual;
+  cache[chaveDoCache] = atual;
   try {
     escreverJson(ARQ_USO, cache);
   } catch {}

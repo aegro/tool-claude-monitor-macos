@@ -119,6 +119,27 @@ function prontaParaAgentes(id, cfg = contas.carregarConfig()) {
   return Boolean(loginGuardado(id)) || contaNoSlot(cfg) === id;
 }
 
+async function credencialGuardada(id) {
+  try {
+    return JSON.parse(await lerItem(servicoGuardado(id))).claudeAiOauth || null;
+  } catch {
+    return null;
+  }
+}
+
+async function avaliarParaAgentes(cfg = contas.carregarConfig()) {
+  const prontas = (await contas.avaliarContas()).filter((c) => prontaParaAgentes(c.id, cfg));
+  return Promise.all(
+    prontas.map(async (c) => {
+      if (c.logada || !loginGuardado(c.id)) return c;
+      const credencial = await credencialGuardada(c.id);
+      if (!credencial) return c;
+      const sonda = await contas.lerUso(c.id, { credencial, chaveDoCache: `agents ${c.id}` });
+      return { ...c, sonda, folga: contas.folgaDe(sonda), logada: !sonda.semLogin };
+    }),
+  );
+}
+
 async function comTrava(fn) {
   fs.mkdirSync(contas.DIR_ESTADO, { recursive: true });
   try {
@@ -315,7 +336,7 @@ async function voltarParaPreferida(cfg, estado) {
   if (!cfg.preferida || cfg.preferida === atual || !loginGuardado(cfg.preferida)) return null;
   if (Date.now() - (estado.ultimaChecagemDeVolta || 0) < 5 * 60 * 1000) return null;
   estado.ultimaChecagemDeVolta = Date.now();
-  const preferida = contas.preferidaDeVolta(await contas.avaliarContas(), atual, cfg);
+  const preferida = contas.preferidaDeVolta(await avaliarParaAgentes(cfg), atual, cfg);
   if (!preferida) return null;
   try {
     const troca = await trocarSlotSemTrava(preferida.id, 'preferida');
@@ -364,7 +385,7 @@ async function vigiar() {
     if (precisaTrocar) {
       const de = await contaRealNoSlot(cfg);
       if (de) contas.marcarEsgotada(de, null, 'limite');
-      const candidatos = (await contas.avaliarContas()).filter((c) => c.id !== de && prontaParaAgentes(c.id, cfg));
+      const candidatos = (await avaliarParaAgentes(cfg)).filter((c) => c.id !== de);
       const escolhida = contas.decidir(candidatos, { excluir: de ? [de] : [] });
       if (!escolhida) {
         avisarUmaVez(estado, 'sem-conta', 'Claude: agents hit the limit', 'No other account with headroom has an agents login.');
@@ -399,7 +420,7 @@ async function prepararSlot() {
   if (cfg.ativo === false) return null;
   return comTrava(async () => {
     const atual = contaNoSlot(cfg);
-    const prontas = (await contas.avaliarContas()).filter((c) => prontaParaAgentes(c.id, cfg));
+    const prontas = await avaliarParaAgentes(cfg);
     const noSlot = prontas.find((c) => c.id === atual);
     const sair = Boolean(noSlot && (noSlot.esgotada || noSlot.folga === 0));
     const escolhida = contas.decidir(prontas, { excluir: sair ? [atual] : [] });

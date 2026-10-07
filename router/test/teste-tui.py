@@ -45,20 +45,31 @@ def main():
     dir_, env = ambiente()
     pid, fd = pty.fork()
     if pid == 0:
-        os.execve(os.path.join(RAIZ, "bin", "claude-auto"), ["claude-auto"], env)
+        os.execve(os.path.join(RAIZ, "bin", "claude-auto"), ["claude-auto", "--model", "opus", "primeiro prompt"], env)
     saida = b""
-    enviado = False
+    enviado = citado = False
     inicio = time.time()
-    while time.time() - inicio < 30 and b"ok de segunda" not in saida:
+    while time.time() - inicio < 40 and b"ok de segunda: cita" not in saida:
         prontos, _, _ = select.select([fd], [], [], 0.2)
         if prontos:
             try:
-                saida += os.read(fd, 4096)
+                saida += os.read(fd, 65536)
             except OSError:
                 break
         if not enviado and b"> " in saida:
             os.write(fd, b"oi\r")
             enviado = True
+        if not citado and b"ok de segunda: [claude-auto]" in saida:
+            time.sleep(3)
+            os.write(fd, "cita: You've hit your weekly limit\r".encode())
+            citado = True
+    fim = time.time() + 5
+    while time.time() < fim:
+        if select.select([fd], [], [], 0.2)[0]:
+            try:
+                saida += os.read(fd, 65536)
+            except OSError:
+                break
     os.write(fd, b"\x04")
     time.sleep(1)
     texto = saida.decode("utf-8", "ignore")
@@ -72,7 +83,7 @@ def main():
     sessao = inicios[0]["args"][inicios[0]["args"].index("--session-id") + 1] if "--session-id" in inicios[0]["args"] else None
     if not sessao:
         falhas.append(f"sessão nova sem --session-id: {inicios[0]['args']}")
-    if len(inicios) > 1 and inicios[1]["args"] != ["--resume", sessao]:
+    if len(inicios) > 1 and inicios[1]["args"] != ["--model", "opus", "--resume", sessao]:
         falhas.append(f"retomada com args errados: {inicios[1]['args']}")
     if "continuing on segunda" not in texto:
         falhas.append("aviso de troca não apareceu")
@@ -80,6 +91,11 @@ def main():
         falhas.append("mensagem de continuação não chegou à nova conta")
     if not trocas or (trocas[0]["de"], trocas[0]["para"], trocas[0]["sessao"]) != ("principal", "segunda", sessao):
         falhas.append(f"troca registrada: {trocas}")
+    if len(trocas) != 1 or len(inicios) != 2:
+        falhas.append(f"aviso de limite citado pelo modelo disparou troca: {len(trocas)} trocas, {len(inicios)} inícios")
+    with open(os.path.join(env["CLAUDE_AUTO_HOME"], ".estado", "esgotadas.json")) as arquivo:
+        if "segunda" in json.load(arquivo):
+            falhas.append("conta segunda marcada como esgotada sem erro de limite")
     shutil.rmtree(dir_, ignore_errors=True)
     if falhas:
         print("FALHA trocaNoTerminal\n  " + "\n  ".join(falhas) + "\n--- saída ---\n" + texto[-1500:])

@@ -18,6 +18,7 @@ const ARQ_ESGOTADAS = path.join(DIR_ESTADO, 'esgotadas.json');
 const ARQ_TROCAS = path.join(DIR_ESTADO, 'trocas.jsonl');
 const ARQ_LOG = path.join(DIR_ESTADO, 'claude-auto.log');
 const URL_USO = 'https://api.anthropic.com/api/oauth/usage';
+const ARQ_CONSENTIMENTO = 'remote-settings-consent.json';
 
 const COMPARTILHADOS = [
   'settings.json', 'CLAUDE.md', 'AGENTS.md', 'keybindings.json', 'statusline-command.sh', 'history.jsonl',
@@ -162,6 +163,24 @@ function prepararConta(id) {
     }
   }
   sincronizarConfig(id, cfg);
+  sincronizarConsentimentos(dir);
+}
+
+function sincronizarConsentimentos(dir) {
+  const origem = lerJson(path.join(DIR_PRINCIPAL, ARQ_CONSENTIMENTO), null);
+  if (!origem || !origem.records) return false;
+  const arquivo = path.join(dir, ARQ_CONSENTIMENTO);
+  const alvo = lerJson(arquivo, { version: origem.version, records: {} });
+  alvo.records = alvo.records || {};
+  let mudou = false;
+  for (const [org, registro] of Object.entries(origem.records)) {
+    const atual = alvo.records[org];
+    if (atual && (atual.updatedAt || 0) >= (registro.updatedAt || 0)) continue;
+    alvo.records[org] = registro;
+    mudou = true;
+  }
+  if (mudou) escreverJson(arquivo, alvo);
+  return mudou;
 }
 
 function sincronizarConfig(id, cfg = carregarConfig()) {
@@ -221,7 +240,20 @@ function identidade(id, cfg = carregarConfig()) {
   return {
     email: conta.emailAddress || null,
     organizacao: conta.organizationName || null,
+    chave: conta.accountUuid ? [conta.accountUuid, conta.organizationUuid].filter(Boolean).join(':') : null,
   };
+}
+
+function contasDuplicadas(cfg = carregarConfig()) {
+  const grupos = new Map();
+  for (const id of Object.keys(cfg.contas)) {
+    const ident = identidade(id, cfg);
+    if (!ident.chave) continue;
+    const grupo = grupos.get(ident.chave) || { email: ident.email, ids: [] };
+    grupo.ids.push(id);
+    grupos.set(ident.chave, grupo);
+  }
+  return [...grupos.values()].filter((g) => g.ids.length > 1);
 }
 
 function rotuloDaJanela(limite) {
@@ -486,6 +518,7 @@ module.exports = {
   servicoKeychain,
   lerCredencial,
   identidade,
+  contasDuplicadas,
   sondar,
   lerUso,
   folgaDe,

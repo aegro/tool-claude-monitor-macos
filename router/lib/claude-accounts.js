@@ -62,7 +62,7 @@ function tabela(linhas) {
 async function status() {
   const candidatos = await contas.avaliarContas({ maxIdadeMs: 0 });
   const escolhida = contas.decidir(candidatos);
-  const linhas = [['account', 'role', 'headroom', '5h session', '7d weekly', 'other', 'state']];
+  const linhas = [['account', 'login', 'role', 'headroom', '5h session', '7d weekly', 'other', 'state']];
   for (const c of candidatos) {
     const janelas = c.sonda.uso ? c.sonda.uso.janelas : [];
     const janela = (chave) => janelas.find((j) => j.chave === chave);
@@ -77,6 +77,7 @@ async function status() {
     ].filter(Boolean);
     linhas.push([
       c.id,
+      contas.identidade(c.id).email || 'not logged in',
       PAPEIS[c.papel] || c.papel,
       c.folga == null ? '–' : `${c.folga}%`,
       fmt(janela('session')),
@@ -87,7 +88,29 @@ async function status() {
   }
   console.log(tabela(linhas));
   console.log(`\nrouter would use now: ${escolhida ? escolhida.id : 'no account available'}`);
+  avisarDuplicadas();
   if (contas.carregarConfig().ativo === false) console.log('switching is off: claude-auto hands everything to plain claude');
+}
+
+function avisarDuplicadas() {
+  for (const { email, ids } of contas.contasDuplicadas()) {
+    console.log(`\nwarning: ${ids.join(' and ')} are logged into the same account (${email}), so switching between them changes nothing.`);
+    console.log('log one of them into another account with claude-accounts login <id>; if the browser is already signed in, finish the sign-in in a private window.');
+  }
+}
+
+function entrar(id, args) {
+  contas.prepararConta(id);
+  const filho = spawn(contas.resolverClaude(), ['auth', 'login', ...args], { env: contas.envDaConta(id), stdio: 'inherit' });
+  process.on('SIGINT', () => {});
+  filho.on('exit', (codigo) => {
+    if (codigo === 0) {
+      const { email } = contas.identidade(id);
+      console.log(`${id} is logged in as ${email || 'unknown'}`);
+      avisarDuplicadas();
+    }
+    process.exit(codigo ?? 1);
+  });
 }
 
 function ligar(ativo) {
@@ -148,7 +171,7 @@ async function main() {
       adicionar(args);
       break;
     case 'login':
-      rodarClaude(exigirConta(args[0]), ['auth', 'login', ...args.slice(1)]);
+      entrar(exigirConta(args[0]), args.slice(1));
       break;
     case 'sync': {
       const cfg = contas.carregarConfig();

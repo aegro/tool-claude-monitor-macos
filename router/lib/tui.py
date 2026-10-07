@@ -157,10 +157,15 @@ class Supervisor:
         self.texto = ""
         self.armado_em = time.time() + armar_em
 
-    def repassar(self, segundos):
+    def repassar(self, segundos, entrada=None):
         try:
-            prontos, _, _ = select.select([self.fd], [], [], segundos)
-            if prontos:
+            fontes = [self.fd] if entrada is None else [self.fd, entrada]
+            prontos, _, _ = select.select(fontes, [], [], segundos)
+            if entrada is not None and entrada in prontos:
+                dados = os.read(entrada, 4096)
+                if dados:
+                    os.write(self.fd, dados)
+            if self.fd in prontos:
                 dados = os.read(self.fd, 65536)
                 if dados:
                     os.write(sys.stdout.fileno(), dados)
@@ -222,7 +227,7 @@ class Supervisor:
         while not self.limite_no_transcript():
             if time.time() >= prazo:
                 return False
-            self.repassar(0.3)
+            self.repassar(0.3, sys.stdin.fileno())
         return True
 
     def trocar(self, motivo):

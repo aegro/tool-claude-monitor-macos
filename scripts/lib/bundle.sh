@@ -7,6 +7,7 @@
 # o macOS re-perguntar no Keychain — exatamente o que a assinatura pretende matar.
 
 BUNDLE_ID="com.aegro.monitor-claude"
+ROUTER_SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)/router"
 
 # assemble_bundle <binario> <app_path> <versao>
 # (Re)cria um .app NÃO assinado em <app_path>. Quem chama assina depois.
@@ -26,9 +27,7 @@ assemble_bundle() {
   rm -rf "$app"
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/router"
   cp "$bin" "$app/Contents/MacOS/MonitorClaude"
-  local root
-  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-  cp -R "$root/router/bin" "$root/router/lib" "$app/Contents/Resources/router/"
+  cp -R "$ROUTER_SRC/bin" "$ROUTER_SRC/lib" "$app/Contents/Resources/router/"
   chmod +x "$app/Contents/Resources/router/bin/"*
   cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

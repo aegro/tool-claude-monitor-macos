@@ -105,9 +105,13 @@ function contaDaChave(chave, cfg = contas.carregarConfig()) {
   return ids.find((id) => !contas.usaDirPadrao(id, cfg) && contas.identidade(id, cfg).chave === chave) || null;
 }
 
+function principalSemIdentidadeGuardada(cfg) {
+  return SLOT_PADRAO && !(loginGuardado(cfg.principal) || {}).chave ? cfg.principal : null;
+}
+
 function contaNoSlot(cfg = contas.carregarConfig()) {
   const chave = chaveDe((contas.lerJson(ARQ_SLOT, {}) || {}).oauthAccount);
-  return contaDaChave(chave, cfg) || (SLOT_PADRAO ? cfg.principal : null);
+  return contaDaChave(chave, cfg) || principalSemIdentidadeGuardada(cfg);
 }
 
 async function contaRealNoSlot(cfg = contas.carregarConfig()) {

@@ -91,9 +91,20 @@ enum AccountRouter {
             reserveBelow: reserveBelow)
     }
 
+    struct UnreadableConfig: LocalizedError {
+        var errorDescription: String? {
+            "o arquivo não é um JSON válido; corrija ou apague antes de ligar ou desligar a troca"
+        }
+    }
+
     static func setEnabled(_ enabled: Bool, at url: URL = configURL) throws {
-        var root = (try? Data(contentsOf: url))
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        var root: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: url.path) {
+            let data = try Data(contentsOf: url)
+            guard let existing = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else { throw UnreadableConfig() }
+            root = existing
+        }
         root["ativo"] = enabled
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])

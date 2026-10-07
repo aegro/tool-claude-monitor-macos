@@ -126,6 +126,18 @@ struct AccountRouterTests {
         #expect(try config(String(decoding: try Data(contentsOf: url), as: UTF8.self)).enabled)
     }
 
+    @Test func ligarComConfigIlegívelNãoApagaOArquivo() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("router-\(UUID().uuidString)/config.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let broken = Data(#"{"principal":"pessoal","rota":["pessoal","squad"],"#.utf8)
+        try broken.write(to: url)
+
+        #expect(throws: AccountRouter.UnreadableConfig.self) { try AccountRouter.setEnabled(false, at: url) }
+        #expect(try Data(contentsOf: url) == broken)
+    }
+
     @Test func instalarComandosCriaLinksSemSobrescreverArquivoDeVerdade() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

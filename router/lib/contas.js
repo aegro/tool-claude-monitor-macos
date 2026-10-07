@@ -84,6 +84,9 @@ function carregarConfig() {
 }
 
 function salvarConfig(cfg) {
+  if (fs.existsSync(ARQ_CONFIG) && lerJson(ARQ_CONFIG, null) === null) {
+    throw new Error(`${ARQ_CONFIG} is not valid JSON; fix or remove it before changing accounts`);
+  }
   escreverJson(ARQ_CONFIG, cfg);
 }
 

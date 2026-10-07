@@ -10,7 +10,7 @@ struct SettingsView: View {
 
     @State private var routerOn = AccountRouter.loadConfig()?.enabled ?? true
     @State private var commandsInstalled = AccountRouter.commandsInstalled
-    @State private var installError: String?
+    @State private var routerError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -171,8 +171,8 @@ struct SettingsView: View {
             }
         }
 
-        if let installError {
-            Text(installError)
+        if let routerError {
+            Text(routerError)
                 .font(Type.labelTiny)
                 .foregroundStyle(Ink.ember)
                 .fixedSize(horizontal: false, vertical: true)
@@ -185,7 +185,13 @@ struct SettingsView: View {
         if on, !commandsInstalled, let bin = AccountRouter.bundledCommands {
             guard installBundledCommands(from: bin) else { return }
         }
-        guard (try? AccountRouter.setEnabled(on)) != nil else { return }
+        do {
+            try AccountRouter.setEnabled(on)
+            routerError = nil
+        } catch {
+            routerError = "Não deu para salvar \(AccountRouter.configURL.path): \(error.localizedDescription)"
+            return
+        }
         routerOn = on
         Task { await monitor.refreshUsage(force: true) }
     }
@@ -194,12 +200,12 @@ struct SettingsView: View {
     private func installBundledCommands(from bin: URL) -> Bool {
         do {
             try AccountRouter.installCommands(from: bin)
-            installError = nil
+            routerError = nil
         } catch {
-            installError = "Não deu para instalar os comandos em ~/.local/bin: \(error.localizedDescription)"
+            routerError = "Não deu para instalar os comandos em ~/.local/bin: \(error.localizedDescription)"
         }
         commandsInstalled = AccountRouter.commandsInstalled
-        return installError == nil
+        return routerError == nil
     }
 
     private func note(_ text: String) -> some View {

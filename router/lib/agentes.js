@@ -145,6 +145,24 @@ async function avaliarParaAgentes(cfg = contas.carregarConfig()) {
   );
 }
 
+let donoDaTrava = null;
+
+function travaEhDe(dono) {
+  try {
+    return fs.readFileSync(path.join(DIR_TRAVA, 'dono'), 'utf8') === dono;
+  } catch {
+    return false;
+  }
+}
+
+function renovarTrava() {
+  if (!donoDaTrava || !travaEhDe(donoDaTrava)) return;
+  const agora = new Date();
+  try {
+    fs.utimesSync(DIR_TRAVA, agora, agora);
+  } catch {}
+}
+
 async function comTrava(fn) {
   fs.mkdirSync(contas.DIR_ESTADO, { recursive: true });
   try {
@@ -158,10 +176,14 @@ async function comTrava(fn) {
     fs.rmSync(DIR_TRAVA, { recursive: true, force: true });
     fs.mkdirSync(DIR_TRAVA);
   }
+  const dono = `${process.pid}:${crypto.randomUUID()}`;
+  fs.writeFileSync(path.join(DIR_TRAVA, 'dono'), dono);
+  donoDaTrava = dono;
   try {
     return await fn();
   } finally {
-    fs.rmSync(DIR_TRAVA, { recursive: true, force: true });
+    donoDaTrava = null;
+    if (travaEhDe(dono)) fs.rmSync(DIR_TRAVA, { recursive: true, force: true });
   }
 }
 
@@ -322,6 +344,7 @@ async function retomar(p, estado) {
     const desde = Date.now() - 1000;
     await rodar(python, [path.join(__dirname, 'empurrar.py'), bin, p.id, CONTINUAR], { env: envDoSlot(), timeout: 45000 });
     for (let i = 0; i < 10; i++) {
+      renovarTrava();
       if (continuacaoChegou(p.arquivo, desde) || (await trabalhando(p.id))) {
         contas.log(`agentes: ${p.nome} retomado`);
         return true;
@@ -375,6 +398,7 @@ async function migrarOciosos(lista, estado) {
     if (agente.kind !== 'background' || !agente.pid || agente.status !== 'idle' || agente.state === 'blocked') continue;
     const desde = Math.max(((estado.respawnados || {})[agente.sessionId]) || 0, agente.startedAt || 0);
     if (desde >= ultimaTroca) continue;
+    renovarTrava();
     const r = await rodar(contas.resolverClaude(), ['respawn', agente.id], { env: envDoSlot(), timeout: 30000 });
     if (!r.ok) continue;
     estado.respawnados = { ...(estado.respawnados || {}), [agente.sessionId]: Date.now() };

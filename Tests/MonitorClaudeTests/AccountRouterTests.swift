@@ -45,8 +45,6 @@ struct AccountRouterTests {
         #expect(cfg.accounts.map(\.role) == [.route, .reserve])
     }
 
-    /// Same naming Claude Code uses for a CLAUDE_CONFIG_DIR login: the default service plus the
-    /// first 8 hex chars of sha256(dir). Expected value computed with `shasum -a 256`.
     @Test func serviçoDoKeychainSegueOClaudeCode() throws {
         let cfg = try config(#"{ "contas": { "principal": {}, "squad": {} }, "rota": ["principal", "squad"] }"#)
         #expect(AccountRouter.keychainService(for: cfg.accounts[0]) == "Claude Code-credentials")

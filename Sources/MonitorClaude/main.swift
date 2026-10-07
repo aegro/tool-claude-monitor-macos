@@ -28,7 +28,6 @@ if CommandLine.arguments.contains("--dump-usage") {
     exit(0)
 }
 
-// The claude-auto router's accounts, each read live with its own login, and the one it would pick.
 if CommandLine.arguments.contains("--dump-router") {
     guard let config = AccountRouter.loadConfig() else {
         print("sem ~/.claude-accounts/config.json")

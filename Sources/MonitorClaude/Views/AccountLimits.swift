@@ -39,7 +39,6 @@ struct PlanBadge: View {
     }
 }
 
-/// Marks the account claude-auto would hand the next session to.
 struct RouterBadge: View {
     var body: some View {
         HStack(spacing: 3) {

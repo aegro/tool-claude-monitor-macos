@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const contas = require('./contas');
 const { Proxy } = require('./proxy');
 const { valorDaFlag, temFlag } = require('./args');
@@ -22,7 +22,23 @@ function supervisionavel(args) {
   return !args.some((a) => ['-p', '--print', '--bg', '--background'].includes(a) || a.startsWith('--print='));
 }
 
-function rodarSupervisionado(conta, args) {
+function ferramentasDoXcode() {
+  try {
+    execFileSync('/usr/bin/xcode-select', ['-p'], { stdio: 'ignore', timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pythonDoSupervisor() {
+  const doPath = (process.env.PATH || '').split(path.delimiter).filter(Boolean).map((d) => path.join(d, 'python3'));
+  const stubDoMac = (candidato) => process.platform === 'darwin' && candidato === '/usr/bin/python3';
+  const candidatos = [...new Set(['/usr/bin/python3', ...doPath])];
+  return candidatos.find((c) => fs.existsSync(c) && !(stubDoMac(c) && !ferramentasDoXcode())) || null;
+}
+
+function rodarSupervisionado(conta, args, python) {
   const final = FLAGS_DE_SESSAO.some((f) => temFlag(args, f)) ? args : [...args, '--session-id', crypto.randomUUID()];
   const configuracao = {
     bin: contas.resolverClaude(),
@@ -32,13 +48,16 @@ function rodarSupervisionado(conta, args) {
     contas: path.resolve(__dirname, '..', 'bin', 'claude-accounts'),
     log: contas.ARQ_LOG,
   };
-  const python = fs.existsSync('/usr/bin/python3') ? '/usr/bin/python3' : 'python3';
   const filho = spawn(python, [path.join(__dirname, 'tui.py')], {
     env: { ...contas.envDaConta(conta), CLAUDE_AUTO_TUI: JSON.stringify(configuracao) },
     stdio: 'inherit',
   });
   for (const sinal of ['SIGTERM', 'SIGHUP']) process.on(sinal, () => filho.kill(sinal));
   process.on('SIGINT', () => {});
+  filho.on('error', (e) => {
+    process.stderr.write(`claude-auto: ${e.message}\n`);
+    process.exit(127);
+  });
   filho.on('exit', (codigo, sinal) => process.exit(codigo ?? (sinal ? 1 : 0)));
 }
 
@@ -77,7 +96,11 @@ async function rodarDireto(args) {
     }
     contas.log(`direto: abrindo na conta ${conta}${fixada ? ' (fixada)' : ` (folga ${folga ?? '?'})`}: ${args.slice(0, 6).join(' ')}`);
   }
-  if (!semConta && supervisionavel(args)) return rodarSupervisionado(conta, args);
+  if (!semConta && supervisionavel(args)) {
+    const python = pythonDoSupervisor();
+    if (python) return rodarSupervisionado(conta, args, python);
+    contas.log('direto: sem python3 utilizável; abrindo sem supervisor de terminal');
+  }
   const filho = spawn(contas.resolverClaude(), args, { env: contas.envDaConta(conta), stdio: 'inherit' });
   for (const sinal of ['SIGTERM', 'SIGHUP']) process.on(sinal, () => filho.kill(sinal));
   process.on('SIGINT', () => {});

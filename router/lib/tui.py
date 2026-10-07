@@ -37,6 +37,7 @@ VALOR_VARIADICO = {
     "--add-dir", "--betas", "--file", "--mcp-config", "--tools", "--allowedTools", "--allowed-tools",
     "--disallowedTools", "--disallowed-tools",
 }
+REARMAR_SEM_TROCA = 300
 CONTINUAR = (
     "[claude-auto] A conta anterior atingiu o limite e esta sessão foi retomada em outra conta. "
     "Continue exatamente de onde parou, sem refazer o que já foi concluído."
@@ -230,11 +231,15 @@ class Supervisor:
             self.repassar(0.3, sys.stdin.fileno())
         return True
 
+    def rearmar_depois_de_falha(self):
+        self.texto = ""
+        self.armado_em = time.time() + REARMAR_SEM_TROCA
+
     def trocar(self, motivo):
         sessao = self.sessao_atual()
         if not sessao:
             log(self.config, "limite detectado, mas sem id de sessão; nada a fazer")
-            self.armado_em = float("inf")
+            self.rearmar_depois_de_falha()
             return
         try:
             processo = subprocess.Popen(
@@ -252,7 +257,7 @@ class Supervisor:
             escolha = {}
         if not escolha.get("para"):
             log(self.config, "nenhuma outra conta disponível; mantendo a sessão")
-            self.armado_em = float("inf")
+            self.rearmar_depois_de_falha()
             return
         self.encerrar()
         aviso = f"\r\n\x1b[33m[claude-auto] {self.conta} hit its limit; continuing on {escolha['para']}…\x1b[0m\r\n"

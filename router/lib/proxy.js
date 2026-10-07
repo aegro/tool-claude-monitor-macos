@@ -87,7 +87,9 @@ class Proxy {
     });
     process.stdout.on('error', () => this.encerrar('SIGTERM'));
     for (const sinal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sinal, () => this.encerrar(sinal));
-    process.on('SIGUSR1', () => this.trocaDeTeste());
+    process.on('SIGUSR1', () =>
+      this.trocaDeTeste().catch((e) => contas.log(`stream: troca de teste falhou: ${e.message}`)),
+    );
 
     this.geracao = 1;
     this.lancar(this.args);
@@ -382,30 +384,37 @@ class Proxy {
 
   async trocar({ para, motivo, forcada, continuar }) {
     this.trocando = true;
-    const de = this.conta;
-    const interrompidas = forcada ? this.tarefasAtivas() : [];
-    this.geracao++;
-    this.retido = null;
-    for (const id of this.pendentesDoFilho.keys()) {
-      this.paraHost(JSON.stringify({ type: 'control_cancel_request', request_id: id }));
-    }
-    this.pendentesDoFilho.clear();
-    await this.matar(this.filho);
+    try {
+      const de = this.conta;
+      const interrompidas = forcada ? this.tarefasAtivas() : [];
+      this.geracao++;
+      this.retido = null;
+      for (const id of this.pendentesDoFilho.keys()) {
+        this.paraHost(JSON.stringify({ type: 'control_cancel_request', request_id: id }));
+      }
+      this.pendentesDoFilho.clear();
+      await this.matar(this.filho);
 
-    this.conta = para;
-    this.lancar(argsDeRetomada(this.args, this.sessionId));
-    const initPendente = this.initReq && this.pendentesDoHost.has(this.initReq.request_id);
-    if (this.initReq && !initPendente) this.enviarInterno(this.initReq);
-    for (const req of this.ajustes.values()) {
-      if (!this.pendentesDoHost.has(req.request_id)) this.enviarInterno(req);
+      this.conta = para;
+      this.lancar(argsDeRetomada(this.args, this.sessionId));
+      const initPendente = this.initReq && this.pendentesDoHost.has(this.initReq.request_id);
+      if (this.initReq && !initPendente) this.enviarInterno(this.initReq);
+      for (const req of this.ajustes.values()) {
+        if (!this.pendentesDoHost.has(req.request_id)) this.enviarInterno(req);
+      }
+      for (const req of this.pendentesDoHost.values()) this.paraFilho(JSON.stringify(req));
+      if (forcada && continuar) {
+        this.paraFilho(JSON.stringify(this.mensagemDeContinuacao(de, motivo, interrompidas)));
+        this.emTurno = true;
+      }
+      contas.registrarTroca({ de, para, motivo, sessao: this.sessionId, interrompidas: interrompidas.length });
+    } catch (e) {
+      contas.log(`stream: troca para ${para} falhou: ${e.message}`);
+      this.sair(1);
+      return;
+    } finally {
+      this.trocando = false;
     }
-    for (const req of this.pendentesDoHost.values()) this.paraFilho(JSON.stringify(req));
-    if (forcada && continuar) {
-      this.paraFilho(JSON.stringify(this.mensagemDeContinuacao(de, motivo, interrompidas)));
-      this.emTurno = true;
-    }
-    contas.registrarTroca({ de, para, motivo, sessao: this.sessionId, interrompidas: interrompidas.length });
-    this.trocando = false;
     this.esvaziarFila();
   }
 

@@ -253,10 +253,7 @@ struct RouterState: Equatable {
             .sorted { $0[0] < $1[0] }
     }
 
-    var pickKey: String? {
-        guard let pick else { return nil }
-        return keys.first { $0.value == pick }?.key
-    }
+    var pickKey: String? { pick.flatMap { logins[$0]?.key } }
 
     func isRouted(_ key: String?) -> Bool { key != nil && key == pickKey }
     func isRouterAccount(_ key: String) -> Bool { keys[key] != nil }

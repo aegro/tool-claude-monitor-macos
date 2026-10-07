@@ -110,6 +110,7 @@ struct AccountRouterTests {
         var state = RouterState(config: cfg, pick: "squad", keys: [:], headroom: [:], lastSwitch: nil,
                                 logins: ["pessoal": mesma, "squad": mesma, "extra": outra])
         #expect(state.sharedLogins == [["pessoal", "squad"]])
+        #expect(state.isRouted(mesma.key))
 
         state.logins["pessoal"] = AccountIdentity(accountUuid: "c", organizationUuid: "o")
         #expect(state.sharedLogins.isEmpty)

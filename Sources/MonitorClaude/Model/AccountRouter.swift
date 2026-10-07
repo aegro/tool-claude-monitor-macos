@@ -1,8 +1,6 @@
 import Foundation
 import CryptoKit
 
-/// Read side of the claude-auto account router bundled in `Contents/Resources/router`. The router
-/// owns `~/.claude-accounts`; the Monitor reads it and flips one key, `ativo`, in its config.
 enum AccountRouter {
     struct Account: Equatable {
         enum Role: String { case route, reserve }
@@ -145,8 +143,6 @@ enum AccountRouter {
         return ClaudeConfig.parseActiveAccount(data)
     }
 
-    /// Through `/usr/bin/security`, the reader the CLI's own keychain items already trust, so an
-    /// extra account never raises a new keychain prompt for the Monitor.
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
@@ -211,8 +207,6 @@ enum AccountRouter {
         return max(0, min(100, (100 - max(used(snapshot.session), used(snapshot.weekly))).rounded()))
     }
 
-    /// Mirrors `decidir` in router/lib/contas.js: most headroom on the route wins, the reserve
-    /// only when every route account is below `reserveBelow`, ties go to config order.
     static func pick(_ config: Config, headroom: [String: Double], available: Set<String>,
                      exhausted: [String: Date]) -> String? {
         let order = config.accounts.map(\.id)
@@ -235,7 +229,6 @@ enum AccountRouter {
     }
 }
 
-/// What the panel and the settings need from the router after each poll.
 struct RouterState: Equatable {
     var config: AccountRouter.Config
     var pick: String?
@@ -244,7 +237,6 @@ struct RouterState: Equatable {
     var logins: [String: AccountIdentity] = [:]
     var read: Set<String> = []
 
-    /// Router entries logged into the same account, which makes switching between them a no-op.
     var sharedLogins: [[String]] {
         let ids = config.accounts.map(\.id).filter { logins[$0] != nil }
         return Dictionary(grouping: ids) { logins[$0]!.key }

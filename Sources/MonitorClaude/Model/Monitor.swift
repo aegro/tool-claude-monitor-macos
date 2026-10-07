@@ -58,7 +58,6 @@ final class Monitor: ObservableObject {
     @Published private(set) var activeAccount: AccountIdentity?
     /// Organizations read from the desktop app's own usage history, refreshed on the slow tick.
     @Published private(set) var desktopOrgs: [DesktopOrgUsage] = []
-    /// The claude-auto router's accounts and its current pick; nil when the router is not set up.
     @Published private(set) var router: RouterState?
     let accounts = AccountStore()
 
@@ -197,8 +196,6 @@ final class Monitor: ObservableObject {
             lastAccountKey = identity?.key
         }
         activeAccount = identity
-        // A throttled first poll (429) would otherwise blank the panel until the server lets us
-        // back in, while the last reading of this same account sits in the store.
         if apiSnapshot == nil, let id = identity, let stored = accounts.records[id.key]?.snapshot {
             apiSnapshot = stored
             apiSnapshotOrg = id.organizationUuid
@@ -209,8 +206,6 @@ final class Monitor: ObservableObject {
         await pollRouterAccounts(active: identity)
     }
 
-    /// Every account the router knows, read live with its own login, so each one shows current
-    /// numbers instead of the last time it happened to be the terminal's account.
     private func pollRouterAccounts(active: AccountIdentity?) async {
         guard let config = AccountRouter.loadConfig(), config.hasExtraAccounts else {
             router = nil

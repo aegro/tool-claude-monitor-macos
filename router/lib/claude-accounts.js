@@ -1,7 +1,10 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 const contas = require('./contas');
+const agentes = require('./agentes');
 
 const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
 
@@ -11,6 +14,8 @@ const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
   add <id> [--name N] [--reserve]
                                create ~/.claude-accounts/<id> with links to ~/.claude
   login <id>                   log the account in (opens the browser)
+  login <id> --agents          separate login used by claude agents when this account takes over
+  agents [use <id>]            which account the background agents run on; switch it by hand
   sync                         redo links and copy MCP servers and project trust
   switches [-n N]              latest recorded switches
   release <id>                 clear the exhausted mark
@@ -99,6 +104,46 @@ function avisarDuplicadas() {
   }
 }
 
+function entrarParaAgentes(id, args) {
+  const dir = path.join(contas.DIR_CONTAS, `.login-agentes-${id}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  contas.escreverJson(path.join(dir, '.claude.json'), { hasCompletedOnboarding: true });
+  const env = { ...agentes.envDoSlot(), CLAUDE_CONFIG_DIR: dir };
+  const filho = spawn(contas.resolverClaude(), ['auth', 'login', ...args], { env, stdio: 'inherit' });
+  process.on('SIGINT', () => {});
+  filho.on('exit', async (codigo) => {
+    try {
+      if (codigo !== 0) throw new Error('login cancelled');
+      const conta = await agentes.guardarLoginDoDir(id, dir);
+      console.log(`agents login for ${id}: ${conta.emailAddress || 'unknown'}`);
+      const esperado = contas.identidade(id).email;
+      if (esperado && conta.emailAddress && esperado !== conta.emailAddress) {
+        console.log(`warning: ${id} is ${esperado} in the terminal but this agents login is ${conta.emailAddress}`);
+      }
+    } catch (e) {
+      process.stderr.write(`claude-accounts: ${e.message}\n`);
+      process.exitCode = 1;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+async function statusDosAgentes() {
+  const cfg = contas.carregarConfig();
+  const noSlot = agentes.contaNoSlot(cfg);
+  const linhas = [['account', 'login', 'agents']];
+  for (const id of [...cfg.rota, ...cfg.reserva]) {
+    const pronta = id === noSlot ? 'running the agents now' : agentes.loginGuardado(id) ? 'ready' : `missing: claude-accounts login ${id} --agents`;
+    linhas.push([id, contas.identidade(id, cfg).email || 'not logged in', pronta]);
+  }
+  console.log(tabela(linhas));
+  const lista = (await agentes.listarAgentes()) || [];
+  const paradas = lista.map((a) => agentes.paradoPorLimite(a)).filter(Boolean);
+  console.log(`\n${lista.length} agents, ${paradas.length} stopped by a limit${paradas.length ? `: ${paradas.map((p) => p.nome).join(', ')}` : ''}`);
+}
+
 function entrar(id, args) {
   contas.prepararConta(id);
   const filho = spawn(contas.resolverClaude(), ['auth', 'login', ...args], { env: contas.envDaConta(id), stdio: 'inherit' });
@@ -171,7 +216,19 @@ async function main() {
       adicionar(args);
       break;
     case 'login':
-      entrar(exigirConta(args[0]), args.slice(1));
+      if (args.includes('--agents')) entrarParaAgentes(exigirConta(args[0]), args.slice(1).filter((a) => a !== '--agents'));
+      else entrar(exigirConta(args[0]), args.slice(1));
+      break;
+    case 'agents':
+      if (args[0] === 'use') {
+        const r = await agentes.trocarSlot(exigirConta(args[1]), 'manual');
+        console.log(r.acao === 'ocupado' ? 'another switch is running, try again' : r.mudou ? `agents now run on ${r.para} (was ${r.de})` : `agents already run on ${r.para}`);
+      } else {
+        await statusDosAgentes();
+      }
+      break;
+    case '_vigiar':
+      console.log(JSON.stringify(await agentes.vigiar()));
       break;
     case 'sync': {
       const cfg = contas.carregarConfig();

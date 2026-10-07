@@ -74,6 +74,8 @@ final class Monitor: ObservableObject {
     private var fastTimer: Timer?
     private var slowTimer: Timer?
     private var lastUsageFetch: Date?
+    private var lastAgentsWatch: Date?
+    private var watchingAgents = false
     private var lastLedgerScan: Date?
     private var sampling = false
     private var cachedCreds: Keychain.Credentials?
@@ -145,7 +147,24 @@ final class Monitor: ObservableObject {
         if lastUsageFetch.map({ Date().timeIntervalSince($0) >= usageInterval }) ?? true {
             await refreshUsage(force: false)
         }
+        watchAgentsIfDue()
         history.flush()
+    }
+
+    private func watchAgentsIfDue() {
+        guard router?.config.enabled == true, !watchingAgents,
+              lastAgentsWatch.map({ Date().timeIntervalSince($0) >= 30 }) ?? true
+        else { return }
+        lastAgentsWatch = Date()
+        watchingAgents = true
+        Task.detached(priority: .utility) { [weak self] in
+            AccountRouter.watchAgents()
+            await self?.finishAgentsWatch()
+        }
+    }
+
+    private func finishAgentsWatch() {
+        watchingAgents = false
     }
 
     var blockStart: Date {

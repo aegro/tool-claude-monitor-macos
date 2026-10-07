@@ -50,6 +50,29 @@ enum AccountRouter {
         return bin
     }
 
+    static var agentsLoginsDirectory: URL { home.appendingPathComponent(".estado/agentes") }
+
+    static func hasAgentsLogin(_ id: String) -> Bool {
+        FileManager.default.fileExists(atPath: agentsLoginsDirectory.appendingPathComponent("\(id).json").path)
+    }
+
+    static var accountsCommand: URL? {
+        let installed = commandsDirectory.appendingPathComponent("claude-accounts")
+        if FileManager.default.isExecutableFile(atPath: installed.path) { return installed }
+        return bundledCommands?.appendingPathComponent("claude-accounts")
+    }
+
+    static func watchAgents() {
+        guard let command = accountsCommand else { return }
+        let process = Process()
+        process.executableURL = command
+        process.arguments = ["_vigiar"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return }
+        process.waitUntilExit()
+    }
+
     static var commandsInstalled: Bool {
         FileManager.default.fileExists(atPath: commandsDirectory.appendingPathComponent("claude-auto").path)
     }

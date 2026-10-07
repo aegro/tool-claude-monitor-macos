@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFile, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 
 const HOME = os.homedir();
 const PRINCIPAL_PADRAO = 'principal';
@@ -46,7 +46,7 @@ const CHAVES_PROJETO = [
 const CONFIG_PADRAO = {
   principal: PRINCIPAL_PADRAO,
   reserva: [],
-  limites: { reserva: 3, preventiva: 5 },
+  limites: { reserva: 3, preventiva: 5, voltar: 20 },
   ativo: true,
   cacheUsoSegundos: 60,
   notificar: true,
@@ -418,6 +418,8 @@ function decidir(candidatos, { excluir = [] } = {}) {
   const ordem = candidatos.map((c) => c.id);
   const pontos = (c) => (c.folga == null ? 1 : c.folga);
   const elegivel = (c) => !excluir.includes(c.id) && !c.esgotada && c.logada && pontos(c) > 0;
+  const preferida = cfg.preferida && candidatos.find((c) => c.id === cfg.preferida);
+  if (preferida && elegivel(preferida) && pontos(preferida) >= cfg.limites.reserva) return preferida;
   const melhor = (lista) =>
     lista.filter(elegivel).sort((a, b) => pontos(b) - pontos(a) || ordem.indexOf(a.id) - ordem.indexOf(b.id))[0] || null;
   const daRota = melhor(candidatos.filter((c) => c.papel === 'rota'));
@@ -427,6 +429,13 @@ function decidir(candidatos, { excluir = [] } = {}) {
     if (daReserva && (!daRota || pontos(daReserva) > pontos(daRota))) escolhida = daReserva;
   }
   return escolhida;
+}
+
+function preferidaDeVolta(candidatos, atual, cfg = carregarConfig()) {
+  if (!cfg.preferida || cfg.preferida === atual) return null;
+  const c = candidatos.find((x) => x.id === cfg.preferida);
+  if (!c || c.esgotada || !c.logada || c.folga == null || c.folga < cfg.limites.voltar) return null;
+  return c;
 }
 
 async function escolher({ excluir = [], maxIdadeMs } = {}) {
@@ -504,8 +513,28 @@ function principal() {
   return carregarConfig().principal;
 }
 
+function ferramentasDoXcode() {
+  try {
+    execFileSync('/usr/bin/xcode-select', ['-p'], { stdio: 'ignore', timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function python3() {
+  const doPath = (process.env.PATH || '').split(path.delimiter).filter(Boolean).map((d) => path.join(d, 'python3'));
+  const stubDoMac = (candidato) => process.platform === 'darwin' && candidato === '/usr/bin/python3';
+  const candidatos = [...new Set(['/usr/bin/python3', ...doPath])];
+  return candidatos.find((c) => fs.existsSync(c) && !(stubDoMac(c) && !ferramentasDoXcode())) || null;
+}
+
 module.exports = {
   principal,
+  python3,
+  lerJson,
+  escreverJson,
+  usaDirPadrao,
   DIR_CONTAS,
   DIR_ESTADO,
   DIR_PRINCIPAL,
@@ -527,6 +556,7 @@ module.exports = {
   folgaDe,
   avaliarContas,
   decidir,
+  preferidaDeVolta,
   escolher,
   marcarEsgotada,
   lerEsgotadas,

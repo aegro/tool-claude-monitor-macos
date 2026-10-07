@@ -154,6 +154,12 @@ struct SettingsView: View {
             }
             if state.config.enabled {
                 note(state.pick.map { "Usaria agora: \($0)" } ?? "Nenhuma conta disponível agora")
+                let semLogin = state.config.accounts
+                    .filter { $0.id != state.config.principal && !AccountRouter.hasAgentsLogin($0.id) }
+                    .map(\.id)
+                if !semLogin.isEmpty {
+                    note("claude agents roda na \(state.config.principal) e só troca para contas com login de agentes. Falta em: \(semLogin.joined(separator: ", ")) (claude-accounts login <nome> --agents).")
+                }
             }
             if let last = state.lastSwitch {
                 note("Última troca \(Fmt.stamp(last.at)): \(last.from) → \(last.to) · \(last.reason)")

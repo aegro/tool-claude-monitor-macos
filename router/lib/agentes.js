@@ -423,12 +423,16 @@ async function vigiar() {
   });
 }
 
-async function prepararSlot() {
+async function prepararSlot({ prazoDaAvaliacaoMs = 8000 } = {}) {
   const cfg = contas.carregarConfig();
   if (cfg.ativo === false) return null;
   return comTrava(async () => {
     const atual = contaNoSlot(cfg);
-    const prontas = await avaliarParaAgentes(cfg);
+    const prontas = await Promise.race([avaliarParaAgentes(cfg), esperar(prazoDaAvaliacaoMs).then(() => null)]);
+    if (!prontas) {
+      contas.log('agentes: avaliação das contas passou do prazo; abrindo sem trocar');
+      return null;
+    }
     const noSlot = prontas.find((c) => c.id === atual);
     const sair = Boolean(noSlot && (noSlot.esgotada || noSlot.folga === 0));
     const escolhida = contas.decidir(prontas, { excluir: sair ? [atual] : [] });

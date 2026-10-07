@@ -104,7 +104,7 @@ function doDaemon(args) {
 
 async function abrirNoSlot(args) {
   try {
-    await Promise.race([agentes.prepararSlot(), new Promise((resolve) => setTimeout(resolve, 8000))]);
+    await agentes.prepararSlot();
   } catch (e) {
     contas.log(`agentes: preparar a conta dos agentes falhou: ${e.message}`);
   }

@@ -253,8 +253,10 @@ final class Monitor: ObservableObject {
 
         router = RouterState(
             config: config,
-            pick: AccountRouter.pick(config, headroom: headroom, available: available,
-                                     exhausted: AccountRouter.exhausted()),
+            pick: config.enabled
+                ? AccountRouter.pick(config, headroom: headroom, available: available,
+                                     exhausted: AccountRouter.exhausted())
+                : nil,
             keys: keys,
             headroom: headroom,
             lastSwitch: AccountRouter.lastSwitch(),

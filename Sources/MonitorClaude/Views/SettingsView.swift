@@ -150,7 +150,9 @@ struct SettingsView: View {
                     .foregroundStyle(Ink.ember)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            note(state.pick.map { "Usaria agora: \($0)" } ?? "Nenhuma conta disponível agora")
+            if state.config.enabled {
+                note(state.pick.map { "Usaria agora: \($0)" } ?? "Nenhuma conta disponível agora")
+            }
             if let last = state.lastSwitch {
                 note("Última troca \(Fmt.stamp(last.at)): \(last.from) → \(last.to) · \(last.reason)")
             }

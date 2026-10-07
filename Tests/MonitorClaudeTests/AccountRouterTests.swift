@@ -85,6 +85,8 @@ struct AccountRouterTests {
                                    available: all, exhausted: ["squad": Date().addingTimeInterval(600)]) == "principal")
         #expect(AccountRouter.pick(cfg, headroom: ["principal": 10, "squad": 52],
                                    available: ["principal"], exhausted: [:]) == "principal")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 0, "squad": 0, "extra": 0],
+                                   available: all, exhausted: [:]) == nil)
     }
 
     @Test func lêAÚltimaTrocaEAsEsgotadasVigentes() throws {

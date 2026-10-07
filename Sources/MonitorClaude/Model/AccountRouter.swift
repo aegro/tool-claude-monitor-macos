@@ -216,7 +216,7 @@ enum AccountRouter {
             order
                 .filter { id in
                     config.accounts.first { $0.id == id }?.role == role
-                        && available.contains(id) && exhausted[id] == nil
+                        && available.contains(id) && exhausted[id] == nil && score(id) > 0
                 }
                 .enumerated()
                 .max { a, b in (score(a.element), -a.offset) < (score(b.element), -b.offset) }?

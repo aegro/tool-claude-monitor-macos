@@ -417,7 +417,7 @@ function decidir(candidatos, { excluir = [] } = {}) {
   const cfg = carregarConfig();
   const ordem = candidatos.map((c) => c.id);
   const pontos = (c) => (c.folga == null ? 1 : c.folga);
-  const elegivel = (c) => !excluir.includes(c.id) && !c.esgotada && c.logada;
+  const elegivel = (c) => !excluir.includes(c.id) && !c.esgotada && c.logada && pontos(c) > 0;
   const melhor = (lista) =>
     lista.filter(elegivel).sort((a, b) => pontos(b) - pontos(a) || ordem.indexOf(a.id) - ordem.indexOf(b.id))[0] || null;
   const daRota = melhor(candidatos.filter((c) => c.papel === 'rota'));

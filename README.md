@@ -74,12 +74,14 @@ Para quem tem mais de uma conta do Claude: o Monitor acompanha todas e, com a op
 - **Contas lado a lado.** `~/.claude` continua sendo a conta principal. Cada conta extra mora em `~/.claude-accounts/<id>` e roda o CLI oficial com `CLAUDE_CONFIG_DIR` apontando para lá, com o próprio login. Settings, hooks, skills, plugins, memória e transcrições são links para `~/.claude`, então um `--resume` feito em outra conta acha a mesma conversa.
 - **No painel.** Toda conta do roteador aparece na seção de limites com a leitura atual: o Monitor consulta cada uma com o login dela, lido pelo `/usr/bin/security`, então nenhuma conta extra gera prompt novo do Keychain. A conta que o roteador usaria agora ganha o selo **roteador**.
 - **A opção.** Em **⚙ Configurações → Troca de conta**, um botão liga e desliga a troca. Desligado, o `claude-auto` só repassa tudo para o `claude`. O app instala `claude-auto` e `claude-accounts` em `~/.local/bin` como links para dentro dele, então o `brew upgrade` atualiza o roteador junto.
+- **Conta preferida.** No mesmo lugar, **Conta preferida** escolhe uma conta para usar primeiro (`preferida` na config). Sessões novas abrem nela sempre que ela tem folga. Depois de uma troca por limite, o `claude agents` e o T3 (entre um turno e outro) voltam para ela quando ela recupera 20% de folga; uma sessão de terminal já aberta fica na conta atual até o próximo limite. Em **Nenhuma**, vale sempre a conta com mais folga.
 
 ### Configurar
 
 ```bash
 claude-accounts add pessoal      # cria ~/.claude-accounts/pessoal com os links para ~/.claude
 claude-accounts login pessoal    # login dessa conta no navegador
+claude-accounts login pessoal --agents   # login separado, só para o claude agents trocar de conta
 claude-accounts status           # folga de cada conta e qual o roteador usaria agora
 ```
 

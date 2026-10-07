@@ -9,6 +9,7 @@ struct SettingsView: View {
     var onClose: () -> Void
 
     @State private var routerOn = AccountRouter.loadConfig()?.enabled ?? true
+    @State private var preferred = AccountRouter.loadConfig()?.preferred
     @State private var commandsInstalled = AccountRouter.commandsInstalled
     @State private var routerError: String?
 
@@ -139,6 +140,10 @@ struct SettingsView: View {
     @ViewBuilder
     private var routerStatus: some View {
         if let state = monitor.router {
+            preferredPicker(state.config.accounts)
+            if preferred != nil {
+                note("Sessões novas abrem nela quando tem folga. claude agents e o T3 (entre turnos) voltam para ela quando o limite renova; terminal já aberto fica onde está.")
+            }
             ForEach(state.config.accounts, id: \.id) { account in
                 let login = state.logins[account.id]?.email ?? "sem login"
                 let reading = state.usage[account.id].map {
@@ -201,6 +206,51 @@ struct SettingsView: View {
             return
         }
         routerOn = on
+        Task { await monitor.refreshUsage(force: true) }
+    }
+
+    private func preferredPicker(_ accounts: [AccountRouter.Account]) -> some View {
+        HStack {
+            Text("Conta preferida").font(Type.label)
+            Spacer()
+            Menu {
+                preferredOption(nil, label: "Nenhuma")
+                ForEach(accounts, id: \.id) { preferredOption($0.id, label: $0.label) }
+            } label: {
+                HStack(spacing: 3) {
+                    Text(accounts.first { $0.id == preferred }?.label ?? "Nenhuma").font(Type.label)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
+                }
+                .foregroundStyle(Ink.ember)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(!routerOn)
+            .opacity(routerOn ? 1 : 0.4)
+        }
+    }
+
+    private func preferredOption(_ id: String?, label: String) -> some View {
+        Button {
+            setPreferred(id)
+        } label: {
+            if preferred == id {
+                Label(label, systemImage: "checkmark")
+            } else {
+                Text(label)
+            }
+        }
+    }
+
+    private func setPreferred(_ id: String?) {
+        do {
+            try AccountRouter.setPreferred(id)
+            routerError = nil
+        } catch {
+            routerError = "Não deu para salvar \(AccountRouter.configURL.path): \(error.localizedDescription)"
+            return
+        }
+        preferred = id
         Task { await monitor.refreshUsage(force: true) }
     }
 

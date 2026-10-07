@@ -17,6 +17,7 @@ enum AccountRouter {
         var principal: String
         var accounts: [Account]
         var reserveBelow: Double
+        var preferred: String?
 
         var hasExtraAccounts: Bool { accounts.contains { !$0.usesDefaultDirectory } }
     }
@@ -106,20 +107,31 @@ enum AccountRouter {
                 role: role)
         }
 
+        let preferred = (root["preferida"] as? String).flatMap { route.contains($0) || reserve.contains($0) ? $0 : nil }
+
         return Config(
             enabled: root["ativo"] as? Bool ?? true,
             principal: principal,
             accounts: route.map { account($0, .route) } + reserve.map { account($0, .reserve) },
-            reserveBelow: reserveBelow)
+            reserveBelow: reserveBelow,
+            preferred: preferred)
     }
 
     struct UnreadableConfig: LocalizedError {
         var errorDescription: String? {
-            "o arquivo não é um JSON válido; corrija ou apague antes de ligar ou desligar a troca"
+            "o arquivo não é um JSON válido; corrija ou apague antes de mudar a troca de conta"
         }
     }
 
     static func setEnabled(_ enabled: Bool, at url: URL = configURL) throws {
+        try updateConfig(at: url) { $0["ativo"] = enabled }
+    }
+
+    static func setPreferred(_ id: String?, at url: URL = configURL) throws {
+        try updateConfig(at: url) { $0["preferida"] = id }
+    }
+
+    private static func updateConfig(at url: URL, _ change: (inout [String: Any]) -> Void) throws {
         var root: [String: Any] = [:]
         if FileManager.default.fileExists(atPath: url.path) {
             let data = try Data(contentsOf: url)
@@ -127,7 +139,7 @@ enum AccountRouter {
             else { throw UnreadableConfig() }
             root = existing
         }
-        root["ativo"] = enabled
+        change(&root)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: url, options: .atomic)
@@ -235,6 +247,10 @@ enum AccountRouter {
                      exhausted: [String: Date]) -> String? {
         let order = config.accounts.map(\.id)
         func score(_ id: String) -> Double { headroom[id] ?? 1 }
+        if let preferred = config.preferred, available.contains(preferred), exhausted[preferred] == nil,
+           score(preferred) > 0, score(preferred) >= config.reserveBelow {
+            return preferred
+        }
         func best(_ role: Account.Role) -> String? {
             order
                 .filter { id in

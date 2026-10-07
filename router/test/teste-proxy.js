@@ -11,7 +11,7 @@ const { spawn, execFileSync } = require('child_process');
 const RAIZ = path.resolve(__dirname, '..');
 const FAKE = path.join(__dirname, 'fake-claude.js');
 
-function ambiente({ contas = ['principal', 'segunda'], limitadas = '', uso = null, extra = {} } = {}) {
+function ambiente({ contas = ['principal', 'segunda'], limitadas = '', uso = null, esgotadas = null, config = {}, extra = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-auto-teste-'));
   const home = path.join(dir, 'contas');
   const bin = path.join(dir, 'bin');
@@ -22,8 +22,10 @@ function ambiente({ contas = ['principal', 'segunda'], limitadas = '', uso = nul
     rota: contas,
     reserva: [],
     notificar: false,
+    ...config,
   }));
   if (uso) fs.writeFileSync(path.join(home, '.estado', 'uso.json'), JSON.stringify(uso));
+  if (esgotadas) fs.writeFileSync(path.join(home, '.estado', 'esgotadas.json'), JSON.stringify(esgotadas));
   fs.writeFileSync(path.join(bin, 'security'), '#!/bin/sh\necho \'{"claudeAiOauth":{"accessToken":"x","expiresAt":1,"subscriptionType":"max"}}\'\n', { mode: 0o755 });
   const log = path.join(dir, 'fake.log');
   fs.writeFileSync(log, '');
@@ -148,9 +150,14 @@ async function trocaForcadaNoMeioDoTurno() {
   assert.ok(esgotadas.principal && esgotadas.principal.ate > Date.now() + 3500 * 1000);
 }
 
-async function trocaPreventivaNoFimDoTurno() {
+function leitura(usado) {
   const agora = Date.now();
-  const leitura = (usado) => ({ ok: true, ms: 1, verificadoEm: agora, uso: { cinco: { usado, renovaEm: agora + 3600e3 }, sete: { usado: 10, renovaEm: agora + 86400e3 }, janelas: [] } });
+  return { ok: true, ms: 1, verificadoEm: agora, uso: { cinco: { usado, renovaEm: agora + 3600e3 }, sete: { usado: 10, renovaEm: agora + 86400e3 }, janelas: [] } };
+}
+
+const esgotadaPorUmaHora = () => ({ ate: Date.now() + 3600e3, motivo: 'five_hour', em: Date.now() });
+
+async function trocaPreventivaNoFimDoTurno() {
   const amb = ambiente({ uso: { principal: leitura(30), segunda: leitura(80) } });
   const sessao = crypto.randomUUID();
   const s = iniciar(amb, [`--session-id=${sessao}`]);
@@ -176,6 +183,83 @@ async function trocaPreventivaNoFimDoTurno() {
   const usuariosSegunda = log.filter((e) => e.evento === 'stdin' && e.pid === inicios[1].pid && e.msg.type === 'user');
   assert.strictEqual(usuariosSegunda.length, 1, 'troca preventiva não manda mensagem de continuação');
   assert.ok(JSON.stringify(usuariosSegunda[0].msg).includes('de novo'));
+}
+
+async function voltaParaAPreferidaEntreTurnos() {
+  const amb = ambiente({
+    uso: { principal: leitura(30), segunda: leitura(10) },
+    esgotadas: { principal: esgotadaPorUmaHora() },
+    config: { preferida: 'principal' },
+  });
+  const sessao = crypto.randomUUID();
+  const s = iniciar(amb, [`--session-id=${sessao}`]);
+  s.enviar(pedido('init-1', { subtype: 'initialize' }));
+  await s.esperar((m) => m.type === 'control_response');
+  fs.writeFileSync(path.join(amb.home, '.estado', 'esgotadas.json'), '{}');
+  s.enviar(usuario('oi'));
+  const primeiro = await s.esperar((m) => m.type === 'result');
+  assert.strictEqual(primeiro.result, 'ok de segunda');
+  for (let i = 0; i < 40 && lerTrocas(amb).length === 0; i++) await esperarMs(100);
+  s.enviar(usuario('de novo'));
+  const segundo = await s.esperar((m) => m.type === 'result' && m !== primeiro);
+  s.filho.stdin.end();
+  await s.saida;
+
+  assert.strictEqual(segundo.result, 'ok de principal');
+  const trocas = lerTrocas(amb);
+  assert.strictEqual(trocas.length, 1);
+  assert.deepStrictEqual([trocas[0].de, trocas[0].para, trocas[0].motivo], ['segunda', 'principal', 'preferida']);
+  const inicios = lerLog(amb).filter((e) => e.evento === 'inicio');
+  assert.deepStrictEqual(inicios.map((e) => e.conta), ['segunda', 'principal']);
+  assert.ok(inicios[1].args.includes(`--resume=${sessao}`));
+  const usuariosPrincipal = lerLog(amb).filter((e) => e.evento === 'stdin' && e.pid === inicios[1].pid && e.msg.type === 'user');
+  assert.strictEqual(usuariosPrincipal.length, 1, 'a volta não manda mensagem de continuação');
+  assert.ok(JSON.stringify(usuariosPrincipal[0].msg).includes('de novo'));
+}
+
+async function naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto() {
+  const amb = ambiente({
+    uso: { principal: leitura(85), segunda: leitura(10) },
+    esgotadas: { principal: esgotadaPorUmaHora() },
+    config: { preferida: 'principal' },
+  });
+  const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
+  s.enviar(pedido('init-1', { subtype: 'initialize' }));
+  await s.esperar((m) => m.type === 'control_response');
+  fs.writeFileSync(path.join(amb.home, '.estado', 'esgotadas.json'), '{}');
+  s.enviar(usuario('oi'));
+  const primeiro = await s.esperar((m) => m.type === 'result');
+  await esperarMs(1000);
+  assert.strictEqual(lerTrocas(amb).length, 0, 'folga de 15% não basta para voltar');
+  fs.writeFileSync(path.join(amb.home, '.estado', 'uso.json'), JSON.stringify({ principal: leitura(30), segunda: leitura(10) }));
+  s.enviar(usuario('de novo'));
+  const segundo = await s.esperar((m) => m.type === 'result' && m !== primeiro);
+  await esperarMs(1000);
+  s.filho.stdin.end();
+  await s.saida;
+
+  assert.strictEqual(segundo.result, 'ok de segunda');
+  assert.strictEqual(lerTrocas(amb).length, 0, 'a volta só é checada uma vez por minuto');
+}
+
+async function naoVoltaComTarefaEmSegundoPlano() {
+  const amb = ambiente({
+    uso: { principal: leitura(30), segunda: leitura(10) },
+    esgotadas: { principal: esgotadaPorUmaHora() },
+    config: { preferida: 'principal' },
+  });
+  const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
+  s.enviar(pedido('init-1', { subtype: 'initialize' }));
+  await s.esperar((m) => m.type === 'control_response');
+  fs.writeFileSync(path.join(amb.home, '.estado', 'esgotadas.json'), '{}');
+  s.enviar(usuario('LANCE_TAREFAS'));
+  const resultado = await s.esperar((m) => m.type === 'result');
+  await esperarMs(1000);
+  s.filho.stdin.end();
+  await s.saida;
+
+  assert.strictEqual(resultado.result, 'ok de segunda');
+  assert.strictEqual(lerTrocas(amb).length, 0, 'não volta com subagente ou workflow rodando');
 }
 
 async function pedidoDoHostDuranteATrocaChegaUmaVez() {
@@ -270,7 +354,7 @@ async function threadDoT3RetomaASessaoAnterior() {
 }
 
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {

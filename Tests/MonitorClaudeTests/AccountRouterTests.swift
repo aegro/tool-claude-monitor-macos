@@ -133,6 +133,51 @@ struct AccountRouterTests {
         #expect(try config(String(decoding: try Data(contentsOf: url), as: UTF8.self)).enabled)
     }
 
+    @Test func lêAContaPreferidaSóSeElaEstiverNaRotaOuReserva() throws {
+        #expect(try config(#"{ "contas": { "principal": {}, "squad": {} }, "rota": ["principal", "squad"], "preferida": "squad" }"#).preferred == "squad")
+        #expect(try config(#"{ "contas": { "principal": {}, "squad": {} }, "rota": ["principal", "squad"], "preferida": "sumiu" }"#).preferred == nil)
+        #expect(try config(#"{ "contas": { "principal": {} } }"#).preferred == nil)
+    }
+
+    @Test func salvarAPreferidaPreservaORestoDaConfigENenhumaRemoveAChave() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("router-\(UUID().uuidString)/config.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"principal":"pessoal","ativo":false,"limites":{"reserva":5,"voltar":30},"rota":["pessoal","squad"],"contas":{"pessoal":{},"squad":{}}}"#.utf8).write(to: url)
+
+        try AccountRouter.setPreferred("squad", at: url)
+        let set = try config(String(decoding: try Data(contentsOf: url), as: UTF8.self))
+        #expect(set.preferred == "squad")
+        #expect(set.enabled == false)
+        #expect(set.reserveBelow == 5)
+        #expect(set.accounts.map(\.id) == ["pessoal", "squad"])
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect((root["limites"] as? [String: Any])?["voltar"] as? Int == 30)
+
+        try AccountRouter.setPreferred(nil, at: url)
+        let cleared = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect(cleared["preferida"] == nil)
+        #expect(cleared["principal"] as? String == "pessoal")
+    }
+
+    @Test func preferidaComFolgaGanhaDaMaiorFolga() throws {
+        let cfg = try config("""
+        { "contas": { "principal": {}, "squad": {}, "extra": {} },
+          "rota": ["principal", "squad"], "reserva": ["extra"], "preferida": "principal" }
+        """)
+        let all: Set<String> = ["principal", "squad", "extra"]
+
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 10, "squad": 52, "extra": 90],
+                                   available: all, exhausted: [:]) == "principal")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 2, "squad": 52, "extra": 90],
+                                   available: all, exhausted: [:]) == "squad")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 10, "squad": 52],
+                                   available: all, exhausted: ["principal": Date().addingTimeInterval(600)]) == "squad")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 10, "squad": 52],
+                                   available: ["squad"], exhausted: [:]) == "squad")
+    }
+
     @Test func ligarComConfigIlegívelNãoApagaOArquivo() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("router-\(UUID().uuidString)/config.json")

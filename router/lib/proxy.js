@@ -19,6 +19,7 @@ const RESULTADO_DE_LIMITE = /usage limit|limit reached|hit your( \w+)? limit|rat
 const RESULTADO_DE_LOGIN = /invalid api key|run \/login/i;
 const FERRAMENTAS_RASTREADAS = new Set(['Agent', 'Task', 'Workflow']);
 const STATUS_FINAIS = new Set(['completed', 'failed', 'killed', 'stopped']);
+const INTERVALO_DE_VOLTA_MS = 60 * 1000;
 
 function divisorDeLinhas(aoReceber) {
   let resto = '';
@@ -75,6 +76,7 @@ class Proxy {
     this.avaliando = false;
     this.checandoPreventiva = false;
     this.preventivaPendente = false;
+    this.ultimaChecagemDeVolta = 0;
     this.filaDoHost = [];
     this.retido = null;
     this.saidaDoFilho = null;
@@ -460,6 +462,7 @@ class Proxy {
       const folga = contas.folgaDe(await contas.lerUso(this.conta));
       if (folga == null || folga >= cfg.limites.preventiva) {
         this.preventivaPendente = false;
+        await this.checarVolta(cfg);
         return;
       }
       if (this.tarefas.size) {
@@ -477,6 +480,15 @@ class Proxy {
     } finally {
       this.checandoPreventiva = false;
     }
+  }
+
+  async checarVolta(cfg) {
+    if (!cfg.preferida || cfg.preferida === this.conta || this.contaInicial || this.tarefas.size) return;
+    if (Date.now() - this.ultimaChecagemDeVolta < INTERVALO_DE_VOLTA_MS) return;
+    this.ultimaChecagemDeVolta = Date.now();
+    const preferida = contas.preferidaDeVolta(await contas.avaliarContas(), this.conta, cfg);
+    if (!preferida || this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return;
+    await this.trocar({ para: preferida.id, motivo: 'preferida', forcada: false, continuar: false });
   }
 
   async trocaDeTeste() {

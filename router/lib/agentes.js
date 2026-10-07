@@ -435,8 +435,8 @@ async function prepararSlot({ prazoDaAvaliacaoMs = 8000 } = {}) {
     }
     const noSlot = prontas.find((c) => c.id === atual);
     const sair = Boolean(noSlot && (noSlot.esgotada || noSlot.folga === 0));
-    const escolhida = contas.decidir(prontas, { excluir: sair ? [atual] : [] });
-    if (!escolhida || escolhida.id === atual || !(sair || escolhida.id === cfg.preferida)) return null;
+    const escolhida = sair ? contas.decidir(prontas, { excluir: [atual] }) : contas.preferidaDeVolta(prontas, atual, cfg);
+    if (!escolhida || escolhida.id === atual) return null;
     const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
     const troca = await trocarSlotSemTrava(escolhida.id, 'ao abrir');
     estado.ultimaTroca = Date.now();

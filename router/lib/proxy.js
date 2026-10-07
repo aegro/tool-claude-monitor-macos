@@ -351,6 +351,10 @@ class Proxy {
       contas.marcarEsgotada(this.conta, gatilho.ate, gatilho.motivo);
       const escolha = await contas.escolher({ excluir: [this.conta] });
       if (geracao !== this.geracao) return;
+      if (this.encerrando) {
+        this.liberarRetido();
+        return;
+      }
       if (!escolha.escolhida) {
         contas.log('stream: nenhuma outra conta disponível; repassando o erro');
         this.liberarRetido();
@@ -415,6 +419,10 @@ class Proxy {
       }
       this.pendentesDoFilho.clear();
       await this.matar(this.filho);
+      if (this.encerrando) {
+        this.sair(0);
+        return;
+      }
 
       this.conta = para;
       this.lancar(argsDeRetomada(this.args, this.sessionId));

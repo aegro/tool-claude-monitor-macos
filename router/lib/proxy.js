@@ -38,6 +38,15 @@ function textoDe(conteudo) {
   return '';
 }
 
+function idDePedido(linha) {
+  try {
+    const msg = JSON.parse(linha);
+    return msg && msg.type === 'control_request' ? msg.request_id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 class Proxy {
   constructor(args, { contaInicial = null } = {}) {
     this.args = args;
@@ -403,6 +412,7 @@ class Proxy {
         if (!this.pendentesDoHost.has(req.request_id)) this.enviarInterno(req);
       }
       for (const req of this.pendentesDoHost.values()) this.paraFilho(JSON.stringify(req));
+      this.filaDoHost = this.filaDoHost.filter((linha) => !this.pendentesDoHost.has(idDePedido(linha)));
       if (forcada && continuar) {
         this.paraFilho(JSON.stringify(this.mensagemDeContinuacao(de, motivo, interrompidas)));
         this.emTurno = true;

@@ -178,6 +178,27 @@ async function trocaPreventivaNoFimDoTurno() {
   assert.ok(JSON.stringify(usuariosSegunda[0].msg).includes('de novo'));
 }
 
+async function pedidoDoHostDuranteATrocaChegaUmaVez() {
+  const amb = ambiente({ limitadas: 'principal', extra: { FAKE_SIGTERM_MS: '800' } });
+  const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
+  s.enviar(pedido('init-1', { subtype: 'initialize' }));
+  await s.esperar((m) => m.type === 'control_response' && m.response.request_id === 'init-1');
+  s.enviar(usuario('oi'));
+  await esperarMs(200);
+  s.enviar(pedido('modelo-1', { subtype: 'set_model', model: 'x' }));
+  await s.esperar((m) => m.type === 'result');
+  await s.esperar((m) => m.type === 'control_response' && m.response.request_id === 'modelo-1');
+  await esperarMs(300);
+  s.filho.stdin.end();
+  await s.saida;
+
+  assert.strictEqual(lerTrocas(amb).length, 1);
+  const inicios = lerLog(amb).filter((e) => e.evento === 'inicio');
+  const pedidosSegunda = lerLog(amb).filter((e) => e.evento === 'stdin' && e.pid === inicios[1].pid && e.msg.request_id === 'modelo-1');
+  assert.strictEqual(pedidosSegunda.length, 1, 'pedido feito durante a troca chegou mais de uma vez ao processo novo');
+  assert.strictEqual(s.recebidas.filter((m) => m.type === 'control_response' && m.response.request_id === 'modelo-1').length, 1);
+}
+
 async function semOutraContaRepassaOErro() {
   const amb = ambiente({ contas: ['principal'], limitadas: 'principal' });
   const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
@@ -221,7 +242,7 @@ async function threadDoT3RetomaASessaoAnterior() {
 }
 
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, pedidoDoHostDuranteATrocaChegaUmaVez, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {

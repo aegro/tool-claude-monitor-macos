@@ -23,8 +23,9 @@ function emitir(msg) {
 registrar({ evento: 'inicio', args });
 process.on('SIGTERM', () => {
   registrar({ evento: 'sigterm' });
-  process.exit(143);
+  setTimeout(() => process.exit(143), Number(process.env.FAKE_SIGTERM_MS || 0));
 });
+const respostasAtrasadas = [];
 
 let resto = '';
 process.stdin.setEncoding('utf8');
@@ -45,6 +46,10 @@ process.stdin.on('end', () => {
 function tratar(msg) {
   registrar({ evento: 'stdin', msg });
   if (msg.type === 'control_request') {
+    if (msg.request.subtype === 'atrasar') {
+      respostasAtrasadas.push(msg.request_id);
+      return;
+    }
     emitir({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response: {} } });
     return;
   }
@@ -69,6 +74,9 @@ function tratar(msg) {
   }
   if (limitadas.includes(conta)) {
     emitir({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: Math.floor(Date.now() / 1000) + 3600 } });
+    for (const id of respostasAtrasadas.splice(0)) {
+      emitir({ type: 'control_response', response: { subtype: 'success', request_id: id, response: {} } });
+    }
     emitir({ type: 'assistant', parent_tool_use_id: null, error: 'rate_limit', message: { role: 'assistant', content: [{ type: 'text', text: "You've hit your limit" }] } });
     emitir({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your limit", queued_turn_count: 0 });
     return;

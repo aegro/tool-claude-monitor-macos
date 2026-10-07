@@ -239,8 +239,6 @@ enum AccountRouter {
 struct RouterState: Equatable {
     var config: AccountRouter.Config
     var pick: String?
-    /// `AccountIdentity.key` of each router account that has one, so a panel row can be matched.
-    var keys: [String: String]
     var headroom: [String: Double]
     var lastSwitch: AccountRouter.Switch?
     var logins: [String: AccountIdentity] = [:]

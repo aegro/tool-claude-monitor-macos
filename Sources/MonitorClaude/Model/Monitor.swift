@@ -216,7 +216,6 @@ final class Monitor: ObservableObject {
             router = nil
             return
         }
-        var keys: [String: String] = [:]
         var headroom: [String: Double] = [:]
         var available: Set<String> = []
         var logins: [String: AccountIdentity] = [:]
@@ -224,7 +223,6 @@ final class Monitor: ObservableObject {
 
         for account in config.accounts {
             let identity = AccountRouter.identity(for: account)
-            if let key = identity?.key, keys[key] == nil { keys[key] = account.id }
             logins[account.id] = identity
 
             let creds = await Task.detached(priority: .utility) {
@@ -259,7 +257,6 @@ final class Monitor: ObservableObject {
                 ? AccountRouter.pick(config, headroom: headroom, available: available,
                                      exhausted: AccountRouter.exhausted())
                 : nil,
-            keys: keys,
             headroom: headroom,
             lastSwitch: AccountRouter.lastSwitch(),
             logins: logins,

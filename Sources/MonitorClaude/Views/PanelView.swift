@@ -204,9 +204,9 @@ struct PanelView: View {
                     AccountLead(label: rec.label, plan: rec.plan, marker: .lastSeen(rec.lastSeen),
                                 routed: routed)
                     staleDetail(rec)
-                    if monitor.router?.isRouterAccount(rec.uuid) == true {
+                    if monitor.router?.read.contains(rec.uuid) == true {
                         pill(icon: "arrow.triangle.branch",
-                             text: "lida pelo roteador a cada \(monitor.feedCadence)",
+                             text: "lida pelo roteador a cada \(Fmt.duration(settings.usageIntervalSeconds))",
                              tone: .secondary)
                     } else {
                         pill(icon: "arrow.clockwise",

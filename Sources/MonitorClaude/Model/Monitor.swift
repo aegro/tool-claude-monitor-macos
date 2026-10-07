@@ -220,6 +220,7 @@ final class Monitor: ObservableObject {
         var headroom: [String: Double] = [:]
         var available: Set<String> = []
         var logins: [String: AccountIdentity] = [:]
+        var read: Set<String> = []
 
         for account in config.accounts {
             let identity = AccountRouter.identity(for: account)
@@ -244,6 +245,7 @@ final class Monitor: ObservableObject {
                     accounts.record(uuid: identity.key, label: identity.label,
                                     plan: creds.subscriptionType ?? identity.planFallback,
                                     snapshot: snap, at: snap.fetchedAt)
+                    read.insert(identity.key)
                 }
                 headroom[account.id] = AccountRouter.headroom(snap)
             } else if let identity, let stored = accounts.records[identity.key]?.snapshot {
@@ -260,7 +262,8 @@ final class Monitor: ObservableObject {
             keys: keys,
             headroom: headroom,
             lastSwitch: AccountRouter.lastSwitch(),
-            logins: logins)
+            logins: logins,
+            read: read)
     }
 
     /// The preferred feed: our own read of the API, with the terminal's token.

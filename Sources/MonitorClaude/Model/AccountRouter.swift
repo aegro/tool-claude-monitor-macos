@@ -244,6 +244,7 @@ struct RouterState: Equatable {
     var headroom: [String: Double]
     var lastSwitch: AccountRouter.Switch?
     var logins: [String: AccountIdentity] = [:]
+    var read: Set<String> = []
 
     /// Router entries logged into the same account, which makes switching between them a no-op.
     var sharedLogins: [[String]] {
@@ -255,6 +256,4 @@ struct RouterState: Equatable {
 
     var pickKey: String? { pick.flatMap { logins[$0]?.key } }
 
-    func isRouted(_ key: String?) -> Bool { key != nil && key == pickKey }
-    func isRouterAccount(_ key: String) -> Bool { keys[key] != nil }
-}
+    func isRouted(_ key: String?) -> Bool { key != nil && key == pickKey }}

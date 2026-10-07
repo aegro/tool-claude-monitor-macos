@@ -84,6 +84,11 @@ const testes = {
     assert.strictEqual(plano.novas.length, 0);
     assert.strictEqual(plano.precisaTrocar, false);
   },
+  paradaDesistidaNaoRepeteMasParadaNovaSim() {
+    const p = { sessionId: 's1', quando: agora - 60000, processoDesde: 0 };
+    assert.strictEqual(agentes.planejar([p], { desistidos: { s1: agora - 60000 } }).novas.length, 0);
+    assert.strictEqual(agentes.planejar([p], { desistidos: { s1: agora - 600000 } }).novas.length, 1);
+  },
   semPreferidaEscolheAMaiorFolga() {
     configurar();
     assert.strictEqual(escolhida(candidatas()), 'segunda');

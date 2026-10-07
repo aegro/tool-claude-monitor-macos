@@ -16,6 +16,7 @@ const ARQ_ESTADO = path.join(contas.DIR_ESTADO, 'agentes.json');
 const DIR_TRAVA = path.join(contas.DIR_ESTADO, 'agentes.trava');
 const CONTA_KEYCHAIN = os.userInfo().username;
 const JANELA_DE_RETOMADA_MS = 6 * 3600 * 1000;
+const TENTATIVAS_DE_RETOMADA = 3;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
 const CONTINUAR =
   '[claude-auto] A conta anterior atingiu o limite e esta sessão foi retomada em outra conta. ' +
@@ -281,8 +282,9 @@ function paradoPorLimite(agente, estado = {}, agora = Date.now()) {
 
 function planejar(paradas, estado = {}) {
   const empurrados = estado.empurrados || {};
+  const desistidos = estado.desistidos || {};
   const ultimaTroca = estado.ultimaTroca || 0;
-  const novas = paradas.filter((p) => empurrados[p.sessionId] !== p.quando);
+  const novas = paradas.filter((p) => empurrados[p.sessionId] !== p.quando && desistidos[p.sessionId] !== p.quando);
   const precisaTrocar = novas.some((p) => p.quando > ultimaTroca && p.processoDesde >= ultimaTroca);
   return { novas, precisaTrocar };
 }
@@ -337,6 +339,16 @@ function avisarUmaVez(estado, chave, titulo, texto) {
   if (Date.now() - (avisos[chave] || 0) < 3600 * 1000) return;
   estado.avisos = { ...avisos, [chave]: Date.now() };
   contas.notificar(titulo, texto);
+}
+
+function registrarFalhaDeRetomada(estado, p) {
+  const anterior = (estado.falhas || {})[p.sessionId];
+  const tentativas = anterior && anterior.quando === p.quando ? anterior.tentativas + 1 : 1;
+  estado.falhas = { ...(estado.falhas || {}), [p.sessionId]: { quando: p.quando, tentativas } };
+  if (tentativas < TENTATIVAS_DE_RETOMADA) return;
+  estado.desistidos = { ...(estado.desistidos || {}), [p.sessionId]: p.quando };
+  contas.log(`agentes: desistindo de retomar ${p.nome} depois de ${tentativas} tentativas`);
+  avisarUmaVez(estado, `retomar ${p.sessionId}`, 'Claude: agent not resumed', `${p.nome} stopped by a limit and did not resume; continue it by hand.`);
 }
 
 async function voltarParaPreferida(cfg, estado) {
@@ -411,6 +423,8 @@ async function vigiar() {
       if (await retomar(p, estado)) {
         estado.empurrados = { ...(estado.empurrados || {}), [p.sessionId]: p.quando };
         retomados.push(p.nome);
+      } else {
+        registrarFalhaDeRetomada(estado, p);
       }
       contas.escreverJson(ARQ_ESTADO, estado);
     }

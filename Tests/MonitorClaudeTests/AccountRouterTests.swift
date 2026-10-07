@@ -97,6 +97,18 @@ struct AccountRouterTests {
         #expect(exhausted.keys.sorted() == ["principal"])
     }
 
+    @Test func apontaContasLogadasNaMesmaConta() throws {
+        let cfg = try config(#"{ "principal": "pessoal", "contas": { "pessoal": {}, "squad": {}, "extra": {} }, "rota": ["pessoal", "squad", "extra"] }"#)
+        let mesma = AccountIdentity(accountUuid: "a", organizationUuid: "o", email: "squad@exemplo.com")
+        let outra = AccountIdentity(accountUuid: "b", organizationUuid: "o", email: "pessoal@exemplo.com")
+        var state = RouterState(config: cfg, pick: "squad", keys: [:], headroom: [:], lastSwitch: nil,
+                                logins: ["pessoal": mesma, "squad": mesma, "extra": outra])
+        #expect(state.sharedLogins == [["pessoal", "squad"]])
+
+        state.logins["pessoal"] = AccountIdentity(accountUuid: "c", organizationUuid: "o")
+        #expect(state.sharedLogins.isEmpty)
+    }
+
     @Test func ligarEDesligarPreservaORestoDaConfig() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("router-\(UUID().uuidString)/config.json")

@@ -138,10 +138,17 @@ struct SettingsView: View {
     @ViewBuilder
     private var routerStatus: some View {
         if let state = monitor.router {
-            note(state.config.accounts.map { account in
+            ForEach(state.config.accounts, id: \.id) { account in
+                let login = state.logins[account.id]?.email ?? "sem login"
                 let free = state.headroom[account.id].map { "\(Fmt.pct($0)) livre" } ?? "sem leitura"
-                return "\(account.label): \(free)\(account.role == .reserve ? " (reserva)" : "")"
-            }.joined(separator: " · "))
+                note("\(account.label) (\(login)): \(free)\(account.role == .reserve ? " · reserva" : "")")
+            }
+            ForEach(state.sharedLogins, id: \.self) { ids in
+                Text("\(ids.joined(separator: " e ")) estão logadas na mesma conta (\(state.logins[ids[0]]?.email ?? "?")), então trocar entre elas não muda nada. Rode claude-accounts login <nome> com a outra conta; se o navegador já estiver logado, termine o login numa janela anônima.")
+                    .font(Type.labelTiny)
+                    .foregroundStyle(Ink.ember)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             note(state.pick.map { "Usaria agora: \($0)" } ?? "Nenhuma conta disponível agora")
             if let last = state.lastSwitch {
                 note("Última troca \(Fmt.stamp(last.at)): \(last.from) → \(last.to) · \(last.reason)")

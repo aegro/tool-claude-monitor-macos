@@ -228,6 +228,15 @@ struct RouterState: Equatable {
     var keys: [String: String]
     var headroom: [String: Double]
     var lastSwitch: AccountRouter.Switch?
+    var logins: [String: AccountIdentity] = [:]
+
+    /// Router entries logged into the same account, which makes switching between them a no-op.
+    var sharedLogins: [[String]] {
+        let ids = config.accounts.map(\.id).filter { logins[$0] != nil }
+        return Dictionary(grouping: ids) { logins[$0]!.key }
+            .values.filter { $0.count > 1 }
+            .sorted { $0[0] < $1[0] }
+    }
 
     var pickKey: String? {
         guard let pick else { return nil }

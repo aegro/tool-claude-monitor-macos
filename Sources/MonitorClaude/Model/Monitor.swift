@@ -197,6 +197,12 @@ final class Monitor: ObservableObject {
             lastAccountKey = identity?.key
         }
         activeAccount = identity
+        // A throttled first poll (429) would otherwise blank the panel until the server lets us
+        // back in, while the last reading of this same account sits in the store.
+        if apiSnapshot == nil, let id = identity, let stored = accounts.records[id.key]?.snapshot {
+            apiSnapshot = stored
+            apiSnapshotOrg = id.organizationUuid
+        }
 
         await pollTerminalFeed(identity: identity)
         await pollRouterAccounts(active: identity)
@@ -213,10 +219,12 @@ final class Monitor: ObservableObject {
         var keys: [String: String] = [:]
         var headroom: [String: Double] = [:]
         var available: Set<String> = []
+        var logins: [String: AccountIdentity] = [:]
 
         for account in config.accounts {
             let identity = AccountRouter.identity(for: account)
             if let key = identity?.key, keys[key] == nil { keys[key] = account.id }
+            logins[account.id] = identity
 
             if let identity, identity.key == active?.key {
                 if let snap = apiSnapshot ?? accounts.records[identity.key]?.snapshot {
@@ -249,7 +257,8 @@ final class Monitor: ObservableObject {
                                      exhausted: AccountRouter.exhausted()),
             keys: keys,
             headroom: headroom,
-            lastSwitch: AccountRouter.lastSwitch())
+            lastSwitch: AccountRouter.lastSwitch(),
+            logins: logins)
     }
 
     /// The preferred feed: our own read of the API, with the terminal's token.

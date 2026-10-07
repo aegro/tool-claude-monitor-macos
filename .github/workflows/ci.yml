@@ -33,4 +33,5 @@ jobs:
       - name: Router tests
         run: |
           node router/test/teste-proxy.js
+          node router/test/teste-agentes.js
           python3 router/test/teste-tui.py

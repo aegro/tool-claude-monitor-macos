@@ -22,6 +22,8 @@ const JANELA_DO_RITMO_MS = 10 * 60 * 1000;
 const INTERVALO_MINIMO_DO_RITMO_MS = 2 * 60 * 1000;
 const TOLERANCIA_DA_RENOVACAO_MS = 60 * 1000;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
+const URL_TOKEN = 'https://platform.claude.com/v1/oauth/token';
+const ID_DO_CLIENTE_OAUTH = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const CONTINUAR =
   '[claude-auto] A conta anterior atingiu o limite e esta sessão foi retomada em outra conta. ' +
   'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
@@ -179,6 +181,54 @@ async function conferirLogin(texto, chaveEsperada = null) {
   } catch (e) {
     return { valido: null, motivo: e.name === 'TimeoutError' ? 'timeout' : e.message };
   }
+}
+
+async function renovarLogin(texto) {
+  const credencial = credencialDoItem(texto);
+  if (!credencial || !credencial.refreshToken || !Array.isArray(credencial.scopes) || !credencial.scopes.length) {
+    return { texto: null, motivo: 'no refresh token or scopes' };
+  }
+  try {
+    const resposta = await fetch(URL_TOKEN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: credencial.refreshToken,
+        client_id: ID_DO_CLIENTE_OAUTH,
+        scope: credencial.scopes.join(' '),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const corpo = await resposta.json().catch(() => null);
+    if (resposta.status === 200 && corpo && corpo.access_token && typeof corpo.expires_in === 'number') {
+      const renovada = {
+        ...credencial,
+        accessToken: corpo.access_token,
+        refreshToken: corpo.refresh_token || credencial.refreshToken,
+        expiresAt: Date.now() + corpo.expires_in * 1000,
+      };
+      if (typeof corpo.scope === 'string' && corpo.scope.trim()) renovada.scopes = corpo.scope.split(' ').filter(Boolean);
+      return { texto: JSON.stringify({ claudeAiOauth: renovada }) };
+    }
+    if (resposta.status === 400 && corpo && corpo.error === 'invalid_grant') return { texto: null, invalido: true, motivo: 'invalid_grant' };
+    return { texto: null, motivo: `HTTP ${resposta.status}` };
+  } catch (e) {
+    return { texto: null, motivo: e.name === 'TimeoutError' ? 'timeout' : e.message };
+  }
+}
+
+async function renovarLoginGuardado(id, texto) {
+  const r = await renovarLogin(texto);
+  if (r.invalido) return { invalido: r.motivo };
+  if (!r.texto) {
+    contas.log(`agentes: não deu para renovar o login guardado de ${id} (${r.motivo}); ele entra vencido e o Claude Code renova no uso`);
+    return { texto };
+  }
+  if (!(await gravarItem(servicoGuardado(id), r.texto))) {
+    contas.log(`agentes: o login renovado de ${id} não ficou guardado; segue para o slot com ele`);
+  }
+  return { texto: r.texto, renovado: true };
 }
 
 async function chaveDoToken(texto) {
@@ -447,8 +497,17 @@ async function trocarSlotSemTrava(para, motivo, estado = {}) {
   if (destino && !loginUtilizavel(destino)) {
     throw erroDaTroca(`the ${para} agents login needs a new sign-in: run claude-accounts login ${para} --agents`, 'login-invalido');
   }
-  const textoDestino = destino && (await lerItem(servicoGuardado(para)));
-  if (!credencialDoItem(textoDestino)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
+  const textoGuardado = destino && (await lerItem(servicoGuardado(para)));
+  if (!credencialDoItem(textoGuardado)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
+  let textoDestino = textoGuardado;
+  if (loginVencido(textoDestino)) {
+    const renovacao = await renovarLoginGuardado(para, textoDestino);
+    if (renovacao.invalido) {
+      marcarLoginInvalido(para, renovacao.invalido);
+      throw erroDaTroca(`the ${para} agents login no longer works (${renovacao.invalido}): run claude-accounts login ${para} --agents`, 'login-invalido');
+    }
+    textoDestino = renovacao.texto;
+  }
   const conferido = await conferirLogin(textoDestino, destino.chave);
   if (conferido.valido === false) {
     marcarLoginInvalido(para, conferido.motivo);
@@ -851,6 +910,7 @@ module.exports = {
   loginUtilizavel,
   loginVencido,
   conferirLogin,
+  renovarLogin,
   resultadoDoPerfil,
   loginDoItem,
   slotComLogin,

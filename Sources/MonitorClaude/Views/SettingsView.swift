@@ -200,6 +200,7 @@ struct SettingsView: View {
         if on, !commandsInstalled, let bin = AccountRouter.bundledCommands {
             guard installBundledCommands(from: bin) else { return }
         }
+        savingRouterConfig = true
         Task {
             guard await saveRouterConfig({ try AccountRouter.setEnabled(on) }) else { return }
             routerOn = on
@@ -207,8 +208,9 @@ struct SettingsView: View {
         }
     }
 
+    /// Callers set `savingRouterConfig` synchronously, before creating the Task, so a second tap that lands
+    /// before the Task starts is already turned away by their guard.
     private func saveRouterConfig(_ save: @escaping @Sendable () throws -> Void) async -> Bool {
-        savingRouterConfig = true
         defer { savingRouterConfig = false }
         do {
             try await Task.detached(priority: .userInitiated) { try save() }.value
@@ -255,6 +257,7 @@ struct SettingsView: View {
 
     private func setPreferred(_ id: String?) {
         guard !savingRouterConfig else { return }
+        savingRouterConfig = true
         Task {
             guard await saveRouterConfig({ try AccountRouter.setPreferred(id) }) else { return }
             preferred = id

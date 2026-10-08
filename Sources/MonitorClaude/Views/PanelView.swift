@@ -164,13 +164,14 @@ struct PanelView: View {
         let marker: AccountLead.Marker = monitor.liveIsCurrent
             ? .live
             : .lastSeen(monitor.liveSeenAt ?? usage.fetchedAt)
+        let liveRouted = monitor.router?.isRouted(monitor.activeAccount?.key) ?? false
 
         if others.isEmpty && desktop.isEmpty {
             // The lead row is drawn even for a single account once the numbers can belong to an
             // organization other than the terminal's: without it the fallback's percentages sit
             // under a bare "Limites do Claude" with nothing saying whose they are.
             if let live, live.organizationUuid != monitor.activeAccount?.organizationUuid {
-                AccountLead(label: live.label, plan: live.plan, marker: marker)
+                AccountLead(label: live.label, plan: live.plan, marker: marker, routed: liveRouted)
             }
             activeDetail(usage)
             if live != nil {
@@ -184,29 +185,38 @@ struct PanelView: View {
 
             if activeExpanded {
                 if let live {
-                    AccountLead(label: live.label, plan: live.plan, marker: marker)
+                    AccountLead(label: live.label, plan: live.plan, marker: marker, routed: liveRouted)
                 }
                 activeDetail(usage)
             } else if let live {
                 AccountStrip(label: live.label, plan: live.plan,
                              summary: accountSummary(usage),
                              live: monitor.liveIsCurrent,
-                             seenAt: monitor.liveIsCurrent ? nil : monitor.liveSeenAt) {
+                             seenAt: monitor.liveIsCurrent ? nil : monitor.liveSeenAt,
+                             routed: liveRouted) {
                     withAnimation(.easeOut(duration: 0.18)) { expandedAccount = nil }
                 }
             }
 
             ForEach(others) { rec in
+                let routed = monitor.router?.isRouted(rec.uuid) ?? false
                 if expandedAccount == rec.uuid {
-                    AccountLead(label: rec.label, plan: rec.plan, marker: .lastSeen(rec.lastSeen))
+                    AccountLead(label: rec.label, plan: rec.plan, marker: .lastSeen(rec.lastSeen),
+                                routed: routed)
                     staleDetail(rec)
-                    pill(icon: "arrow.clockwise",
-                         text: "abra a \(rec.label) no `claude` pra atualizar ao vivo",
-                         tone: .secondary)
+                    if monitor.router?.read.contains(rec.uuid) == true {
+                        pill(icon: "arrow.triangle.branch",
+                             text: "lida pelo roteador a cada \(Fmt.duration(settings.usageIntervalSeconds))",
+                             tone: .secondary)
+                    } else {
+                        pill(icon: "arrow.clockwise",
+                             text: "abra a \(rec.label) no `claude` pra atualizar ao vivo",
+                             tone: .secondary)
+                    }
                 } else {
                     AccountStrip(label: rec.label, plan: rec.plan,
                                  summary: accountSummary(rec.snapshot), live: false,
-                                 seenAt: rec.lastSeen) {
+                                 seenAt: rec.lastSeen, routed: routed) {
                         withAnimation(.easeOut(duration: 0.18)) { expandedAccount = rec.uuid }
                     }
                 }
@@ -274,7 +284,7 @@ struct PanelView: View {
     /// An inactive account rendered from its last-seen snapshot: plain bars, no live rate graph.
     @ViewBuilder
     private func staleDetail(_ rec: AccountRecord) -> some View {
-        let snap = rec.snapshot
+        let snap = monitor.router?.freshSnapshot(forKey: rec.uuid) ?? rec.snapshot
         if let session = snap.session {
             StaleLimitRow(window: session, seenAt: rec.lastSeen,
                           note: "sem gráfico de ritmo ao vivo")

@@ -8,6 +8,12 @@ struct SettingsView: View {
     @ObservedObject var keep = KeepAwake.shared
     var onClose: () -> Void
 
+    @State private var routerOn = AccountRouter.loadConfig()?.enabled ?? true
+    @State private var preferred = AccountRouter.loadConfig()?.preferred
+    @State private var commandsInstalled = AccountRouter.commandsInstalled
+    @State private var routerError: String?
+    @State private var savingRouterConfig = false
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -101,6 +107,12 @@ struct SettingsView: View {
                         }
                     }
 
+                    group("Troca de conta") {
+                        toggle("Trocar de conta sozinho quando o limite bater", isOn: Binding(
+                            get: { routerOn }, set: { setRouter($0) }))
+                        routerStatus
+                    }
+
                     group("Sistema") {
                         toggle("Abrir ao iniciar a sessão", isOn: $settings.launchAtLogin)
                             .onChange(of: settings.launchAtLogin) { _, _ in
@@ -122,6 +134,155 @@ struct SettingsView: View {
         }
         .frame(width: 396)
         .frame(height: settings.panelSize.height)
+    }
+
+    // MARK: router
+
+    @ViewBuilder
+    private var routerStatus: some View {
+        if let state = monitor.router {
+            preferredPicker(state.config.accounts)
+            if preferred != nil {
+                note("Sessões novas abrem nela quando tem folga. claude agents e o T3 (entre turnos) voltam para ela quando o limite renova; terminal já aberto fica onde está.")
+            }
+            ForEach(state.config.accounts, id: \.id) { account in
+                let login = state.loginLabel(for: account.id)
+                let reading = state.usage[account.id].map {
+                    "sessão \(Fmt.pct(AccountRouter.used($0.session))) · semana \(Fmt.pct(AccountRouter.used($0.weekly)))"
+                } ?? "sem leitura"
+                note("\(account.label) (\(login)): \(reading)\(account.role == .reserve ? " · reserva" : "")")
+            }
+            ForEach(state.sharedLogins, id: \.self) { ids in
+                Text("\(ids.joined(separator: " e ")) estão logadas na mesma conta (\(state.logins[ids[0]]?.email ?? "?")), então trocar entre elas não muda nada. Rode claude-accounts login <nome> com a outra conta; se o navegador já estiver logado, termine o login numa janela anônima.")
+                    .font(Type.labelTiny)
+                    .foregroundStyle(Ink.ember)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if state.config.enabled {
+                note(state.pick.map { "Usaria agora: \($0)" } ?? "Nenhuma conta disponível agora")
+                let semLogin = state.config.accounts
+                    .filter { $0.id != state.config.principal && !AccountRouter.hasAgentsLogin($0.id) }
+                    .map(\.id)
+                if !semLogin.isEmpty {
+                    note("claude agents roda na \(state.config.principal) e só troca para contas com login de agentes. Falta em: \(semLogin.joined(separator: ", ")) (claude-accounts login <nome> --agents).")
+                }
+            }
+            if let last = state.lastSwitch {
+                note("Última troca \(Fmt.stamp(last.at)): \(last.from) → \(last.to) · \(last.reason)")
+            }
+        } else {
+            note("Nenhuma conta extra ainda. No terminal: claude-accounts add <nome> e claude-accounts login <nome>.")
+        }
+
+        if !commandsInstalled {
+            if let bin = AccountRouter.bundledCommands {
+                Button("Instalar claude-auto e claude-accounts em ~/.local/bin") {
+                    installBundledCommands(from: bin)
+                }
+                .buttonStyle(.plain)
+                .font(Type.labelTiny)
+                .foregroundStyle(Ink.ember)
+            } else {
+                note("Comandos não instalados: rode router/install.sh a partir do repositório.")
+            }
+        }
+
+        if let routerError {
+            Text(routerError)
+                .font(Type.labelTiny)
+                .foregroundStyle(Ink.ember)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func setRouter(_ on: Bool) {
+        guard !savingRouterConfig else { return }
+        if on, !commandsInstalled, let bin = AccountRouter.bundledCommands {
+            guard installBundledCommands(from: bin) else { return }
+        }
+        savingRouterConfig = true
+        Task {
+            guard await saveRouterConfig({ try AccountRouter.setEnabled(on) }) else { return }
+            routerOn = on
+            await monitor.refreshUsage(force: true)
+        }
+    }
+
+    /// Callers set `savingRouterConfig` synchronously, before creating the Task, so a second tap that lands
+    /// before the Task starts is already turned away by their guard.
+    private func saveRouterConfig(_ save: @escaping @Sendable () throws -> Void) async -> Bool {
+        defer { savingRouterConfig = false }
+        do {
+            try await Task.detached(priority: .userInitiated) { try save() }.value
+            routerError = nil
+            return true
+        } catch {
+            routerError = "Não deu para salvar \(AccountRouter.configURL.path): \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func preferredPicker(_ accounts: [AccountRouter.Account]) -> some View {
+        HStack {
+            Text("Conta preferida").font(Type.label)
+            Spacer()
+            Menu {
+                preferredOption(nil, label: "Nenhuma")
+                ForEach(accounts, id: \.id) { preferredOption($0.id, label: $0.label) }
+            } label: {
+                HStack(spacing: 3) {
+                    Text(accounts.first { $0.id == preferred }?.label ?? "Nenhuma").font(Type.label)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
+                }
+                .foregroundStyle(Ink.ember)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(!routerOn)
+            .opacity(routerOn ? 1 : 0.4)
+        }
+    }
+
+    private func preferredOption(_ id: String?, label: String) -> some View {
+        Button {
+            setPreferred(id)
+        } label: {
+            if preferred == id {
+                Label(label, systemImage: "checkmark")
+            } else {
+                Text(label)
+            }
+        }
+    }
+
+    private func setPreferred(_ id: String?) {
+        guard !savingRouterConfig else { return }
+        savingRouterConfig = true
+        Task {
+            guard await saveRouterConfig({ try AccountRouter.setPreferred(id) }) else { return }
+            preferred = id
+            monitor.watchAgentsNow()
+            await monitor.refreshUsage(force: true)
+        }
+    }
+
+    @discardableResult
+    private func installBundledCommands(from bin: URL) -> Bool {
+        do {
+            try AccountRouter.installCommands(from: bin)
+            routerError = nil
+        } catch {
+            routerError = "Não deu para instalar os comandos em ~/.local/bin: \(error.localizedDescription)"
+        }
+        commandsInstalled = AccountRouter.commandsInstalled
+        return routerError == nil
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(Type.labelTiny)
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: parts

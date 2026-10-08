@@ -39,12 +39,27 @@ struct PlanBadge: View {
     }
 }
 
+struct RouterBadge: View {
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.branch").font(.system(size: 7.5, weight: .bold))
+            Text("roteador").font(.system(size: 8.5, weight: .bold))
+        }
+        .foregroundStyle(Ink.ember)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 0.5)
+        .background(Ink.ember.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+        .help("Conta que o claude-auto usaria agora")
+    }
+}
+
 /// The lead row above an expanded account: avatar · label · plan · marker (live dot, or the age
 /// of the last-seen data on the right).
 struct AccountLead: View {
     let label: String
     var plan: String?
     var marker: Marker
+    var routed = false
 
     enum Marker { case live, lastSeen(Date) }
 
@@ -53,6 +68,7 @@ struct AccountLead: View {
             AccountInitial(label: label)
             Text(label).font(Type.label)
             if let plan { PlanBadge(plan: plan) }
+            if routed { RouterBadge() }
             Spacer(minLength: 4)
             switch marker {
             case .live:
@@ -85,6 +101,7 @@ struct AccountStrip: View {
     let summary: String
     var live: Bool
     var seenAt: Date?
+    var routed = false
     var trailingIcon = "chevron.right"
     var onTap: (() -> Void)?
 
@@ -106,6 +123,7 @@ struct AccountStrip: View {
                 AccountInitial(label: label)
                 Text(label).font(Type.label)
                 if let plan { PlanBadge(plan: plan) }
+                if routed { RouterBadge() }
                 Text(summary).font(Type.labelTiny).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 4)
                 if live {
@@ -249,14 +267,24 @@ struct StaleLimitRow: View {
     let seenAt: Date
     var note: String?
 
+    private var renewed: Bool { window.hasReset() }
+
+    /// The left caption only carries "visto" when there is no reset time, so with one the stamp moves here,
+    /// next to the note, and every row keeps saying when it was seen.
+    private var trailingCaption: String? {
+        guard window.resetsAt != nil else { return note }
+        return [note, "visto \(Fmt.stamp(seenAt))"].compactMap { $0 }.joined(separator: " · ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(window.title).font(Type.label).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text(Fmt.pct(window.utilization, decimals: window.utilization < 10 ? 1 : 0))
+                Text(renewed ? "—" : Fmt.pct(window.utilization, decimals: window.utilization < 10 ? 1 : 0))
                     .font(Type.value)
-                    .foregroundStyle(window.isCritical ? Ink.alarm : .primary)
+                    .foregroundStyle(renewed ? AnyShapeStyle(.tertiary)
+                                             : AnyShapeStyle(window.isCritical ? Ink.alarm : Color.primary))
             }
 
             GeometryReader { geo in
@@ -264,15 +292,24 @@ struct StaleLimitRow: View {
                     Capsule().fill(Ink.track)
                     Capsule()
                         .fill((window.isCritical ? Ink.alarm : Ink.ember).opacity(0.55))
-                        .frame(width: geo.size.width * min(1, window.utilization / 100))
+                        .frame(width: renewed ? 0 : geo.size.width * min(1, window.utilization / 100))
                 }
             }
             .frame(height: 5)
 
             HStack(spacing: 5) {
-                Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                if renewed, let at = window.resetsAt {
+                    Text("renovou às \(Fmt.clock(at))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                } else if window.resetsAt != nil {
+                    ResetCaption(window: window)
+                } else {
+                    Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                }
                 Spacer(minLength: 2)
-                if let note { Text(note).font(Type.labelTiny).foregroundStyle(.tertiary) }
+                if let trailing = trailingCaption {
+                    Text(trailing).font(Type.labelTiny).foregroundStyle(.tertiary)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                }
             }
         }
     }

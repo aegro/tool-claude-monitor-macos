@@ -1,0 +1,4 @@
+# c530717 (revertido) trouxe o client_id OAuth público do Claude Code, que o gitleaks lê como chave genérica.
+# O código saiu, mas o commit segue no histórico da branch e o scan varre o histórico inteiro.
+# Depois de um squash merge esta linha não casa com mais nada e pode ser apagada.
+c5307174b64b19f9d1abdc779dc311d7fe6896ac:router/lib/agentes.js:generic-api-key:26

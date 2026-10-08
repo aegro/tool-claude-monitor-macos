@@ -67,6 +67,31 @@ O topo do painel replica as duas funções do Vorssaint, no estilo do Amphetamin
 - **Manter desperto**: segura uma power assertion do IOKit (`PreventUserIdleSystemSleep`), o mesmo mecanismo do `caffeinate`. Não pede senha, aceita uma duração (1h, 2h, 4h, 8h ou indefinido) e desliga sozinho ao esgotar.
 - **Continuar com a tampa fechada**: usa `pmset disablesleep`, que exige root. Em vez de pedir a senha toda vez, o app instala uma única regra sudoers restrita a exatamente `pmset disablesleep 0|1`, validada com `visudo` e instalada como `root:wheel 0440`, com um prompt de admin na primeira vez. Nenhum outro comando fica liberado. Para remover: `sudo rm /etc/sudoers.d/monitor-claude-clamshell`.
 
+## Trocar de conta sozinho (claude-auto)
+
+Para quem tem mais de uma conta do Claude: o Monitor acompanha todas e, com a opção ligada, o `claude-auto` troca de conta sozinho quando o limite bate.
+
+- **Contas lado a lado.** `~/.claude` continua sendo a conta principal. Cada conta extra mora em `~/.claude-accounts/<id>` e roda o CLI oficial com `CLAUDE_CONFIG_DIR` apontando para lá, com o próprio login. Settings, hooks, skills, plugins, memória e transcrições são links para `~/.claude`, então um `--resume` feito em outra conta acha a mesma conversa.
+- **No painel.** Toda conta do roteador aparece na seção de limites com a leitura atual: o Monitor consulta cada uma com o login dela, lido pelo `/usr/bin/security`, então nenhuma conta extra gera prompt novo do Keychain. A conta que o roteador usaria agora ganha o selo **roteador**.
+- **A opção.** Em **⚙ Configurações → Troca de conta**, um botão liga e desliga a troca. Desligado, o `claude-auto` só repassa tudo para o `claude`. O app instala `claude-auto` e `claude-accounts` em `~/.local/bin` como links para dentro dele, então o `brew upgrade` atualiza o roteador junto.
+- **Conta preferida.** No mesmo lugar, **Conta preferida** escolhe uma conta para usar primeiro (`preferida` na config). Sessões novas abrem nela sempre que ela tem folga. Depois de uma troca, o `claude agents` e o T3 (entre um turno e outro) voltam para ela quando ela recupera 20% de folga; uma sessão de terminal já aberta fica na conta atual até o próximo limite. Em **Nenhuma**, vale sempre a conta com mais folga.
+
+### Configurar
+
+```bash
+claude-accounts add pessoal      # cria ~/.claude-accounts/pessoal com os links para ~/.claude
+claude-accounts login pessoal    # login dessa conta no navegador
+claude-accounts login pessoal --agents   # login separado, só para o claude agents trocar de conta
+claude-accounts status           # folga de cada conta e qual o roteador usaria agora
+```
+
+Depois, faça o `claude` passar pelo roteador:
+
+- **Terminal:** `alias claude=claude-auto` no `~/.zshrc`. A sessão roda dentro de um supervisor; quando aparece o aviso de limite, ele reabre a mesma sessão com `--resume` na conta com mais folga e manda continuar de onde parou.
+- **T3 Code:** em cada instância Claude, binário `~/.local/bin/claude-auto` e nenhum home próprio. Em stream-json a troca acontece no meio do turno, e para o T3 é o mesmo processo o tempo todo. `CLAUDE_AUTO_CONTA=<id>` no ambiente da instância fixa a conta de partida.
+
+Regras de escolha, o que acontece na troca e os testes estão em [`router/README.md`](router/README.md).
+
 ## Como ele funciona
 
 ### A credencial é lida, nunca escrita
@@ -104,6 +129,8 @@ O resultado é uma partição exata: cada processo cai em um único balde, nada 
 ## Privacidade
 
 O app lê o Keychain, os arquivos em `~/.claude/`, o histórico de uso que o app desktop do Claude grava em `~/Library/Application Support/Claude/`, e a tabela de processos do seu usuário. Ele fala com um único endpoint, `api.anthropic.com/api/oauth/usage`, o mesmo do comando `/usage`. O token sai da máquina apenas nesse GET, como Bearer.
+
+Com o roteador configurado, o app também lê as credenciais das contas de `~/.claude-accounts` pelo `/usr/bin/security` e consulta o mesmo endpoint com cada uma. Nele, escreve só as chaves `ativo` e `preferida` de `~/.claude-accounts/config.json` e os links de `~/.local/bin`.
 
 O app nunca escreve a sua credencial, nem no Keychain nem em disco. Em `~/Library/Application Support/Farol/` ficam dois arquivos, ambos sem credenciais: `usage-history.json` (porcentagens, horários de reset e o uuid da organização a que cada leitura pertence) e `accounts.json` (o último snapshot de limites por conta, com rótulo e plano).
 

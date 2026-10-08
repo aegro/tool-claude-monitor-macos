@@ -58,6 +58,7 @@ final class Monitor: ObservableObject {
     @Published private(set) var activeAccount: AccountIdentity?
     /// Organizations read from the desktop app's own usage history, refreshed on the slow tick.
     @Published private(set) var desktopOrgs: [DesktopOrgUsage] = []
+    @Published private(set) var router: RouterState?
     let accounts = AccountStore()
 
     @Published var panelOpen = false { didSet { retime() } }
@@ -73,6 +74,8 @@ final class Monitor: ObservableObject {
     private var fastTimer: Timer?
     private var slowTimer: Timer?
     private var lastUsageFetch: Date?
+    private var lastAgentsWatch: Date?
+    private var watchingAgents = false
     private var lastLedgerScan: Date?
     private var sampling = false
     private var cachedCreds: Keychain.Credentials?
@@ -144,7 +147,30 @@ final class Monitor: ObservableObject {
         if lastUsageFetch.map({ Date().timeIntervalSince($0) >= usageInterval }) ?? true {
             await refreshUsage(force: false)
         }
+        watchAgentsIfDue()
         history.flush()
+    }
+
+    func watchAgentsNow() {
+        lastAgentsWatch = nil
+        watchAgentsIfDue()
+    }
+
+    private func watchAgentsIfDue() {
+        guard router?.config.enabled == true, !watchingAgents,
+              lastAgentsWatch.map({ Date().timeIntervalSince($0) >= 30 }) ?? true
+        else { return }
+        lastAgentsWatch = Date()
+        watchingAgents = true
+        Task.detached(priority: .utility) { [weak self] in
+            AccountRouter.watchAgents()
+            await self?.finishAgentsWatch()
+        }
+    }
+
+    private func finishAgentsWatch() {
+        watchingAgents = false
+        if lastAgentsWatch == nil { watchAgentsIfDue() }
     }
 
     var blockStart: Date {
@@ -195,9 +221,67 @@ final class Monitor: ObservableObject {
             lastAccountKey = identity?.key
         }
         activeAccount = identity
+        if apiSnapshot == nil, let id = identity, let stored = accounts.records[id.key]?.snapshot {
+            apiSnapshot = stored
+            apiSnapshotOrg = id.organizationUuid
+        }
 
         await pollTerminalFeed(identity: identity)
         applyFeeds(desktopSeries)
+        await pollRouterAccounts(active: identity)
+    }
+
+    private func pollRouterAccounts(active: AccountIdentity?) async {
+        guard let config = AccountRouter.loadConfig(), config.hasExtraAccounts else {
+            router = nil
+            return
+        }
+        var usage: [String: UsageSnapshot] = [:]
+        var available: Set<String> = []
+        var logins: [String: AccountIdentity] = [:]
+        var read: Set<String> = []
+
+        for account in config.accounts {
+            let identity = AccountRouter.identity(for: account)
+            logins[account.id] = identity
+
+            let creds = await Task.detached(priority: .utility) {
+                AccountRouter.credentials(for: account)
+            }.value
+            guard let creds else { continue }
+            available.insert(account.id)
+
+            if let identity, identity.key == active?.key {
+                if let snap = apiSnapshot ?? accounts.records[identity.key]?.snapshot {
+                    usage[account.id] = snap
+                }
+                continue
+            }
+
+            if !creds.isExpired, let (snap, _) = try? await UsageAPI.fetch(token: creds.accessToken) {
+                if let identity {
+                    accounts.record(uuid: identity.key, label: identity.label,
+                                    plan: creds.subscriptionType ?? identity.planFallback,
+                                    snapshot: snap, at: snap.fetchedAt)
+                    read.insert(identity.key)
+                }
+                usage[account.id] = snap
+            } else if let identity, let stored = accounts.records[identity.key]?.snapshot {
+                usage[account.id] = stored
+            }
+        }
+
+        router = RouterState(
+            config: config,
+            pick: config.enabled
+                ? AccountRouter.pick(config, headroom: usage.mapValues { AccountRouter.headroom($0) },
+                                     available: available, exhausted: AccountRouter.exhausted())
+                : nil,
+            usage: usage,
+            lastSwitch: AccountRouter.lastSwitch(),
+            logins: logins,
+            read: read,
+            available: available)
     }
 
     /// The preferred feed: our own read of the API, with the terminal's token.

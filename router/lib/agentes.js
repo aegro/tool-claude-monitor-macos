@@ -15,6 +15,7 @@ const DIR_LOGINS = path.join(contas.DIR_ESTADO, 'agentes');
 const ARQ_ESTADO = path.join(contas.DIR_ESTADO, 'agentes.json');
 const DIR_TRAVA = path.join(contas.DIR_ESTADO, 'agentes.trava');
 const CONTA_KEYCHAIN = os.userInfo().username;
+const LIMITE_DA_LINHA_DO_SECURITY = 4032;
 const JANELA_DE_RETOMADA_MS = 6 * 3600 * 1000;
 const TENTATIVAS_DE_RETOMADA = 3;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
@@ -70,7 +71,9 @@ async function lerItem(servico) {
 async function gravarItem(servico, texto) {
   if (/["\\\r\n]/.test(servico + CONTA_KEYCHAIN)) return false;
   const hex = Buffer.from(texto, 'utf8').toString('hex');
-  await rodar('security', ['-i'], { entrada: `add-generic-password -U -a "${CONTA_KEYCHAIN}" -s "${servico}" -X ${hex}\n` });
+  const linha = `add-generic-password -U -a "${CONTA_KEYCHAIN}" -s "${servico}" -X ${hex}\n`;
+  if (Buffer.byteLength(linha) <= LIMITE_DA_LINHA_DO_SECURITY) await rodar('security', ['-i'], { entrada: linha });
+  else await rodar('security', ['add-generic-password', '-U', '-a', CONTA_KEYCHAIN, '-s', servico, '-X', hex]);
   return (await lerItem(servico)) === texto;
 }
 

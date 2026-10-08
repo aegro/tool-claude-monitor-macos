@@ -170,6 +170,7 @@ final class Monitor: ObservableObject {
 
     private func finishAgentsWatch() {
         watchingAgents = false
+        if lastAgentsWatch == nil { watchAgentsIfDue() }
     }
 
     var blockStart: Date {

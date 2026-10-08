@@ -222,6 +222,7 @@ async function main() {
       if (args[0] === 'use') {
         const r = await agentes.trocarSlot(exigirConta(args[1]), 'manual');
         console.log(r.acao === 'ocupado' ? 'another switch is running, try again' : r.mudou ? `agents now run on ${r.para} (was ${r.de})` : `agents already run on ${r.para}`);
+        if (r.acao === 'ocupado') process.exitCode = 1;
       } else {
         await statusDosAgentes();
       }

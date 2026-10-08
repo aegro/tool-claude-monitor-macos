@@ -191,8 +191,8 @@ function tomarTravaAntiga() {
   if (!travaAntiga(afastada)) {
     try {
       fs.renameSync(afastada, DIR_TRAVA);
-      return false;
     } catch {}
+    return false;
   }
   fs.rmSync(afastada, { recursive: true, force: true });
   return criarTrava();
@@ -202,7 +202,11 @@ async function comTrava(fn) {
   fs.mkdirSync(contas.DIR_ESTADO, { recursive: true });
   if (!criarTrava() && !tomarTravaAntiga()) return { acao: 'ocupado' };
   const dono = `${process.pid}:${crypto.randomUUID()}`;
-  fs.writeFileSync(path.join(DIR_TRAVA, 'dono'), dono);
+  try {
+    fs.writeFileSync(path.join(DIR_TRAVA, 'dono'), dono);
+  } catch {
+    return { acao: 'ocupado' };
+  }
   donoDaTrava = dono;
   try {
     return await fn();

@@ -599,6 +599,41 @@ function apararTrocas() {
   } catch {}
 }
 
+function motivoLegivel(motivo) {
+  const texto = String(motivo || '');
+  const base = texto.startsWith('agents ') ? texto.slice('agents '.length) : texto;
+  if (base === 'five_hour') return 'bateu o limite de 5h';
+  if (base.startsWith('seven_day')) return 'bateu o limite da semana';
+  if (base === 'limite' || base === 'rate_limit') return 'bateu o limite';
+  if (base === 'auth') return 'pediu login de novo';
+  if (base === 'preventiva') return 'estava quase no limite';
+  if (base === 'ao abrir') return 'estava sem folga quando os agentes abriram';
+  if (base === 'manual') return 'foi trocada à mão';
+  if (base === 'teste') return 'saiu num teste de troca';
+  return 'ficou sem folga';
+}
+
+function horaDaVolta(ms, agora = Date.now()) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  const hora = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return new Date(agora).toDateString() === d.toDateString() ? hora : `${p(d.getDate())}/${p(d.getMonth() + 1)} ${hora}`;
+}
+
+function textoDaTroca({ de, para, motivo }, nome = (id) => id, volta = null, agora = Date.now()) {
+  const agentes = String(motivo || '').startsWith('agents ');
+  if (String(motivo || '').replace(/^agents /, '') === 'preferida') {
+    return {
+      titulo: `Voltou para ${nome(para)}`,
+      texto: `${nome(para)} voltou a ter folga${agentes ? '. Os agentes voltaram junto.' : '.'}`,
+    };
+  }
+  let texto = `${nome(de)} ${motivoLegivel(motivo)}.`;
+  if (volta && volta > agora) texto += ` Volta às ${horaDaVolta(volta, agora)}.`;
+  if (agentes) texto += ' Os agentes seguiram junto.';
+  return { titulo: `Trocou para ${nome(para)}`, texto };
+}
+
 function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
   const registro = { em: Date.now(), de, para, motivo, sessao: sessao || null, interrompidas, pid: process.pid };
   try {
@@ -607,7 +642,10 @@ function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
     fs.appendFileSync(ARQ_TROCAS, JSON.stringify(registro) + '\n');
   } catch {}
   log(`troca ${de} -> ${para} (${motivo}) sessão ${sessao || '-'}`);
-  notificar('Claude: account switch', `${nomeDaConta(de)} → ${nomeDaConta(para)} (${motivo})`);
+  const cfg = carregarConfig();
+  const esgotada = lerEsgotadas()[de];
+  const aviso = textoDaTroca({ de, para, motivo }, (id) => nomeDaConta(id, cfg), esgotada && esgotada.ate);
+  notificar(aviso.titulo, aviso.texto);
 }
 
 function lerTrocas(limite = 30) {
@@ -708,6 +746,7 @@ module.exports = {
   lerEsgotadas,
   liberar,
   registrarTroca,
+  textoDaTroca,
   lerTrocas,
   notificar,
   resolverClaude,

@@ -261,6 +261,34 @@ struct AccountRouterTests {
         #expect(FileManager.default.fileExists(atPath: claim.path))
     }
 
+    @Test func tomadaAbandonadaNaTravaVelhaNãoAtrasaATomada() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("config.json")
+        let lock = dir.appendingPathComponent("config.json.lock")
+        let claim = lock.appendingPathComponent("tomada")
+        try FileManager.default.createDirectory(at: claim, withIntermediateDirectories: true)
+        let old = Date().addingTimeInterval(-60)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: claim.path)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: lock.path)
+
+        try AccountRouter.withFileLock(for: url, timeout: 0.5) {}
+        #expect(!FileManager.default.fileExists(atPath: lock.path))
+    }
+
+    @Test func donoSoltaATravaMesmoComTomadaDentro() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("config.json")
+        let lock = dir.appendingPathComponent("config.json.lock")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        try AccountRouter.withFileLock(for: url) {
+            try FileManager.default.createDirectory(at: lock.appendingPathComponent("tomada"), withIntermediateDirectories: false)
+        }
+        #expect(!FileManager.default.fileExists(atPath: lock.path))
+    }
+
     @Test func loginDeAgentesMarcadoComoInválidoNãoContaComoPronto() {
         #expect(AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","guardadoEm":1}"#.utf8)))
         #expect(!AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","invalidoEm":2,"motivoInvalido":"HTTP 401"}"#.utf8)))

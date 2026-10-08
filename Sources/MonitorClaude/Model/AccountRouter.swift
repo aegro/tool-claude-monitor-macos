@@ -169,20 +169,23 @@ enum AccountRouter {
             usleep(50_000)
             owner = takeFileLock(lock, staleAfter: staleAfter)
         }
-        defer {
-            if inode(of: lock) == owner { rmdir(lock) }
-        }
+        defer { releaseFileLock(lock, owner: owner) }
         return try body()
+    }
+
+    private static func releaseFileLock(_ lock: String, owner: UInt64?) {
+        guard inode(of: lock) == owner else { return }
+        if rmdir(lock) == 0 { return }
+        guard errno == ENOTEMPTY || errno == EEXIST else { return }
+        rmdir(lock + "/tomada")
+        rmdir(lock)
     }
 
     private static func takeFileLock(_ lock: String, staleAfter: TimeInterval) -> UInt64? {
         if mkdir(lock, 0o755) == 0 { return inode(of: lock) }
-        guard errno == EEXIST, isStale(lock, after: staleAfter), let stale = inode(of: lock) else { return nil }
+        guard errno == EEXIST, let stale = staleInode(of: lock, after: staleAfter) else { return nil }
         let claim = lock + "/tomada"
-        guard mkdir(claim, 0o755) == 0 else {
-            if errno == EEXIST, isStale(claim, after: staleAfter) { rmdir(claim) }
-            return nil
-        }
+        guard markClaim(claim, staleAfter: staleAfter) else { return nil }
         guard inode(of: lock) == stale else {
             rmdir(claim)
             return nil
@@ -193,10 +196,24 @@ enum AccountRouter {
         return nil
     }
 
-    private static func isStale(_ path: String, after interval: TimeInterval) -> Bool {
-        guard let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
-        else { return false }
-        return Date().timeIntervalSince(modified) > interval
+    /// Clears a claim marker left behind by a claimer that died and tries again in the same call: removing it
+    /// refreshes the lock's mtime, so returning here would make everyone wait for the lock to go stale twice.
+    private static func markClaim(_ claim: String, staleAfter: TimeInterval) -> Bool {
+        for _ in 0..<2 {
+            if mkdir(claim, 0o755) == 0 { return true }
+            guard errno == EEXIST, staleInode(of: claim, after: staleAfter) != nil else { return false }
+            rmdir(claim)
+        }
+        return false
+    }
+
+    /// The inode of `path` when it is older than `interval`, from a single lstat, so the age and the inode
+    /// always describe the same directory (the router's `inodeDaTravaVelha` does the same).
+    private static func staleInode(of path: String, after interval: TimeInterval) -> UInt64? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        let modified = Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1_000_000_000
+        return Date().timeIntervalSince1970 - modified > interval ? UInt64(info.st_ino) : nil
     }
 
     private static func inode(of path: String) -> UInt64? {

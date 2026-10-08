@@ -163,19 +163,44 @@ function renovarTrava() {
   } catch {}
 }
 
-async function comTrava(fn) {
-  fs.mkdirSync(contas.DIR_ESTADO, { recursive: true });
+function travaAntiga(dir) {
+  try {
+    return Date.now() - fs.statSync(dir).mtimeMs > 5 * 60 * 1000;
+  } catch {
+    return false;
+  }
+}
+
+function criarTrava() {
   try {
     fs.mkdirSync(DIR_TRAVA);
+    return true;
   } catch {
-    let antiga = false;
-    try {
-      antiga = Date.now() - fs.statSync(DIR_TRAVA).mtimeMs > 5 * 60 * 1000;
-    } catch {}
-    if (!antiga) return { acao: 'ocupado' };
-    fs.rmSync(DIR_TRAVA, { recursive: true, force: true });
-    fs.mkdirSync(DIR_TRAVA);
+    return false;
   }
+}
+
+function tomarTravaAntiga() {
+  if (!travaAntiga(DIR_TRAVA)) return false;
+  const afastada = `${DIR_TRAVA}.${process.pid}.${crypto.randomUUID()}`;
+  try {
+    fs.renameSync(DIR_TRAVA, afastada);
+  } catch {
+    return false;
+  }
+  if (!travaAntiga(afastada)) {
+    try {
+      fs.renameSync(afastada, DIR_TRAVA);
+      return false;
+    } catch {}
+  }
+  fs.rmSync(afastada, { recursive: true, force: true });
+  return criarTrava();
+}
+
+async function comTrava(fn) {
+  fs.mkdirSync(contas.DIR_ESTADO, { recursive: true });
+  if (!criarTrava() && !tomarTravaAntiga()) return { acao: 'ocupado' };
   const dono = `${process.pid}:${crypto.randomUUID()}`;
   fs.writeFileSync(path.join(DIR_TRAVA, 'dono'), dono);
   donoDaTrava = dono;

@@ -328,10 +328,49 @@ async function comTrava(fn) {
   }
 }
 
+function impressaoDoLogin(texto) {
+  const credencial = credencialDoItem(texto);
+  const segredo = credencial && (credencial.refreshToken || credencial.accessToken);
+  return segredo ? crypto.createHash('sha256').update(String(segredo)).digest('hex') : null;
+}
+
+function mesmoLogin(texto, impressao) {
+  return impressao != null && impressaoDoLogin(texto) === impressao;
+}
+
+function textoParaDesfazer(noSlot, escrito, anterior) {
+  return noSlot === escrito ? anterior : null;
+}
+
+function erroDaTroca(mensagem, tipo) {
+  return Object.assign(new Error(mensagem), { tipo });
+}
+
+async function slotSeAindaFor(impressao) {
+  const texto = await lerItem(SERVICO_SLOT);
+  if (!texto) throw new Error('there is no login in the agents slot');
+  if (!mesmoLogin(texto, impressao)) {
+    contas.log('agentes: o login do slot mudou durante a troca; nada foi gravado, fica para a próxima checagem');
+    throw erroDaTroca('the agents slot login changed during the switch; nothing was written, the next check retries', 'slot-mudou');
+  }
+  return texto;
+}
+
+async function desfazerSlot(escrito, anterior) {
+  const texto = textoParaDesfazer(await lerItem(SERVICO_SLOT), escrito, anterior);
+  if (texto == null) {
+    contas.log('agentes: o slot não tem mais o que esta troca gravou; não desfaz');
+    return false;
+  }
+  return gravarItem(SERVICO_SLOT, texto);
+}
+
 async function trocarSlotSemTrava(para, motivo) {
   const cfg = contas.carregarConfig();
   const atual = await lerItem(SERVICO_SLOT);
   if (!atual) throw new Error('there is no login in the agents slot');
+  const impressao = impressaoDoLogin(atual);
+  if (!impressao) throw new Error('there is no login in the agents slot');
   const configDoSlot = contas.lerJson(ARQ_SLOT, {}) || {};
   const chaveDeclarada = chaveDe(configDoSlot.oauthAccount);
   const chaveReal = (await chaveDoToken(atual)) || chaveDeclarada;
@@ -345,20 +384,24 @@ async function trocarSlotSemTrava(para, motivo) {
   const contaDe = chaveReal === chaveDeclarada ? configDoSlot.oauthAccount : (loginGuardado(de) || {}).oauthAccount;
   if (donoDaTrava && !travaEhDe(donoDaTrava)) throw new Error('lost the agents lock; leaving the slot alone');
   renovarTrava();
-  const slotAntes = await lerItem(SERVICO_SLOT);
-  if (!slotAntes) throw new Error('there is no login in the agents slot');
-  const novoSlot = slotComLogin(slotAntes, textoDestino);
-  const loginDe = loginDoItem(slotAntes);
+  const loginDe = loginDoItem(await slotSeAindaFor(impressao));
   if (!loginDe) throw new Error('there is no login in the agents slot');
   if (!(await gravarItem(servicoGuardado(de), loginDe))) throw new Error(`could not keep the ${de} login`);
   contas.escreverJson(arquivoDoLogin(de), { oauthAccount: contaDe || null, chave: chaveReal, guardadoEm: Date.now() });
+  const slotAntes = await slotSeAindaFor(impressao);
+  const novoSlot = slotComLogin(slotAntes, textoDestino);
   if (!(await gravarItem(SERVICO_SLOT, novoSlot))) {
-    await gravarItem(SERVICO_SLOT, slotAntes);
+    await desfazerSlot(novoSlot, slotAntes);
     throw new Error(`could not load the ${para} login into the agents slot`);
   }
-  const novoConfig = contas.lerJson(ARQ_SLOT, {}) || {};
-  novoConfig.oauthAccount = destino.oauthAccount;
-  contas.escreverJson(ARQ_SLOT, novoConfig);
+  try {
+    const novoConfig = contas.lerJson(ARQ_SLOT, {}) || {};
+    novoConfig.oauthAccount = destino.oauthAccount;
+    contas.escreverJson(ARQ_SLOT, novoConfig);
+  } catch (e) {
+    await desfazerSlot(novoSlot, slotAntes);
+    throw e;
+  }
   if (SLOT_PADRAO) contas.definirPrincipal(para);
   contas.registrarTroca({ de, para, motivo: `agents ${motivo}` });
   return { de, para, mudou: true };
@@ -629,6 +672,10 @@ async function vigiar() {
       try {
         troca = await trocarSlotSemTrava(escolhida.id, 'limite');
       } catch (e) {
+        if (e.tipo === 'slot-mudou') {
+          contas.escreverJson(ARQ_ESTADO, estado);
+          return { acao: 'adiada', parados: novas.map((p) => p.nome), erro: e.message };
+        }
         avisarUmaVez(estado, 'troca-falhou', 'Claude: agents hit the limit', `Could not switch the agents login: ${e.message}`);
         contas.escreverJson(ARQ_ESTADO, estado);
         contas.log(`agentes: trocar para ${escolhida.id} falhou: ${e.message}`);
@@ -701,6 +748,9 @@ module.exports = {
   loginGuardado,
   loginDoItem,
   slotComLogin,
+  impressaoDoLogin,
+  mesmoLogin,
+  textoParaDesfazer,
   trocarSlot,
   guardarLoginDoDir,
   servicoDoDir,

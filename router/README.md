@@ -55,6 +55,8 @@ A troca acontece antes do limite. A cada checagem (cerca de 30 s, com algum agen
 
 Se um turno gasta o resto da folga antes disso, vale a troca por limite: o Monitor troca o login de `~/.claude` para a conta com mais folga (ou usa a que já entrou pela troca preventiva), reinicia o agente e manda continuar. Conta sem login de agentes não entra na troca.
 
+A troca guarda uma impressão (hash) do refresh token que está em `~/.claude` no início e relê o item logo antes de cada gravação. Se ele mudou no meio (o Claude Code renovou o login), nada é gravado e a próxima checagem tenta de novo. Se a gravação falha, o item só volta ao texto anterior quando ainda contém o que a troca gravou.
+
 ## Conta preferida
 
 `preferida` na config, ou **Conta preferida** em Configurações → Troca de conta (**Nenhuma** remove a chave). Ela é escolhida sempre que está logada, não está esgotada e tem folga de pelo menos `limites.reserva`; fora isso vale a conta com mais folga, como sem preferida.

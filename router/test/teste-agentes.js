@@ -130,6 +130,27 @@ const testes = {
     assert.strictEqual(agentes.loginDoItem(slotDaConta.slice(0, 40)), null);
     assert.strictEqual(agentes.loginDoItem(null), null);
   },
+  impressaoDoSlotSegueORefreshTokenSemExporOToken() {
+    const impressao = agentes.impressaoDoLogin(slotDaConta);
+    assert.match(impressao, /^[0-9a-f]{64}$/);
+    assert.ok(!impressao.includes('a-r'));
+    const renovadoSoNoAcesso = JSON.stringify({ mcpOAuth: {}, claudeAiOauth: { accessToken: 'outro', refreshToken: 'a-r' } });
+    assert.strictEqual(agentes.mesmoLogin(renovadoSoNoAcesso, impressao), true);
+    const renovado = JSON.stringify({ mcpOAuth: mcp, claudeAiOauth: { accessToken: 'a2', refreshToken: 'a-r2' }, designOauth: design });
+    assert.strictEqual(agentes.mesmoLogin(renovado, impressao), false);
+    assert.strictEqual(agentes.mesmoLogin(loginDaSegunda, impressao), false);
+    assert.strictEqual(agentes.impressaoDoLogin(JSON.stringify({ mcpOAuth: mcp })), null);
+    assert.strictEqual(agentes.mesmoLogin(JSON.stringify({ mcpOAuth: mcp }), null), false);
+    assert.strictEqual(agentes.mesmoLogin(null, impressao), false);
+  },
+  desfazerSoVoltaOQueEstaTrocaGravou() {
+    const escrito = agentes.slotComLogin(slotDaConta, loginDaSegunda);
+    assert.strictEqual(agentes.textoParaDesfazer(escrito, escrito, slotDaConta), slotDaConta);
+    const renovadoDepois = JSON.stringify({ ...JSON.parse(escrito), claudeAiOauth: { accessToken: 'b2', refreshToken: 'b-r2' } });
+    assert.strictEqual(agentes.textoParaDesfazer(renovadoDepois, escrito, slotDaConta), null);
+    assert.strictEqual(agentes.textoParaDesfazer(slotDaConta, escrito, slotDaConta), null);
+    assert.strictEqual(agentes.textoParaDesfazer(null, escrito, slotDaConta), null);
+  },
   trocaDePrincipalSoMudaAPrincipal() {
     fs.writeFileSync(contas.ARQ_CONFIG, JSON.stringify({ contas: { segunda: {} }, preferida: 'segunda', ativo: false }));
     contas.definirPrincipal('segunda');

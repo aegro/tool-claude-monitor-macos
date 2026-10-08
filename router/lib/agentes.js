@@ -529,6 +529,13 @@ function deveChecarVolta(estado, preferida, agora = Date.now()) {
   return agora - (estado.ultimaChecagemDeVolta || 0) >= INTERVALO_DA_VOLTA;
 }
 
+const INTERVALO_SEM_ALVO = 5 * 60 * 1000;
+
+function deveProcurarAlvoPreventivo(estado, atual, agora = Date.now()) {
+  const semAlvo = estado.semAlvoPreventivo;
+  return !semAlvo || semAlvo.conta !== atual || agora - semAlvo.em >= INTERVALO_SEM_ALVO;
+}
+
 async function voltarParaPreferida(cfg, estado) {
   const atual = contaNoSlot(cfg);
   if (!cfg.preferida || cfg.preferida === atual || !loginGuardado(cfg.preferida)) return null;
@@ -555,9 +562,12 @@ async function trocarPreventiva(cfg, lista, estado) {
   const { sonda, folga } = await avaliarUmaParaAgentes(atual);
   estado.leituras = guardarLeitura(estado.leituras, atual, sonda, agora);
   const ritmo = ritmoDaConta(estado.leituras[atual], sonda, agora);
-  if (!deveTrocarAntes(folga, ritmo, cfg)) return null;
+  if (!deveTrocarAntes(folga, ritmo, cfg) || !deveProcurarAlvoPreventivo(estado, atual, agora)) return null;
   const escolhida = alvoPreventivo(folga, ritmo, await avaliarParaAgentes(cfg), cfg, atual);
-  if (!escolhida) return null;
+  if (!escolhida) {
+    estado.semAlvoPreventivo = { conta: atual, em: agora };
+    return null;
+  }
   const ritmoLido = ritmo == null ? 'desconhecido' : `${ritmo.toFixed(2)} pp/min`;
   contas.log(`agentes: folga ${folga}% em ${atual}, ritmo ${ritmoLido}; troca preventiva para ${escolhida.id}`);
   try {
@@ -708,4 +718,5 @@ module.exports = {
   linhaDoSecurity,
   comTravaEsperando,
   deveChecarVolta,
+  deveProcurarAlvoPreventivo,
 };

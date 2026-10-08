@@ -185,6 +185,13 @@ const testes = {
     assert.strictEqual(agentes.deveChecarVolta({}, 'principal', agora), true);
     assert.strictEqual(agentes.deveChecarVolta(estado, null, agora + 10 * 60 * 1000), false);
   },
+  semAlvoPreventivoEsperaCincoMinutosPelaMesmaConta() {
+    const estado = { semAlvoPreventivo: { conta: 'principal', em: agora } };
+    assert.strictEqual(agentes.deveProcurarAlvoPreventivo({}, 'principal', agora), true);
+    assert.strictEqual(agentes.deveProcurarAlvoPreventivo(estado, 'principal', agora + 60 * 1000), false);
+    assert.strictEqual(agentes.deveProcurarAlvoPreventivo(estado, 'principal', agora + 5 * 60 * 1000), true);
+    assert.strictEqual(agentes.deveProcurarAlvoPreventivo(estado, 'segunda', agora + 1000), true);
+  },
   ritmoDeUsoMedeOsUltimosDezMinutos() {
     const leituras = [leitura(-12, 10), leitura(-8, 50), leitura(-4, 54), leitura(0, 58)];
     assert.strictEqual(agentes.ritmoDeUso(leituras, 'cinco', agora), 1);

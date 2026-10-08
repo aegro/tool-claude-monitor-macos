@@ -168,6 +168,42 @@ const testes = {
     assert.strictEqual(agentes.loginVencido(com(agora + 60000), agora), false);
     assert.strictEqual(agentes.loginVencido(loginDaSegunda, agora), false);
   },
+  async loginGuardadoComAccessTokenVencidoCarregaSemConsultarOPerfil() {
+    const original = global.fetch;
+    let chamadas = 0;
+    global.fetch = async () => {
+      chamadas += 1;
+      return { ok: false, status: 401, json: async () => null };
+    };
+    try {
+      const vencido = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt: agora - 1000 } });
+      const r = await agentes.conferirLogin(vencido, 'u2:o2');
+      assert.strictEqual(r.valido, true);
+      assert.strictEqual(chamadas, 0);
+    } finally {
+      global.fetch = original;
+    }
+  },
+  async loginGuardadoComAccessTokenValidoConsultaOPerfil() {
+    const original = global.fetch;
+    const respostas = [];
+    global.fetch = async () => respostas.shift()();
+    const valido = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt: agora + 600000 } });
+    try {
+      respostas.push(async () => ({ ok: false, status: 401, json: async () => null }));
+      assert.strictEqual((await agentes.conferirLogin(valido, 'u2:o2')).valido, false);
+      respostas.push(async () => ({ ok: true, status: 200, json: async () => ({ account: { uuid: 'u1' }, organization: { uuid: 'o1' } }) }));
+      assert.strictEqual((await agentes.conferirLogin(valido, 'u2:o2')).valido, false);
+      respostas.push(async () => {
+        throw new Error('network down');
+      });
+      assert.strictEqual((await agentes.conferirLogin(valido, 'u2:o2')).valido, null);
+      respostas.push(async () => ({ ok: false, status: 503, json: async () => null }));
+      assert.strictEqual((await agentes.conferirLogin(valido, 'u2:o2')).valido, null);
+    } finally {
+      global.fetch = original;
+    }
+  },
   loginMarcadoComoInvalidoSaiDaTroca() {
     configurar();
     const arquivo = path.join(contas.DIR_ESTADO, 'agentes', 'segunda.json');

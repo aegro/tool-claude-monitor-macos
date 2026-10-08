@@ -149,7 +149,7 @@ function loginVencido(texto, agora = Date.now()) {
 async function conferirLogin(texto, chaveEsperada = null) {
   const credencial = credencialDoItem(texto);
   if (!credencial || !credencial.accessToken) return { valido: false, motivo: 'no claudeAiOauth' };
-  if (loginVencido(texto)) return { valido: false, motivo: 'access token expired' };
+  if (loginVencido(texto)) return { valido: true, chave: chaveEsperada, vencido: true };
   try {
     const resposta = await fetch(URL_PERFIL, {
       headers: { Authorization: `Bearer ${credencial.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' },
@@ -831,6 +831,7 @@ module.exports = {
   loginGuardado,
   loginUtilizavel,
   loginVencido,
+  conferirLogin,
   resultadoDoPerfil,
   loginDoItem,
   slotComLogin,

@@ -322,7 +322,8 @@ function folgaERitmo(sonda, leituras, monitor, agora = Date.now()) {
   const leitura = leituraDe(sonda);
   const usoDoMonitor = monitor && Number.isFinite(monitor.usado) && Number.isFinite(monitor.usadoEm);
   if (usoDoMonitor && (!leitura || !leitura.em || monitor.usadoEm > leitura.em)) {
-    const base = Math.max(0, Math.min(100, 100 - monitor.usado));
+    const folgaDoMonitor = Math.max(0, Math.min(100, 100 - monitor.usado));
+    const base = folga == null ? folgaDoMonitor : Math.min(folgaDoMonitor, folga);
     return { folga: projetarFolga(base, monitor.usadoEm, monitor.ppPorMinuto, agora), ritmo: monitor.ppPorMinuto, fonte: 'monitor' };
   }
   if (monitor && leitura && monitor.janela === janelaQueLimita(sonda.uso, agora)) {

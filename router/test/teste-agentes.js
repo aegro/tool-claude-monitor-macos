@@ -622,6 +622,16 @@ const testes = {
     const leituras = [leitura(-4, 86), leitura(0, 90)];
     assert.deepStrictEqual(agentes.folgaERitmo(sondaCom(0, 90, 30), leituras, monitor, agora), { folga: 10, ritmo: 1, fonte: 'leituras' });
   },
+  usoMaisNovoDoMonitorEmOutraJanelaNaoEscondeAJanelaQueLimita() {
+    const sonda = sondaCom(-5, 95, 30);
+    const monitor = { conta: 'u1:o1', janela: 'sete', ppPorMinuto: 0.2, usado: 31, usadoEm: agora - 60000, em: agora };
+    const resultado = agentes.folgaERitmo(sonda, [], monitor, agora);
+    assert.strictEqual(resultado.fonte, 'monitor');
+    assert.ok(Math.abs(resultado.folga - 4.8) < 1e-9);
+
+    const renovou = { ...sonda, uso: { ...sonda.uso, cinco: { usado: 95, renovaEm: agora - 60000 } } };
+    assert.ok(Math.abs(agentes.folgaERitmo(renovou, [], monitor, agora).folga - 68.8) < 1e-9);
+  },
   semLeituraDoRoteadorUsaOUsoDoMonitor() {
     const monitor = { conta: 'u1:o1', janela: 'cinco', ppPorMinuto: 0.5, usado: 96, usadoEm: agora, em: agora };
     assert.deepStrictEqual(agentes.folgaERitmo({ ok: false, verificadoEm: agora }, [], monitor, agora), { folga: 4, ritmo: 0.5, fonte: 'monitor' });

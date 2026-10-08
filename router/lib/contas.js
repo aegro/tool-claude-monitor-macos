@@ -466,10 +466,21 @@ function notificar(titulo, texto) {
   } catch {}
 }
 
+function apararTrocas() {
+  try {
+    if (fs.statSync(ARQ_TROCAS).size <= 1024 * 1024) return;
+    const recentes = fs.readFileSync(ARQ_TROCAS, 'utf8').split('\n').filter(Boolean).slice(-1000);
+    const tmp = `${ARQ_TROCAS}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, recentes.join('\n') + '\n');
+    fs.renameSync(tmp, ARQ_TROCAS);
+  } catch {}
+}
+
 function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
   const registro = { em: Date.now(), de, para, motivo, sessao: sessao || null, interrompidas, pid: process.pid };
   try {
     fs.mkdirSync(DIR_ESTADO, { recursive: true });
+    apararTrocas();
     fs.appendFileSync(ARQ_TROCAS, JSON.stringify(registro) + '\n');
   } catch {}
   log(`troca ${de} -> ${para} (${motivo}) sessão ${sessao || '-'}`);

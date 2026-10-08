@@ -248,8 +248,12 @@ function deveTrocarAntes(folga, ritmo, cfg) {
 
 function alvoPreventivo(folga, ritmo, candidatos, cfg, atual) {
   if (!deveTrocarAntes(folga, ritmo, cfg)) return null;
-  const escolhida = contas.decidir(candidatos, { excluir: [atual] });
-  return escolhida && escolhida.folga != null && escolhida.folga > folga ? escolhida : null;
+  const ordem = candidatos.map((c) => c.id);
+  const seguras = candidatos.filter(
+    (c) => c.id !== atual && !c.esgotada && c.logada && c.folga != null && c.folga > folga && !deveTrocarAntes(c.folga, ritmo, cfg),
+  );
+  const maisFolgada = (lista) => lista.sort((a, b) => b.folga - a.folga || ordem.indexOf(a.id) - ordem.indexOf(b.id))[0] || null;
+  return maisFolgada(seguras.filter((c) => c.papel === 'rota')) || maisFolgada(seguras.filter((c) => c.papel !== 'rota'));
 }
 
 let donoDaTrava = null;

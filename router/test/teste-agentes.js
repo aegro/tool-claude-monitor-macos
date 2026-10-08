@@ -299,6 +299,29 @@ const testes = {
     assert.strictEqual(liberada, 1);
     assert.strictEqual(fs.existsSync(trava), false);
   },
+  preferidaBaixaNaoBloqueiaOAlvoPreventivo() {
+    const cfg = configurar({ preferida: 'principal' });
+    const lista = candidatas({ principal: { folga: 8 }, segunda: { folga: 10 }, extra: { folga: 90 } });
+    const alvo = agentes.alvoPreventivo(10, 4, lista, cfg, 'segunda');
+    assert.strictEqual(alvo && alvo.id, 'extra');
+  },
+  alvoPreventivoNaoPodeDispararATrocaDeNovo() {
+    const cfg = configurar({ preferida: 'principal' });
+    const lista = candidatas({ principal: { folga: 4 }, segunda: { folga: 3 }, extra: { folga: 90 } });
+    const alvo = agentes.alvoPreventivo(3, null, lista, cfg, 'segunda');
+    assert.strictEqual(alvo && alvo.id, 'extra');
+    const semSaida = candidatas({ principal: { folga: 4 }, segunda: { folga: 3 }, extra: { folga: 4 } });
+    assert.strictEqual(agentes.alvoPreventivo(3, null, semSaida, cfg, 'segunda'), null);
+    const rapida = candidatas({ principal: { folga: 9 }, segunda: { folga: 9 }, extra: { folga: 11 } });
+    assert.strictEqual(agentes.alvoPreventivo(9, 4, rapida, cfg, 'segunda').id, 'extra');
+  },
+  alvoPreventivoPrefereARotaComFolgaSuficiente() {
+    const cfg = configurar({ preferida: 'principal' });
+    const lista = candidatas({ principal: { folga: 30 }, segunda: { folga: 4 }, extra: { folga: 90 } });
+    assert.strictEqual(agentes.alvoPreventivo(4, null, lista, cfg, 'segunda').id, 'principal');
+    const rotaMaisFolgada = candidatas({ principal: { folga: 30 }, segunda: { folga: 50 }, extra: { folga: 90 } });
+    assert.strictEqual(agentes.alvoPreventivo(4, null, rotaMaisFolgada, cfg, 'extra').id, 'segunda');
+  },
 };
 
 (async () => {

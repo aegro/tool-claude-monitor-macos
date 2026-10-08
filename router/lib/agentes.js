@@ -492,6 +492,13 @@ async function slotSemMudancaDesde(lido) {
   }
 }
 
+async function slotFicouCom(escrito, chave) {
+  const texto = await lerItem(SERVICO_SLOT);
+  if (!texto) return false;
+  if (mesmoLogin(texto, impressaoDoLogin(escrito))) return true;
+  return Boolean(chave) && (await chaveDoToken(texto)) === chave;
+}
+
 async function desfazerSlot(escrito, anterior) {
   const texto = textoParaDesfazer(await lerItem(SERVICO_SLOT), escrito, anterior);
   if (texto == null) {
@@ -549,8 +556,11 @@ async function trocarSlotSemTrava(para, motivo, estado = {}) {
   const novoSlot = slotComLogin(slotAntes, textoDestino);
   await slotSemMudancaDesde(slotAntes);
   if (!(await gravarItem(SERVICO_SLOT, novoSlot))) {
-    await desfazerSlot(novoSlot, slotAntes);
-    throw new Error(`could not load the ${para} login into the agents slot`);
+    if (!(await slotFicouCom(novoSlot, destino.chave))) {
+      await desfazerSlot(novoSlot, slotAntes);
+      throw new Error(`could not load the ${para} login into the agents slot`);
+    }
+    contas.log(`agentes: a releitura do slot não bateu, mas o login de ${para} está lá; a troca segue`);
   }
   let contaAnterior = null;
   try {

@@ -284,7 +284,7 @@ struct PanelView: View {
     /// An inactive account rendered from its last-seen snapshot: plain bars, no live rate graph.
     @ViewBuilder
     private func staleDetail(_ rec: AccountRecord) -> some View {
-        let snap = rec.snapshot
+        let snap = monitor.router?.freshSnapshot(forKey: rec.uuid) ?? rec.snapshot
         if let session = snap.session {
             StaleLimitRow(window: session, seenAt: rec.lastSeen,
                           note: "sem gráfico de ritmo ao vivo")

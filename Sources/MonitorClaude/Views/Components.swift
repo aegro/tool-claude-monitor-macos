@@ -69,17 +69,7 @@ struct LimitGauge: View {
             .animation(.easeOut(duration: 0.22), value: used)
 
             HStack(spacing: 5) {
-                if let reset = window.timeToReset, let at = window.resetsAt {
-                    // "≈" whenever the reset was reconstructed rather than reported. It is a small
-                    // mark for a real distinction: an inferred boundary can be one grid step out,
-                    // and the pace marker sitting above is drawn off exactly this number.
-                    Text("reseta \(window.resetIsExact ? "" : "≈")\(Fmt.clock(at)) · em \(Fmt.duration(reset))")
-                        .font(Type.labelTiny)
-                        .foregroundStyle(.tertiary)
-                        .help(window.resetIsExact
-                              ? "Horário informado pelo servidor."
-                              : "Deduzido da série do app do Claude — pode variar em até 10 min.")
-                }
+                ResetCaption(window: window)
                 Spacer(minLength: 2)
                 paceVerdict
             }
@@ -282,5 +272,23 @@ struct SectionHead: View {
 struct Hairline: View {
     var body: some View {
         Rectangle().fill(Ink.hairline).frame(height: 1)
+    }
+}
+
+struct ResetCaption: View {
+    let window: LimitWindow
+
+    var body: some View {
+        if let reset = window.timeToReset, let at = window.resetsAt {
+            // "≈" whenever the reset was reconstructed rather than reported. It is a small
+            // mark for a real distinction: an inferred boundary can be one grid step out,
+            // and the pace marker sitting above is drawn off exactly this number.
+            Text("reseta \(window.resetIsExact ? "" : "≈")\(Fmt.clock(at)) · em \(Fmt.duration(reset))")
+                .font(Type.labelTiny)
+                .foregroundStyle(.tertiary)
+                .help(window.resetIsExact
+                      ? "Horário informado pelo servidor."
+                      : "Deduzido da série do app do Claude — pode variar em até 10 min.")
+        }
     }
 }

@@ -51,6 +51,7 @@ struct LimitWindow: Equatable, Identifiable, Codable {
     }
 
     var timeToReset: TimeInterval? { resetsAt.map { max(0, $0.timeIntervalSinceNow) } }
+    func hasReset(at now: Date = Date()) -> Bool { resetsAt.map { $0 <= now } ?? false }
     var isCritical: Bool { utilization >= 90 || severity == "critical" }
 }
 

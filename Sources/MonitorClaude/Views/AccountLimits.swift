@@ -267,14 +267,17 @@ struct StaleLimitRow: View {
     let seenAt: Date
     var note: String?
 
+    private var renewed: Bool { window.hasReset() }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(window.title).font(Type.label).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text(Fmt.pct(window.utilization, decimals: window.utilization < 10 ? 1 : 0))
+                Text(renewed ? "—" : Fmt.pct(window.utilization, decimals: window.utilization < 10 ? 1 : 0))
                     .font(Type.value)
-                    .foregroundStyle(window.isCritical ? Ink.alarm : .primary)
+                    .foregroundStyle(renewed ? AnyShapeStyle(.tertiary)
+                                             : AnyShapeStyle(window.isCritical ? Ink.alarm : Color.primary))
             }
 
             GeometryReader { geo in
@@ -282,15 +285,25 @@ struct StaleLimitRow: View {
                     Capsule().fill(Ink.track)
                     Capsule()
                         .fill((window.isCritical ? Ink.alarm : Ink.ember).opacity(0.55))
-                        .frame(width: geo.size.width * min(1, window.utilization / 100))
+                        .frame(width: renewed ? 0 : geo.size.width * min(1, window.utilization / 100))
                 }
             }
             .frame(height: 5)
 
             HStack(spacing: 5) {
-                Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                if renewed, let at = window.resetsAt {
+                    Text("renovou às \(Fmt.clock(at))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                } else if window.resetsAt != nil {
+                    ResetCaption(window: window)
+                } else {
+                    Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                }
                 Spacer(minLength: 2)
-                if let note { Text(note).font(Type.labelTiny).foregroundStyle(.tertiary) }
+                if let note {
+                    Text(note).font(Type.labelTiny).foregroundStyle(.tertiary)
+                } else if window.resetsAt != nil {
+                    Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                }
             }
         }
     }

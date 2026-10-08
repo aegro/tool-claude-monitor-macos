@@ -116,6 +116,32 @@ struct AccountRouterTests {
         #expect(state.sharedLogins.isEmpty)
     }
 
+    @Test func leituraFrescaSoParaContaLidaPeloRoteador() throws {
+        let cfg = try config(#"{ "principal": "pessoal", "contas": { "pessoal": {}, "squad": {} }, "rota": ["pessoal", "squad"] }"#)
+        let squad = AccountIdentity(accountUuid: "a", organizationUuid: "o", email: "squad@exemplo.com")
+        let snapshot = UsageSnapshot(windows: [
+            LimitWindow(key: "session", title: "Sessão", utilization: 40, resetsAt: Date(timeIntervalSince1970: 100),
+                        severity: "normal", isSession: true, isActive: true)])
+        var state = RouterState(config: cfg, pick: nil, usage: ["squad": snapshot], lastSwitch: nil,
+                                logins: ["squad": squad])
+        #expect(state.freshSnapshot(forKey: squad.key) == nil)
+        state.read = [squad.key]
+        #expect(state.freshSnapshot(forKey: squad.key) == snapshot)
+        #expect(state.freshSnapshot(forKey: "outra:o") == nil)
+    }
+
+    @Test func janelaRenovadaQuandoOResetJaPassou() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        func window(_ reset: Date?) -> LimitWindow {
+            LimitWindow(key: "session", title: "Sessão", utilization: 40, resetsAt: reset,
+                        severity: "normal", isSession: true, isActive: true)
+        }
+        #expect(window(now.addingTimeInterval(-1)).hasReset(at: now))
+        #expect(window(now).hasReset(at: now))
+        #expect(!window(now.addingTimeInterval(60)).hasReset(at: now))
+        #expect(!window(nil).hasReset(at: now))
+    }
+
     @Test func contaSemLoginNoTerminalMostraOComandoDeLogin() throws {
         let cfg = try config(#"{ "principal": "squad", "contas": { "pessoal": {}, "squad": {} }, "rota": ["squad", "pessoal"] }"#)
         let squad = AccountIdentity(accountUuid: "a", organizationUuid: "o", email: "squad@exemplo.com")

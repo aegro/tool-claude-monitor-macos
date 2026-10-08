@@ -347,4 +347,11 @@ struct RouterState: Equatable {
 
     var pickKey: String? { pick.flatMap { logins[$0]?.key } }
 
+    func freshSnapshot(forKey key: String) -> UsageSnapshot? {
+        guard read.contains(key),
+              let id = logins.first(where: { $0.value.key == key })?.key
+        else { return nil }
+        return usage[id]
+    }
+
     func isRouted(_ key: String?) -> Bool { key != nil && key == pickKey }}

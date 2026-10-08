@@ -38,4 +38,15 @@ function argsDeRetomada(args, sessionId) {
   return sessionId ? [...base, `--resume=${sessionId}`] : base;
 }
 
-module.exports = { valorDaFlag, temFlag, semFlagsDeSessao, argsDeRetomada };
+const NOMES_DO_BINARIO = new Set(['claude', 'claude.exe']);
+
+function binarioDoWrapper(argv, ehExecutavel, ehOLancador = () => false) {
+  const primeiro = argv[0];
+  if (!primeiro || !primeiro.startsWith('/')) return { bin: null, args: argv };
+  if (!NOMES_DO_BINARIO.has(primeiro.slice(primeiro.lastIndexOf('/') + 1))) return { bin: null, args: argv };
+  if (!ehExecutavel(primeiro)) return { bin: null, args: argv };
+  if (ehOLancador(primeiro)) return { bin: null, args: argv.slice(1) };
+  return { bin: primeiro, args: argv.slice(1) };
+}
+
+module.exports = { valorDaFlag, temFlag, semFlagsDeSessao, argsDeRetomada, binarioDoWrapper };

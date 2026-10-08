@@ -289,21 +289,27 @@ function sincronizarConfig(id, cfg = carregarConfig()) {
   const origem = lerJson(ARQ_CONFIG_PRINCIPAL, null);
   if (!origem) return false;
   const arquivo = arquivoConfigDaConta(id, cfg);
-  const alvo = lerJson(arquivo, {});
-  const antes = JSON.stringify(alvo);
-  for (const chave of CHAVES_CONFIG) {
-    if (chave in origem) alvo[chave] = origem[chave];
+  try {
+    return Boolean(
+      atualizarJson(arquivo, (alvo) => {
+        const antes = JSON.stringify(alvo);
+        for (const chave of CHAVES_CONFIG) {
+          if (chave in origem) alvo[chave] = origem[chave];
+        }
+        alvo.projects = alvo.projects || {};
+        for (const [projeto, dados] of Object.entries(origem.projects || {})) {
+          const destino = (alvo.projects[projeto] = alvo.projects[projeto] || {});
+          for (const chave of CHAVES_PROJETO) {
+            if (chave in dados) destino[chave] = dados[chave];
+          }
+        }
+        return JSON.stringify(alvo) === antes ? null : alvo;
+      }),
+    );
+  } catch (e) {
+    log(`config: não deu para copiar a config da principal para ${id}: ${e.message}`);
+    return false;
   }
-  alvo.projects = alvo.projects || {};
-  for (const [projeto, dados] of Object.entries(origem.projects || {})) {
-    const destino = (alvo.projects[projeto] = alvo.projects[projeto] || {});
-    for (const chave of CHAVES_PROJETO) {
-      if (chave in dados) destino[chave] = dados[chave];
-    }
-  }
-  if (JSON.stringify(alvo) === antes) return false;
-  escreverJson(arquivo, alvo);
-  return true;
 }
 
 function servicoKeychain(id, cfg = carregarConfig()) {

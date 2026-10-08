@@ -269,6 +269,13 @@ struct StaleLimitRow: View {
 
     private var renewed: Bool { window.hasReset() }
 
+    /// The left caption only carries "visto" when there is no reset time, so with one the stamp moves here,
+    /// next to the note, and every row keeps saying when it was seen.
+    private var trailingCaption: String? {
+        guard window.resetsAt != nil else { return note }
+        return [note, "visto \(Fmt.stamp(seenAt))"].compactMap { $0 }.joined(separator: " · ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -299,10 +306,9 @@ struct StaleLimitRow: View {
                     Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 2)
-                if let note {
-                    Text(note).font(Type.labelTiny).foregroundStyle(.tertiary)
-                } else if window.resetsAt != nil {
-                    Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
+                if let trailing = trailingCaption {
+                    Text(trailing).font(Type.labelTiny).foregroundStyle(.tertiary)
+                        .lineLimit(1).minimumScaleFactor(0.8)
                 }
             }
         }

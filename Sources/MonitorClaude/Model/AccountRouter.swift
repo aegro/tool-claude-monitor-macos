@@ -37,6 +37,7 @@ enum AccountRouter {
     static var configURL: URL { home.appendingPathComponent("config.json") }
     static var switchesURL: URL { home.appendingPathComponent(".estado/trocas.jsonl") }
     static var exhaustedURL: URL { home.appendingPathComponent(".estado/esgotadas.json") }
+    static var slotBurnRateURL: URL { home.appendingPathComponent(".estado/ritmo.json") }
     static var defaultConfigDirectory: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude")
     }
@@ -312,6 +313,42 @@ enum AccountRouter {
                       reason: root["motivo"] as? String ?? "")
     }
 
+    static func slotBurnRate(account: String, snapshot: UsageSnapshot, session: BurnRate?, weekly: BurnRate?,
+                             now: Date = Date()) -> SlotBurnRate? {
+        let weeklyBinds = used(snapshot.weekly, now: now) > used(snapshot.session, now: now)
+        guard let window = weeklyBinds ? snapshot.weekly : snapshot.session,
+              let burn = weeklyBinds ? weekly : session,
+              burn.percentPerHour.isFinite
+        else { return nil }
+        return SlotBurnRate(account: account, window: weeklyBinds ? "sete" : "cinco",
+                            pointsPerMinute: burn.percentPerHour / 60, used: used(window, now: now),
+                            usedAt: snapshot.fetchedAt, at: now)
+    }
+
+    static func publish(_ rate: SlotBurnRate, to url: URL = slotBurnRateURL) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        encoder.outputFormatting = .sortedKeys
+        let data = try encoder.encode(rate)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let temporary = "\(url.path).\(getpid()).\(UUID().uuidString).tmp"
+        let descriptor = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        do {
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            try handle.write(contentsOf: data)
+            try handle.close()
+            guard rename(temporary, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        } catch {
+            unlink(temporary)
+            throw error
+        }
+    }
+
+    static func withdrawSlotBurnRate(at url: URL = slotBurnRateURL) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
     // MARK: choice
 
     static func used(_ window: LimitWindow?, now: Date = Date()) -> Double {
@@ -347,6 +384,24 @@ enum AccountRouter {
             return reserve
         }
         return route
+    }
+}
+
+struct SlotBurnRate: Equatable, Encodable {
+    var account: String
+    var window: String
+    var pointsPerMinute: Double
+    var used: Double
+    var usedAt: Date
+    var at: Date
+
+    enum CodingKeys: String, CodingKey {
+        case account = "conta"
+        case window = "janela"
+        case pointsPerMinute = "ppPorMinuto"
+        case used = "usado"
+        case usedAt = "usadoEm"
+        case at = "em"
     }
 }
 

@@ -11,6 +11,7 @@ struct UsageSample: Codable, Equatable {
     /// organizations at once, and a trend line drawn across both would be a line through two
     /// unrelated series. Nil on samples written before this was recorded.
     var org: String?
+    var account: String? = nil
 }
 
 /// Hand-decoded so that a history written before `org` existed still loads — the file holds up to
@@ -24,6 +25,7 @@ extension UsageSample {
         weekly = try c.decodeIfPresent(Double.self, forKey: .weekly)
         tokensCumulative = try c.decodeIfPresent(Int64.self, forKey: .tokensCumulative)
         org = try c.decodeIfPresent(String.self, forKey: .org)
+        account = try c.decodeIfPresent(String.self, forKey: .account)
     }
 }
 
@@ -119,8 +121,25 @@ final class UsageHistory {
     func burnRate(_ pick: (UsageSample) -> Double?, org: String?,
                   window: TimeInterval = 60 * 60,
                   minPoints: Int = 5, minSpan: TimeInterval = 15 * 60) -> BurnRate? {
+        fit(series(pick, since: Date().addingTimeInterval(-window), org: org),
+            minPoints: minPoints, minSpan: minSpan)
+    }
+
+    func burnRate(_ pick: (UsageSample) -> Double?, account: String, org: String?,
+                  window: TimeInterval = 60 * 60,
+                  minPoints: Int = 5, minSpan: TimeInterval = 15 * 60) -> BurnRate? {
         let since = Date().addingTimeInterval(-window)
-        let pts = series(pick, since: since, org: org)
+        let lastOtherAccount = samples.last { $0.account != nil && $0.account != account }?.at
+        let pts = samples.compactMap { s -> (Date, Double)? in
+            guard s.at >= since, lastOtherAccount.map({ s.at > $0 }) ?? true,
+                  s.account == account, s.org == org, let v = pick(s)
+            else { return nil }
+            return (s.at, v)
+        }
+        return fit(pts, minPoints: minPoints, minSpan: minSpan)
+    }
+
+    private func fit(_ pts: [(Date, Double)], minPoints: Int, minSpan: TimeInterval) -> BurnRate? {
         guard pts.count >= minPoints else { return nil }
 
         let spanMinutes = pts.last!.0.timeIntervalSince(pts.first!.0) / 60

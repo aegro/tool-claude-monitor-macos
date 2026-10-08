@@ -304,6 +304,88 @@ struct AccountRouterTests {
         #expect(FileManager.default.fileExists(atPath: claim.path))
     }
 
+    @Test func ritmoDoSlotUsaAJanelaQueLimitaEmPontosPorMinuto() throws {
+        let now = Date(timeIntervalSince1970: 1_791_400_000)
+        var snap = UsageSnapshot(windows: [
+            LimitWindow(key: "session", title: "", utilization: 40, resetsAt: now.addingTimeInterval(3600),
+                        severity: "normal", isSession: true, isActive: true),
+            LimitWindow(key: "weekly_all", title: "", utilization: 97, resetsAt: now.addingTimeInterval(86400),
+                        severity: "critical", isSession: false, isActive: true),
+        ], fetchedAt: now.addingTimeInterval(-60))
+        let session = BurnRate(percentPerHour: 60, basedOnMinutes: 30)
+        let weekly = BurnRate(percentPerHour: 3, basedOnMinutes: 120)
+
+        let semanal = try #require(AccountRouter.slotBurnRate(account: "u:o", snapshot: snap, session: session,
+                                                              weekly: weekly, now: now))
+        #expect(semanal.account == "u:o")
+        #expect(semanal.window == "sete")
+        #expect(abs(semanal.pointsPerMinute - 0.05) < 1e-12)
+        #expect(semanal.used == 97)
+        #expect(semanal.usedAt == now.addingTimeInterval(-60))
+        #expect(semanal.at == now)
+        #expect(AccountRouter.slotBurnRate(account: "u:o", snapshot: snap, session: session, weekly: nil, now: now) == nil)
+
+        snap.windows[1].resetsAt = now.addingTimeInterval(-60)
+        let daSessão = try #require(AccountRouter.slotBurnRate(account: "u:o", snapshot: snap, session: session,
+                                                               weekly: weekly, now: now))
+        #expect(daSessão.window == "cinco")
+        #expect(daSessão.pointsPerMinute == 1)
+        #expect(daSessão.used == 40)
+        #expect(AccountRouter.slotBurnRate(account: "u:o", snapshot: snap, session: nil, weekly: weekly, now: now) == nil)
+        #expect(AccountRouter.slotBurnRate(account: "u:o", snapshot: UsageSnapshot(), session: session,
+                                           weekly: weekly, now: now) == nil)
+    }
+
+    @Test func ritmoPublicadoTemOsCamposQueORoteadorLê() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent(".estado/ritmo.json")
+        let rate = SlotBurnRate(account: "u:o", window: "cinco", pointsPerMinute: 1.5, used: 92,
+                                usedAt: Date(timeIntervalSince1970: 1_791_399_940), at: Date(timeIntervalSince1970: 1_791_400_000))
+
+        try AccountRouter.publish(rate, to: url)
+        try AccountRouter.publish(rate, to: url)
+
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect(Set(root.keys) == ["conta", "janela", "ppPorMinuto", "usado", "usadoEm", "em"])
+        #expect(root["conta"] as? String == "u:o")
+        #expect(root["janela"] as? String == "cinco")
+        #expect((root["ppPorMinuto"] as? NSNumber)?.doubleValue == 1.5)
+        #expect((root["usado"] as? NSNumber)?.doubleValue == 92)
+        #expect((root["usadoEm"] as? NSNumber)?.doubleValue == 1_791_399_940_000)
+        #expect((root["em"] as? NSNumber)?.doubleValue == 1_791_400_000_000)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path) == ["ritmo.json"])
+        let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        #expect(permissions?.intValue == 0o600)
+    }
+
+    @Test func ritmoQueNãoPôdeSerPublicadoNãoDeixaTemporário() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let estado = dir.appendingPathComponent(".estado")
+        let url = estado.appendingPathComponent("ritmo.json")
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("ocupado"), withIntermediateDirectories: true)
+        let rate = SlotBurnRate(account: "u:o", window: "cinco", pointsPerMinute: 1, used: 90,
+                                usedAt: Date(timeIntervalSince1970: 1_791_399_940), at: Date(timeIntervalSince1970: 1_791_400_000))
+
+        #expect(throws: (any Error).self) { try AccountRouter.publish(rate, to: url) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: estado.path) == ["ritmo.json"])
+    }
+
+    @Test func ritmoRetiradoSomeDoDisco() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent(".estado/ritmo.json")
+        let rate = SlotBurnRate(account: "u:o", window: "cinco", pointsPerMinute: 1, used: 90,
+                                usedAt: Date(timeIntervalSince1970: 1_791_399_940), at: Date(timeIntervalSince1970: 1_791_400_000))
+
+        try AccountRouter.publish(rate, to: url)
+        AccountRouter.withdrawSlotBurnRate(at: url)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        AccountRouter.withdrawSlotBurnRate(at: url)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test func loginDeAgentesMarcadoComoInválidoNãoContaComoPronto() {
         #expect(AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","guardadoEm":1}"#.utf8)))
         #expect(!AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","invalidoEm":2,"motivoInvalido":"HTTP 401"}"#.utf8)))

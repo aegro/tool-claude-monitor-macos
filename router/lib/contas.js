@@ -83,6 +83,34 @@ function inodeDaTravaVelha(dir, agora = Date.now()) {
   }
 }
 
+function marcarTomada(tomada) {
+  for (let tentativa = 0; tentativa < 2; tentativa += 1) {
+    try {
+      fs.mkdirSync(tomada);
+      return true;
+    } catch (e) {
+      if (e.code !== 'EEXIST' || inodeDaTravaVelha(tomada) == null) return false;
+      try {
+        fs.rmdirSync(tomada);
+      } catch {}
+    }
+  }
+  return false;
+}
+
+function soltarTravaDeArquivo(dir, dono) {
+  try {
+    if (fs.statSync(dir).ino !== dono) return;
+    try {
+      fs.rmdirSync(dir);
+    } catch (e) {
+      if (e.code !== 'ENOTEMPTY' && e.code !== 'EEXIST') return;
+      fs.rmdirSync(path.join(dir, 'tomada'));
+      fs.rmdirSync(dir);
+    }
+  } catch {}
+}
+
 function tomarTravaDeArquivo(dir) {
   try {
     fs.mkdirSync(dir);
@@ -93,16 +121,7 @@ function tomarTravaDeArquivo(dir) {
   const velha = inodeDaTravaVelha(dir);
   if (velha == null) return null;
   const tomada = path.join(dir, 'tomada');
-  try {
-    fs.mkdirSync(tomada);
-  } catch (e) {
-    if (e.code === 'EEXIST' && inodeDaTravaVelha(tomada) != null) {
-      try {
-        fs.rmdirSync(tomada);
-      } catch {}
-    }
-    return null;
-  }
+  if (!marcarTomada(tomada)) return null;
   let inode = null;
   try {
     inode = fs.statSync(dir).ino;
@@ -136,9 +155,7 @@ function comTravaDeArquivo(arquivo, fn, { prazoMs = PRAZO_DA_TRAVA_DE_ARQUIVO_MS
   try {
     return fn();
   } finally {
-    try {
-      if (fs.statSync(dir).ino === dono) fs.rmdirSync(dir);
-    } catch {}
+    soltarTravaDeArquivo(dir, dono);
   }
 }
 

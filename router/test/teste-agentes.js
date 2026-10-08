@@ -287,15 +287,24 @@ const testes = {
     assert.strictEqual(fs.existsSync(`${arquivo}.lock/tomada`), true);
     fs.rmSync(`${arquivo}.lock`, { recursive: true });
   },
-  tomadaAbandonadaNaTravaVelhaEhLimpa() {
+  tomadaAbandonadaNaTravaVelhaNaoAtrasaATomada() {
     const arquivo = path.join(raiz, 'abandonada', 'config.json');
     fs.mkdirSync(`${arquivo}.lock/tomada`, { recursive: true });
     const antiga = new Date(Date.now() - 60000);
     fs.utimesSync(`${arquivo}.lock/tomada`, antiga, antiga);
     fs.utimesSync(`${arquivo}.lock`, antiga, antiga);
-    assert.throws(() => contas.atualizarJson(arquivo, () => ({ ativo: false }), { prazoMs: 200 }), /another process/);
-    assert.strictEqual(fs.existsSync(`${arquivo}.lock/tomada`), false);
-    fs.rmdirSync(`${arquivo}.lock`);
+    const inicio = Date.now();
+    contas.atualizarJson(arquivo, () => ({ ativo: false }), { prazoMs: 1000 });
+    assert.ok(Date.now() - inicio < 500);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(arquivo, 'utf8')), { ativo: false });
+    assert.strictEqual(fs.existsSync(`${arquivo}.lock`), false);
+  },
+  donoSoltaATravaMesmoComTomadaDentro() {
+    const arquivo = path.join(raiz, 'solta', 'config.json');
+    contas.comTravaDeArquivo(arquivo, () => {
+      fs.mkdirSync(`${arquivo}.lock/tomada`);
+    });
+    assert.strictEqual(fs.existsSync(`${arquivo}.lock`), false);
   },
   travaDeOutroNaoEhApagadaNaSaida() {
     const arquivo = path.join(raiz, 'outro', 'config.json');

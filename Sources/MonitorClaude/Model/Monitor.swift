@@ -162,10 +162,20 @@ final class Monitor: ObservableObject {
         else { return }
         lastAgentsWatch = Date()
         watchingAgents = true
+        publishSlotBurnRate()
         Task.detached(priority: .utility) { [weak self] in
             AccountRouter.watchAgents()
             await self?.finishAgentsWatch()
         }
+    }
+
+    private func publishSlotBurnRate() {
+        guard liveIsCurrent, let identity = activeAccount, let snapshot = usage,
+              liveOrg == identity.organizationUuid,
+              let rate = AccountRouter.slotBurnRate(account: identity.key, snapshot: snapshot,
+                                                    session: sessionBurn, weekly: weeklyBurn)
+        else { return }
+        try? AccountRouter.publish(rate)
     }
 
     private func finishAgentsWatch() {

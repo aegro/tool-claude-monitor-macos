@@ -78,11 +78,11 @@ async function status() {
     const situacao = [
       escolhida && escolhida.id === c.id ? 'router' : null,
       c.esgotada ? `exhausted until ${horaCurta(c.esgotada.ate)}` : null,
-      c.sonda.ok ? null : `probe: ${c.sonda.erro}`,
+      c.sonda.ok || c.sonda.semLogin ? null : `probe: ${c.sonda.erro}`,
     ].filter(Boolean);
     linhas.push([
       c.id,
-      contas.identidade(c.id).email || 'not logged in',
+      contas.rotuloDoLogin(c.id, contas.identidade(c.id).email, c.sonda),
       PAPEIS[c.papel] || c.papel,
       c.folga == null ? '–' : `${c.folga}%`,
       fmt(janela('session')),

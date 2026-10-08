@@ -280,7 +280,8 @@ final class Monitor: ObservableObject {
             usage: usage,
             lastSwitch: AccountRouter.lastSwitch(),
             logins: logins,
-            read: read)
+            read: read,
+            available: available)
     }
 
     /// The preferred feed: our own read of the API, with the terminal's token.

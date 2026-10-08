@@ -241,6 +241,25 @@ const testes = {
     assert.strictEqual(salvo.ativo, false);
     assert.strictEqual(salvo.limites, undefined);
   },
+  antigaPrincipalSegueNoTerminalPeloDiretorioProprio() {
+    fs.writeFileSync(contas.ARQ_CONFIG, JSON.stringify({ contas: { segunda: {} }, rota: ['principal', 'segunda'] }));
+    assert.strictEqual(contas.dirDaConta('principal'), contas.DIR_PRINCIPAL);
+    contas.definirPrincipal('segunda');
+    const cfg = contas.carregarConfig();
+    const estacionada = path.join(contas.DIR_CONTAS, 'principal');
+    assert.deepStrictEqual(cfg.rota, ['principal', 'segunda']);
+    assert.strictEqual(contas.usaDirPadrao('principal', cfg), false);
+    assert.strictEqual(contas.dirDaConta('principal', cfg), estacionada);
+    assert.strictEqual(contas.envDaConta('principal', {}).CLAUDE_CONFIG_DIR, estacionada);
+    assert.strictEqual(contas.envDaConta('segunda', {}).CLAUDE_CONFIG_DIR, undefined);
+    assert.notStrictEqual(contas.servicoKeychain('principal', cfg), 'Claude Code-credentials');
+  },
+  contaSemLoginNoTerminalPedeOLogin() {
+    assert.strictEqual(contas.rotuloDoLogin('principal', 'a@exemplo.com', { semLogin: true }), 'missing: claude-accounts login principal');
+    assert.strictEqual(contas.rotuloDoLogin('principal', null, { ok: false, semLogin: true }), 'missing: claude-accounts login principal');
+    assert.strictEqual(contas.rotuloDoLogin('principal', 'a@exemplo.com', { ok: true }), 'a@exemplo.com');
+    assert.strictEqual(contas.rotuloDoLogin('principal', null, { ok: false, erro: 'HTTP 500' }), 'logged in');
+  },
   semPreferidaEscolheAMaiorFolga() {
     configurar();
     assert.strictEqual(escolhida(candidatas()), 'segunda');

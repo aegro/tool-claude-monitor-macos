@@ -116,6 +116,15 @@ struct AccountRouterTests {
         #expect(state.sharedLogins.isEmpty)
     }
 
+    @Test func contaSemLoginNoTerminalMostraOComandoDeLogin() throws {
+        let cfg = try config(#"{ "principal": "squad", "contas": { "pessoal": {}, "squad": {} }, "rota": ["squad", "pessoal"] }"#)
+        let squad = AccountIdentity(accountUuid: "a", organizationUuid: "o", email: "squad@exemplo.com")
+        let state = RouterState(config: cfg, pick: "squad", usage: [:], lastSwitch: nil,
+                                logins: ["squad": squad], available: ["squad"])
+        #expect(state.loginLabel(for: "squad") == "squad@exemplo.com")
+        #expect(state.loginLabel(for: "pessoal") == "sem login: claude-accounts login pessoal")
+    }
+
     @Test func ligarEDesligarPreservaORestoDaConfig() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("router-\(UUID().uuidString)/config.json")

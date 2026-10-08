@@ -331,6 +331,12 @@ struct RouterState: Equatable {
     var lastSwitch: AccountRouter.Switch?
     var logins: [String: AccountIdentity] = [:]
     var read: Set<String> = []
+    var available: Set<String> = []
+
+    func loginLabel(for id: String) -> String {
+        guard available.contains(id) else { return "sem login: claude-accounts login \(id)" }
+        return logins[id]?.email ?? "logada"
+    }
 
     var sharedLogins: [[String]] {
         let ids = config.accounts.map(\.id).filter { logins[$0] != nil }

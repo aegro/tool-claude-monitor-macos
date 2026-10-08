@@ -328,6 +328,11 @@ function identidade(id, cfg = carregarConfig()) {
   };
 }
 
+function rotuloDoLogin(id, email, sonda) {
+  if (!sonda || sonda.semLogin) return `missing: claude-accounts login ${id}`;
+  return email || 'logged in';
+}
+
 function contasDuplicadas(cfg = carregarConfig()) {
   const grupos = new Map();
   for (const id of Object.keys(cfg.contas)) {
@@ -645,6 +650,7 @@ module.exports = {
   servicoKeychain,
   lerCredencial,
   identidade,
+  rotuloDoLogin,
   contasDuplicadas,
   sondar,
   lerUso,

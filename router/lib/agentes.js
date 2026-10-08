@@ -465,7 +465,15 @@ async function trocarSlotSemTrava(para, motivo) {
     throw e;
   }
   contas.registrarTroca({ de, para, motivo: `agents ${motivo}` });
+  if (SLOT_PADRAO && cfg.principal === de) await avisarSemLoginNoTerminal(de);
   return { de, para, mudou: true };
+}
+
+async function avisarSemLoginNoTerminal(id) {
+  if (await contas.lerCredencial(id)) return false;
+  contas.log(`agentes: ${id} saiu de ~/.claude e não tem login próprio em ${contas.dirDaConta(id)}; o terminal só volta a usá-la depois de claude-accounts login ${id}`);
+  contas.notificar('Claude: terminal login missing', `${contas.nomeDaConta(id)} left ~/.claude for the agents. Run claude-accounts login ${id} to keep it in terminal sessions.`);
+  return true;
 }
 
 function trocarSlot(para, motivo = 'manual') {

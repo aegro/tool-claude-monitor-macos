@@ -145,7 +145,7 @@ struct SettingsView: View {
                 note("Sessões novas abrem nela quando tem folga. claude agents e o T3 (entre turnos) voltam para ela quando o limite renova; terminal já aberto fica onde está.")
             }
             ForEach(state.config.accounts, id: \.id) { account in
-                let login = state.logins[account.id]?.email ?? "sem login"
+                let login = state.loginLabel(for: account.id)
                 let reading = state.usage[account.id].map {
                     "sessão \(Fmt.pct(AccountRouter.used($0.session))) · semana \(Fmt.pct(AccountRouter.used($0.weekly)))"
                 } ?? "sem leitura"

@@ -251,10 +251,8 @@ struct SettingsView: View {
             return
         }
         preferred = id
-        Task {
-            await monitor.refreshUsage(force: true)
-            monitor.watchAgentsNow()
-        }
+        monitor.watchAgentsNow()
+        Task { await monitor.refreshUsage(force: true) }
     }
 
     @discardableResult

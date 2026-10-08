@@ -24,7 +24,7 @@ const TOLERANCIA_DA_RENOVACAO_MS = 60 * 1000;
 const FOLGA_DO_ACCESS_TOKEN_MS = 5 * 60 * 1000;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
 const URL_TOKEN = 'https://platform.claude.com/v1/oauth/token';
-const ID_DO_CLIENTE_OAUTH = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
+const ID_DO_CLIENTE_OAUTH = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'; // gitleaks:allow (client_id público do Claude Code, não é segredo)
 const CONTINUAR =
   '[claude-auto] A conta anterior atingiu o limite e esta sessão foi retomada em outra conta. ' +
   'Continue exatamente de onde parou, sem refazer o que já foi concluído.';

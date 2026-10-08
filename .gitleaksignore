@@ -1,0 +1,2 @@
+# client_id OAuth público do Claude Code (está no binário dele), não é segredo; a linha atual tem gitleaks:allow
+c5307174b64b19f9d1abdc779dc311d7fe6896ac:router/lib/agentes.js:generic-api-key:26

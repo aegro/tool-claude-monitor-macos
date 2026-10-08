@@ -157,7 +157,7 @@ const testes = {
     assert.deepStrictEqual(agentes.resultadoDoPerfil(200, perfil, null), { valido: true, chave: 'u2:o2' });
     assert.strictEqual(agentes.resultadoDoPerfil(200, perfil, 'u1:o1').valido, false);
     assert.strictEqual(agentes.resultadoDoPerfil(401, null, 'u2:o2').valido, false);
-    assert.strictEqual(agentes.resultadoDoPerfil(403, null, 'u2:o2').valido, false);
+    assert.strictEqual(agentes.resultadoDoPerfil(403, null, 'u2:o2').valido, null);
     assert.strictEqual(agentes.resultadoDoPerfil(429, null, 'u2:o2').valido, null);
     assert.strictEqual(agentes.resultadoDoPerfil(500, null, 'u2:o2').valido, null);
     assert.strictEqual(agentes.resultadoDoPerfil(200, {}, 'u2:o2').valido, null);
@@ -166,6 +166,8 @@ const testes = {
     const com = (expiresAt) => JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt } });
     assert.strictEqual(agentes.loginVencido(com(agora - 1000), agora), true);
     assert.strictEqual(agentes.loginVencido(com(agora + 60000), agora), false);
+    assert.strictEqual(agentes.loginVencido(com(agora + 60000), agora, 5 * 60000), true);
+    assert.strictEqual(agentes.loginVencido(com(agora + 600000), agora, 5 * 60000), false);
     assert.strictEqual(agentes.loginVencido(loginDaSegunda, agora), false);
   },
   async loginGuardadoComAccessTokenVencidoCarregaSemConsultarOPerfil() {
@@ -179,6 +181,9 @@ const testes = {
       const vencido = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt: agora - 1000 } });
       const r = await agentes.conferirLogin(vencido, 'u2:o2');
       assert.strictEqual(r.valido, true);
+      assert.strictEqual(chamadas, 0);
+      const quaseVencido = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt: Date.now() + 30000 } });
+      assert.strictEqual((await agentes.conferirLogin(quaseVencido, 'u2:o2')).valido, true);
       assert.strictEqual(chamadas, 0);
     } finally {
       global.fetch = original;

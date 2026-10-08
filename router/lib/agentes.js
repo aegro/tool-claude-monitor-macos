@@ -21,6 +21,7 @@ const TENTATIVAS_DE_RETOMADA = 3;
 const JANELA_DO_RITMO_MS = 10 * 60 * 1000;
 const INTERVALO_MINIMO_DO_RITMO_MS = 2 * 60 * 1000;
 const TOLERANCIA_DA_RENOVACAO_MS = 60 * 1000;
+const FOLGA_DO_ACCESS_TOKEN_MS = 5 * 60 * 1000;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
 const URL_TOKEN = 'https://platform.claude.com/v1/oauth/token';
 const ID_DO_CLIENTE_OAUTH = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
@@ -154,7 +155,7 @@ function chaveDoPerfil(perfil) {
 }
 
 function resultadoDoPerfil(status, perfil, chaveEsperada = null) {
-  if (status === 401 || status === 403) return { valido: false, motivo: `HTTP ${status}` };
+  if (status === 401) return { valido: false, motivo: `HTTP ${status}` };
   if (status < 200 || status >= 300) return { valido: null, motivo: `HTTP ${status}` };
   const chave = chaveDoPerfil(perfil);
   if (!chave) return { valido: null, motivo: 'profile without an account' };
@@ -162,15 +163,15 @@ function resultadoDoPerfil(status, perfil, chaveEsperada = null) {
   return { valido: true, chave };
 }
 
-function loginVencido(texto, agora = Date.now()) {
+function loginVencido(texto, agora = Date.now(), folga = 0) {
   const credencial = credencialDoItem(texto);
-  return Boolean(credencial && credencial.expiresAt && credencial.expiresAt <= agora);
+  return Boolean(credencial && credencial.expiresAt && credencial.expiresAt <= agora + folga);
 }
 
 async function conferirLogin(texto, chaveEsperada = null) {
   const credencial = credencialDoItem(texto);
   if (!credencial || !credencial.accessToken) return { valido: false, motivo: 'no claudeAiOauth' };
-  if (loginVencido(texto)) return { valido: true, chave: chaveEsperada, vencido: true };
+  if (loginVencido(texto, Date.now(), FOLGA_DO_ACCESS_TOKEN_MS)) return { valido: true, chave: chaveEsperada, vencido: true };
   try {
     const resposta = await fetch(URL_PERFIL, {
       headers: { Authorization: `Bearer ${credencial.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' },
@@ -186,7 +187,7 @@ async function conferirLogin(texto, chaveEsperada = null) {
 async function renovarLogin(texto) {
   const credencial = credencialDoItem(texto);
   if (!credencial || !credencial.refreshToken || !Array.isArray(credencial.scopes) || !credencial.scopes.length) {
-    return { texto: null, motivo: 'no refresh token or scopes' };
+    return { texto: null, impossivel: true, motivo: 'no refresh token or scopes' };
   }
   try {
     const resposta = await fetch(URL_TOKEN, {
@@ -222,13 +223,35 @@ async function renovarLoginGuardado(id, texto) {
   const r = await renovarLogin(texto);
   if (r.invalido) return { invalido: r.motivo };
   if (!r.texto) {
-    contas.log(`agentes: não deu para renovar o login guardado de ${id} (${r.motivo}); ele entra vencido e o Claude Code renova no uso`);
-    return { texto };
+    contas.log(`agentes: não deu para renovar o login guardado de ${id} (${r.motivo})`);
+    return { texto, impossivel: Boolean(r.impossivel) };
   }
   if (!(await gravarItem(servicoGuardado(id), r.texto))) {
     contas.log(`agentes: o login renovado de ${id} não ficou guardado; segue para o slot com ele`);
   }
   return { texto: r.texto, renovado: true };
+}
+
+async function conferirLoginGuardado(id, texto, chave) {
+  let renovado = false;
+  if (loginVencido(texto, Date.now(), FOLGA_DO_ACCESS_TOKEN_MS)) {
+    const r = await renovarLoginGuardado(id, texto);
+    if (r.invalido) return { texto, conferido: { valido: false, motivo: r.invalido } };
+    texto = r.texto;
+    renovado = Boolean(r.renovado);
+  }
+  let conferido = await conferirLogin(texto, chave);
+  if (conferido.valido === false && conferido.motivo === 'HTTP 401' && !renovado) {
+    const r = await renovarLoginGuardado(id, texto);
+    if (r.invalido) return { texto, conferido: { valido: false, motivo: r.invalido } };
+    if (r.renovado) {
+      texto = r.texto;
+      conferido = await conferirLogin(texto, chave);
+    } else if (!r.impossivel) {
+      conferido = { valido: null, motivo: 'HTTP 401 and the token server did not answer' };
+    }
+  }
+  return { texto, conferido };
 }
 
 async function chaveDoToken(texto) {
@@ -499,16 +522,7 @@ async function trocarSlotSemTrava(para, motivo, estado = {}) {
   }
   const textoGuardado = destino && (await lerItem(servicoGuardado(para)));
   if (!credencialDoItem(textoGuardado)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
-  let textoDestino = textoGuardado;
-  if (loginVencido(textoDestino)) {
-    const renovacao = await renovarLoginGuardado(para, textoDestino);
-    if (renovacao.invalido) {
-      marcarLoginInvalido(para, renovacao.invalido);
-      throw erroDaTroca(`the ${para} agents login no longer works (${renovacao.invalido}): run claude-accounts login ${para} --agents`, 'login-invalido');
-    }
-    textoDestino = renovacao.texto;
-  }
-  const conferido = await conferirLogin(textoDestino, destino.chave);
+  const { texto: textoDestino, conferido } = await conferirLoginGuardado(para, textoGuardado, destino.chave);
   if (conferido.valido === false) {
     marcarLoginInvalido(para, conferido.motivo);
     throw erroDaTroca(`the ${para} agents login no longer works (${conferido.motivo}): run claude-accounts login ${para} --agents`, 'login-invalido');

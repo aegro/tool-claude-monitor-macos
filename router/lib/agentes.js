@@ -485,6 +485,13 @@ async function slotSeAindaFor(impressao) {
   return texto;
 }
 
+async function slotSemMudancaDesde(lido) {
+  if ((await lerItem(SERVICO_SLOT)) !== lido) {
+    contas.log('agentes: o slot mudou depois de guardar o login que sai; nada foi carregado, fica para a próxima checagem');
+    throw erroDaTroca('the agents slot changed during the switch; nothing was loaded, the next check retries', 'slot-mudou');
+  }
+}
+
 async function desfazerSlot(escrito, anterior) {
   const texto = textoParaDesfazer(await lerItem(SERVICO_SLOT), escrito, anterior);
   if (texto == null) {
@@ -534,12 +541,13 @@ async function trocarSlotSemTrava(para, motivo, estado = {}) {
   const contaDe = chaveReal === chaveDeclarada ? configDoSlot.oauthAccount : (loginGuardado(de) || {}).oauthAccount;
   if (donoDaTrava && !travaEhDe(donoDaTrava)) throw new Error('lost the agents lock; leaving the slot alone');
   renovarTrava();
-  const loginDe = loginDoItem(await slotSeAindaFor(impressao));
+  const slotAntes = await slotSeAindaFor(impressao);
+  const loginDe = loginDoItem(slotAntes);
   if (!loginDe) throw new Error('there is no login in the agents slot');
   if (!(await gravarItem(servicoGuardado(de), loginDe))) throw new Error(`could not keep the ${de} login`);
   contas.escreverJson(arquivoDoLogin(de), { oauthAccount: contaDe || null, chave: chaveReal, guardadoEm: Date.now() });
-  const slotAntes = await slotSeAindaFor(impressao);
   const novoSlot = slotComLogin(slotAntes, textoDestino);
+  await slotSemMudancaDesde(slotAntes);
   if (!(await gravarItem(SERVICO_SLOT, novoSlot))) {
     await desfazerSlot(novoSlot, slotAntes);
     throw new Error(`could not load the ${para} login into the agents slot`);

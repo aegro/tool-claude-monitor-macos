@@ -151,6 +151,11 @@ final class Monitor: ObservableObject {
         history.flush()
     }
 
+    func watchAgentsNow() {
+        lastAgentsWatch = nil
+        watchAgentsIfDue()
+    }
+
     private func watchAgentsIfDue() {
         guard router?.config.enabled == true, !watchingAgents,
               lastAgentsWatch.map({ Date().timeIntervalSince($0) >= 30 }) ?? true

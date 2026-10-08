@@ -166,6 +166,15 @@ const testes = {
     assert.strictEqual(volta({}, 'segunda', configurar()), null);
     assert.strictEqual(volta({ principal: { folga: 30 } }, 'segunda', configurar({ preferida: 'principal', limites: { voltar: 50 } })), null);
   },
+
+  trocarDePreferidaFuraAEsperaDaVolta() {
+    const estado = { preferidaChecada: 'principal', ultimaChecagemDeVolta: agora };
+    assert.strictEqual(agentes.deveChecarVolta(estado, 'segunda', agora + 1000), true);
+    assert.strictEqual(agentes.deveChecarVolta(estado, 'principal', agora + 1000), false);
+    assert.strictEqual(agentes.deveChecarVolta(estado, 'principal', agora + 5 * 60 * 1000), true);
+    assert.strictEqual(agentes.deveChecarVolta({}, 'principal', agora), true);
+    assert.strictEqual(agentes.deveChecarVolta(estado, null, agora + 10 * 60 * 1000), false);
+  },
 };
 
 let falhas = 0;

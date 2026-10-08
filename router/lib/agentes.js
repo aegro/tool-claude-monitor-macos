@@ -438,11 +438,20 @@ function registrarFalhaDeRetomada(estado, p) {
   avisarUmaVez(estado, `retomar ${p.sessionId}`, 'Claude: agent not resumed', `${p.nome} stopped by a limit and did not resume; continue it by hand.`);
 }
 
+const INTERVALO_DA_VOLTA = 5 * 60 * 1000;
+
+function deveChecarVolta(estado, preferida, agora = Date.now()) {
+  if (!preferida) return false;
+  if (preferida !== estado.preferidaChecada) return true;
+  return agora - (estado.ultimaChecagemDeVolta || 0) >= INTERVALO_DA_VOLTA;
+}
+
 async function voltarParaPreferida(cfg, estado) {
   const atual = contaNoSlot(cfg);
   if (!cfg.preferida || cfg.preferida === atual || !loginGuardado(cfg.preferida)) return null;
-  if (Date.now() - (estado.ultimaChecagemDeVolta || 0) < 5 * 60 * 1000) return null;
+  if (!deveChecarVolta(estado, cfg.preferida)) return null;
   estado.ultimaChecagemDeVolta = Date.now();
+  estado.preferidaChecada = cfg.preferida;
   const preferida = contas.preferidaDeVolta(await avaliarParaAgentes(cfg), atual, cfg);
   if (!preferida) return null;
   try {
@@ -572,4 +581,5 @@ module.exports = {
   planejar,
   vigiar,
   prepararSlot,
+  deveChecarVolta,
 };

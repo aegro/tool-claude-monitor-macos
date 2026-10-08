@@ -260,17 +260,19 @@ async function trocarSlotSemTrava(para, motivo) {
   const destino = loginGuardado(para);
   const textoDestino = destino && (await lerItem(servicoGuardado(para)));
   if (!credencialDoItem(textoDestino)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
-  const novoSlot = slotComLogin(atual, textoDestino);
-  const loginDe = loginDoItem(atual);
-  if (!loginDe) throw new Error('there is no login in the agents slot');
 
   const contaDe = chaveReal === chaveDeclarada ? configDoSlot.oauthAccount : (loginGuardado(de) || {}).oauthAccount;
   if (donoDaTrava && !travaEhDe(donoDaTrava)) throw new Error('lost the agents lock; leaving the slot alone');
   renovarTrava();
+  const slotAntes = await lerItem(SERVICO_SLOT);
+  if (!slotAntes) throw new Error('there is no login in the agents slot');
+  const novoSlot = slotComLogin(slotAntes, textoDestino);
+  const loginDe = loginDoItem(slotAntes);
+  if (!loginDe) throw new Error('there is no login in the agents slot');
   if (!(await gravarItem(servicoGuardado(de), loginDe))) throw new Error(`could not keep the ${de} login`);
   contas.escreverJson(arquivoDoLogin(de), { oauthAccount: contaDe || null, chave: chaveReal, guardadoEm: Date.now() });
   if (!(await gravarItem(SERVICO_SLOT, novoSlot))) {
-    await gravarItem(SERVICO_SLOT, atual);
+    await gravarItem(SERVICO_SLOT, slotAntes);
     throw new Error(`could not load the ${para} login into the agents slot`);
   }
   const novoConfig = contas.lerJson(ARQ_SLOT, {}) || {};

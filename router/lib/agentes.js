@@ -461,7 +461,14 @@ async function vigiar() {
         contas.log(`agentes: ${novas.length} parados por limite e nenhuma outra conta pronta`);
         return { acao: 'sem-conta', parados: novas.map((p) => p.nome) };
       }
-      troca = await trocarSlotSemTrava(escolhida.id, 'limite');
+      try {
+        troca = await trocarSlotSemTrava(escolhida.id, 'limite');
+      } catch (e) {
+        avisarUmaVez(estado, 'troca-falhou', 'Claude: agents hit the limit', `Could not switch the agents login: ${e.message}`);
+        contas.escreverJson(ARQ_ESTADO, estado);
+        contas.log(`agentes: trocar para ${escolhida.id} falhou: ${e.message}`);
+        return { acao: 'troca-falhou', parados: novas.map((p) => p.nome), erro: e.message };
+      }
       estado.ultimaTroca = Date.now();
       contas.escreverJson(ARQ_ESTADO, estado);
     }

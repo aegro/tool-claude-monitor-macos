@@ -232,6 +232,8 @@ async function trocarSlotSemTrava(para, motivo) {
   if (!textoDestino) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
 
   const contaDe = chaveReal === chaveDeclarada ? configDoSlot.oauthAccount : (loginGuardado(de) || {}).oauthAccount;
+  if (donoDaTrava && !travaEhDe(donoDaTrava)) throw new Error('lost the agents lock; leaving the slot alone');
+  renovarTrava();
   if (!(await gravarItem(servicoGuardado(de), atual))) throw new Error(`could not keep the ${de} login`);
   contas.escreverJson(arquivoDoLogin(de), { oauthAccount: contaDe || null, chave: chaveReal, guardadoEm: Date.now() });
   if (!(await gravarItem(SERVICO_SLOT, textoDestino))) {

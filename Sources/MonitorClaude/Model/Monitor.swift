@@ -61,6 +61,18 @@ final class Monitor: ObservableObject {
     @Published private(set) var router: RouterState?
     let accounts = AccountStore()
 
+    /// What needs renewing: connectors in use asking for a login, accounts without one, versions behind, and the
+    /// access checks of the readiness panel when it runs here.
+    @Published private(set) var access = AccessReport()
+    @Published private(set) var integrations = IntegrationsState()
+    /// The add-account assistant on screen, if any (shown in the settings window).
+    @Published var accountFlow: AddAccountFlow?
+    @Published var settingsTab: SettingsTab = .general
+    /// The router's config exists but does not read (not JSON): the queue cannot be shown until it is fixed.
+    @Published private(set) var routerConfigProblem: String?
+    @Published var actionError: String?
+    @Published private(set) var runningAction: String?
+
     @Published var panelOpen = false { didSet { retime() } }
 
     let history = UsageHistory()
@@ -68,6 +80,14 @@ final class Monitor: ObservableObject {
     nonisolated(unsafe) private let sysSampler = SystemSampler()
     nonisolated(unsafe) private let procSampler = ProcessSampler()
     nonisolated(unsafe) private let ledgerScanner = TokenLedger()
+    private let usageScanner = MCPUsageScanner()
+    private var recentConnectorUse: [String: Date] = [:]
+    private var outdatedCasks: [Versions.Outdated] = []
+    private var lastAccessCheck: Date?
+    private var lastConnectorScan: Date?
+    private var lastVersionCheck: Date?
+    private var checkingAccess = false
+    private var sessionDirectories: [(id: String?, directory: URL)] = []
     private let queue = DispatchQueue(label: "farol.sampler", qos: .utility)
     private let ledgerQueue = DispatchQueue(label: "farol.ledger", qos: .utility)
 
@@ -83,6 +103,8 @@ final class Monitor: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
 
     private var usageInterval: TimeInterval { Settings.shared.usageIntervalSeconds }
+    /// Extra accounts the server asked us to stop asking about for a while (HTTP 429), and until when.
+    private var probePausedUntil: [String: Date] = [:]
     private let ledgerInterval: TimeInterval = 20
 
     init() {
@@ -148,7 +170,67 @@ final class Monitor: ObservableObject {
             await refreshUsage(force: false)
         }
         watchAgentsIfDue()
+        await refreshAccessIfDue()
         history.flush()
+    }
+
+    // MARK: access
+
+    /// Every 15 minutes, or sooner when the panel opens on stale data. The transcript scan runs at most every
+    /// 30 minutes (and only reads what the transcripts grew since), Homebrew at most every 6 hours.
+    func refreshAccessIfDue(force: Bool = false) async {
+        let due = force || (lastAccessCheck.map { Date().timeIntervalSince($0) >= (panelOpen ? 300 : 900) } ?? true)
+        guard due, !checkingAccess else { return }
+        checkingAccess = true
+        defer { checkingAccess = false }
+        lastAccessCheck = Date()
+
+        let dirs = sessionDirectories.map(\.directory)
+        let projects = ClaudeSessionStore.root.appendingPathComponent("projects")
+        if force || (lastConnectorScan.map { Date().timeIntervalSince($0) >= 1800 } ?? true) {
+            lastConnectorScan = Date()
+            let scanner = usageScanner
+            recentConnectorUse = await withCheckedContinuation { cont in
+                ledgerQueue.async { cont.resume(returning: scanner.scan(root: projects)) }
+            }
+        }
+        if force || (lastVersionCheck.map { Date().timeIntervalSince($0) >= 6 * 3600 } ?? true) {
+            lastVersionCheck = Date()
+            outdatedCasks = await Task.detached(priority: .utility) { Versions.outdated() }.value
+        }
+        let marks = MCPAuthCache.read(directories: dirs.isEmpty ? [ClaudeSessionStore.root] : dirs)
+        let readiness = Readiness.read()
+        let installed = Readiness.installedScript != nil
+        let bgSessions = sessions.filter(\.isBackground).count
+        var accountInputs: [AccessBuilder.Account] = []
+        if let router, router.config.hasExtraAccounts {
+            for account in router.config.accounts {
+                let isSlot = account.id == router.config.principal
+                accountInputs.append(.init(
+                    id: account.id, label: account.label,
+                    hasLogin: router.available.contains(account.id),
+                    agentsLoginWorks: (bgSessions > 0 && !isSlot) ? router.agentsLogins.contains(account.id) : nil))
+            }
+        }
+        access = AccessBuilder.build(.init(
+            claudeLoginProblem: claudeLoginProblem,
+            routerConfigProblem: routerConfigProblem,
+            accounts: accountInputs,
+            marks: marks,
+            recentUse: recentConnectorUse,
+            outdated: outdatedCasks,
+            readiness: readiness,
+            readinessInstalled: installed))
+        integrations = IntegrationsState.read()
+    }
+
+    /// The terminal login problem in words, when the Keychain read itself is what failed.
+    private var claudeLoginProblem: String? {
+        guard case .broken = feeds.terminal, let error = usageError else { return nil }
+        let lower = error.lowercased()
+        guard lower.contains("expir") || lower.contains("venc") || lower.contains("keychain") || lower.contains("login")
+                || lower.contains("token") else { return nil }
+        return error
     }
 
     func watchAgentsNow() {
@@ -156,8 +238,13 @@ final class Monitor: ObservableObject {
         watchAgentsIfDue()
     }
 
+    /// A preview window shares the real accounts folder with the running app: it must not switch agents or
+    /// publish the burn rate, or two Monitors would drive the same router.
+    static let readOnly = CommandLine.arguments.contains { $0 == "--preview" || $0.hasPrefix("--preview=") }
+        || ProcessInfo.processInfo.environment["MONITOR_CLAUDE_READ_ONLY"] == "1"
+
     private func watchAgentsIfDue() {
-        guard router?.config.enabled == true, !watchingAgents,
+        guard !Self.readOnly, router?.config.enabled == true, !watchingAgents,
               lastAgentsWatch.map({ Date().timeIntervalSince($0) >= 30 }) ?? true
         else { return }
         lastAgentsWatch = Date()
@@ -245,21 +332,31 @@ final class Monitor: ObservableObject {
         await pollTerminalFeed(identity: identity)
         applyFeeds(desktopSeries)
         await pollRouterAccounts(active: identity)
+        sessionDirectories = (router?.config.accounts ?? []).map { (id: Optional($0.id), directory: $0.directory) }
     }
 
     private func pollRouterAccounts(active: AccountIdentity?) async {
         guard let config = AccountRouter.loadConfig(), config.hasExtraAccounts else {
+            routerConfigProblem = AccountRouter.configProblem
             router = nil
             return
         }
+        routerConfigProblem = nil
         var usage: [String: UsageSnapshot] = [:]
         var available: Set<String> = []
         var logins: [String: AccountIdentity] = [:]
         var read: Set<String> = []
+        let cached = AccountRouter.routerReadings()
+        let now = Date()
+        func freshest(_ candidates: UsageSnapshot?...) -> UsageSnapshot? {
+            candidates.compactMap { $0 }.max { $0.fetchedAt < $1.fetchedAt }
+        }
 
         for account in config.accounts {
             let identity = AccountRouter.identity(for: account)
             logins[account.id] = identity
+            let stored = identity.flatMap { accounts.records[$0.key]?.snapshot }
+            let routerRead = cached[account.id]
 
             let creds = await Task.detached(priority: .utility) {
                 AccountRouter.credentials(for: account)
@@ -268,13 +365,21 @@ final class Monitor: ObservableObject {
             available.insert(account.id)
 
             if let identity, identity.key == active?.key {
-                if let snap = apiSnapshot ?? accounts.records[identity.key]?.snapshot {
-                    usage[account.id] = snap
-                }
+                usage[account.id] = freshest(apiSnapshot ?? stored, routerRead?.snapshot)
                 continue
             }
 
-            if !creds.isExpired, let (snap, _) = try? await UsageAPI.fetch(token: creds.accessToken) {
+            // The router read this account a moment ago, or the server asked it (or us) to wait: those numbers
+            // stand, and asking again would only spend this account's share of the endpoint.
+            let waiting = [routerRead?.waitUntil, probePausedUntil[account.id]].compactMap { $0 }.contains { $0 > now }
+            let recent = routerRead.map { now.timeIntervalSince($0.snapshot.fetchedAt) < usageInterval } ?? false
+            if waiting || recent || creds.isExpired {
+                usage[account.id] = freshest(routerRead?.snapshot, stored)
+                continue
+            }
+            do {
+                let (snap, _) = try await UsageAPI.fetch(token: creds.accessToken)
+                probePausedUntil[account.id] = nil
                 if let identity {
                     accounts.record(uuid: identity.key, label: identity.label,
                                     plan: creds.subscriptionType ?? identity.planFallback,
@@ -282,22 +387,27 @@ final class Monitor: ObservableObject {
                     read.insert(identity.key)
                 }
                 usage[account.id] = snap
-            } else if let identity, let stored = accounts.records[identity.key]?.snapshot {
-                usage[account.id] = stored
+            } catch {
+                if case UsageError.http(429) = error { probePausedUntil[account.id] = now.addingTimeInterval(5 * 60) }
+                usage[account.id] = freshest(routerRead?.snapshot, stored)
             }
         }
 
+        let exhausted = AccountRouter.exhausted()
         router = RouterState(
             config: config,
             pick: config.enabled
                 ? AccountRouter.pick(config, headroom: usage.mapValues { AccountRouter.headroom($0) },
-                                     available: available, exhausted: AccountRouter.exhausted())
+                                     available: available, exhausted: exhausted)
                 : nil,
             usage: usage,
             lastSwitch: AccountRouter.lastSwitch(),
             logins: logins,
             read: read,
-            available: available)
+            available: available,
+            exhausted: exhausted,
+            agentsLogins: Set(config.accounts.map(\.id).filter(AccountRouter.hasAgentsLogin)),
+            switches: AccountRouter.switches(limit: 20))
     }
 
     /// The preferred feed: our own read of the API, with the terminal's token.
@@ -583,7 +693,7 @@ final class Monitor: ObservableObject {
         cpuTrail.append(sys.cpuPercent)
         if cpuTrail.count > 60 { cpuTrail.removeFirst(cpuTrail.count - 60) }
 
-        sessions = ClaudeSessionStore.load()
+        sessions = ClaudeSessionStore.load(accounts: sessionDirectories)
         attribution = Attribution.build(procs: procs, sessions: sessions)
     }
 
@@ -599,6 +709,209 @@ final class Monitor: ObservableObject {
     }
 
     func terminate(_ pid: pid_t, force: Bool) { terminate([pid], force: force) }
+
+    // MARK: queue
+
+    /// The accounts as the panel shows them. Without a router config it is one implicit entry, the live account.
+    var accountQueue: AccountQueue {
+        let now = Date()
+        guard let router, router.config.hasExtraAccounts else {
+            let live = liveAccount
+            let entry = AccountQueue.Entry(
+                id: "principal", label: live?.label ?? activeAccount?.label ?? "Claude Code",
+                monogram: AccountRouter.monogram(for: live?.label ?? "CC"), role: .route,
+                plan: live?.plan, email: activeAccount?.email, organization: activeAccount?.organizationDisplay,
+                snapshot: usage, hasLogin: true, agentsLogin: true, exhaustedUntil: nil,
+                sessions: sessions.count, runsAgents: true, isLive: true)
+            return AccountQueue(entries: [entry], strategy: .order, enabled: false, configured: false)
+        }
+        let entries: [AccountQueue.Entry] = router.config.accounts.map { account in
+            let identity = router.logins[account.id]
+            let live = identity != nil && identity?.key == activeAccount?.key
+            // The freshest reading wins: with the terminal token failing, the router may have just read this
+            // account with its own login while the live feed is still holding an old number.
+            let candidates = [live ? usage : nil, router.usage[account.id],
+                              identity.flatMap { accounts.records[$0.key]?.snapshot }].compactMap { $0 }
+            let snapshot = candidates.max { $0.fetchedAt < $1.fetchedAt }
+            return AccountQueue.Entry(
+                id: account.id, label: account.label, monogram: account.monogram, role: account.role,
+                plan: identity.flatMap { accounts.records[$0.key]?.plan ?? $0.planFallback },
+                email: identity?.email, organization: identity?.organizationDisplay,
+                snapshot: snapshot, hasLogin: router.available.contains(account.id),
+                agentsLogin: account.id == router.config.principal || router.agentsLogins.contains(account.id),
+                exhaustedUntil: router.exhausted[account.id].flatMap { $0 > now ? $0 : nil },
+                sessions: sessions.filter { $0.accountId == account.id }.count,
+                runsAgents: account.id == router.config.principal,
+                isLive: live)
+        }
+        return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
+                            reserveBelow: router.config.reserveBelow, configured: true)
+    }
+
+    /// The monogram the menu bar shows: only when new sessions are not opening on the head of the queue.
+    var menuBarMonogram: String? {
+        let q = accountQueue
+        guard q.configured, !q.isSingle, let inUse = q.newSessions(), inUse != q.route.first?.id else { return nil }
+        return q.entry(inUse)?.monogram
+    }
+
+    func moveAccount(_ id: String, to index: Int) async {
+        let q = accountQueue
+        let ids = q.route.map(\.id) + q.reserve.map(\.id)
+        guard let moved = AccountQueue.moving(ids, reserveFrom: q.route.count, id: id, to: index) else {
+            actionError = "A fila precisa de pelo menos uma conta fora da reserva."
+            return
+        }
+        await save { try AccountRouter.saveQueue(route: moved.route, reserve: moved.reserve, strategy: q.strategy) }
+        // A new head of the queue is a new preferred account: the agents check it now, not in five minutes.
+        watchAgentsNow()
+    }
+
+    func setStrategy(_ strategy: AccountRouter.Strategy) async {
+        let route = accountQueue.route.map(\.id)
+        await save { try AccountRouter.setStrategy(strategy, route: route) }
+        watchAgentsNow()
+    }
+
+    func setSwitching(_ on: Bool) async {
+        if on, !AccountRouter.commandsInstalled, let bin = AccountRouter.bundledCommands {
+            try? AccountRouter.installCommands(from: bin)
+        }
+        await save { try AccountRouter.setEnabled(on) }
+        watchAgentsNow()
+    }
+
+    func renameAccount(_ id: String, name: String, monogram: String) async {
+        await save { try AccountRouter.renameAccount(id, name: name, monogram: monogram) }
+    }
+
+    private func save(_ change: @escaping @Sendable () throws -> Void) async {
+        do {
+            try await Task.detached(priority: .userInitiated) { try change() }.value
+            actionError = nil
+        } catch {
+            actionError = error.localizedDescription
+        }
+        await refreshUsage(force: true)
+    }
+
+    // MARK: assistant and actions
+
+    func startAddAccount() {
+        accountFlow?.cancel()
+        let flow = AddAccountFlow(store: accounts, desktop: desktopOrgs,
+                                  agentsRunning: sessions.filter(\.isBackground).count)
+        flow.onFinish = { [weak self] in Task { await self?.refreshUsage(force: true); await self?.refreshAccessIfDue(force: true) } }
+        accountFlow = flow
+        settingsTab = .accounts
+    }
+
+    func startReauthorize(_ id: String, agents: Bool) {
+        guard let account = router?.config.accounts.first(where: { $0.id == id }) else { return }
+        accountFlow?.cancel()
+        let flow = AddAccountFlow(reauthorize: account, agents: agents,
+                                  agentsRunning: sessions.filter(\.isBackground).count)
+        flow.onFinish = { [weak self] in Task { await self?.refreshUsage(force: true); await self?.refreshAccessIfDue(force: true) } }
+        accountFlow = flow
+        settingsTab = .accounts
+    }
+
+    func closeAccountFlow() {
+        accountFlow?.cancel()
+        accountFlow = nil
+    }
+
+    /// Runs what an access item offers. Returns true when the settings window should come forward (the
+    /// assistant lives there).
+    @discardableResult
+    func perform(_ action: AccessAction) async -> Bool {
+        actionError = nil
+        switch action {
+        case .reauthorize(let account, let agents):
+            startReauthorize(account, agents: agents)
+            return true
+        case .openURL(let url):
+            NSWorkspace.shared.open(url)
+        case .copy(let text):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        case .readinessFix(let id, let params):
+            runningAction = id
+            let result = await Readiness.run(Readiness.fixArguments(id, params: params))
+            runningAction = nil
+            if !result.ok { actionError = AddAccountFlow.firstLine(result.error) ?? "A correção não terminou." }
+            await refreshAccessIfDue(force: true)
+        case .upgrade(let cask):
+            await upgrade(cask)
+        }
+        return false
+    }
+
+    private func upgrade(_ cask: String) async {
+        guard let brew = Versions.brew else { actionError = "Homebrew não encontrado"; return }
+        runningAction = cask
+        let result = await Task.detached(priority: .userInitiated) {
+            AccountRouter.run(brew, ["upgrade", "--cask", cask], extra: ["HOMEBREW_NO_ENV_HINTS": "1"], timeout: 900)
+        }.value
+        runningAction = nil
+        guard result.ok else {
+            actionError = AddAccountFlow.firstLine(result.error) ?? "O Homebrew não conseguiu atualizar \(cask)."
+            return
+        }
+        lastVersionCheck = nil
+        if cask == "monitor-claude" {
+            relaunch()
+            return
+        }
+        await refreshAccessIfDue(force: true)
+    }
+
+    /// Opens the app bundle again and quits this copy, so a fresh `brew upgrade` takes effect.
+    private func relaunch() {
+        let bundle = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: bundle, configuration: config) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
+    }
+
+    func setTerminalIntegration(_ on: Bool) {
+        do {
+            if on, !AccountRouter.commandsInstalled, let bin = AccountRouter.bundledCommands {
+                try AccountRouter.installCommands(from: bin)
+            }
+            try Integrations.setTerminal(on)
+            actionError = nil
+        } catch {
+            actionError = error.localizedDescription
+        }
+        integrations = IntegrationsState.read()
+    }
+
+    func setVSCodeIntegration(_ on: Bool) {
+        do {
+            if on, !AccountRouter.commandsInstalled, let bin = AccountRouter.bundledCommands {
+                try AccountRouter.installCommands(from: bin)
+            }
+            try Integrations.setVSCodeWrapper(on)
+            actionError = nil
+        } catch {
+            actionError = error.localizedDescription
+        }
+        integrations = IntegrationsState.read()
+    }
+
+    func refreshIntegrations() { integrations = IntegrationsState.read() }
+
+    /// Turns on the readiness panel's watcher (start with the computer), through the panel's own script.
+    func enableReadinessWatcher() async {
+        runningAction = "readiness"
+        let result = await Readiness.run(["--autostart", "on"], timeout: 120)
+        runningAction = nil
+        if !result.ok { actionError = AddAccountFlow.firstLine(result.error) ?? "Não deu para ligar o vigia." }
+        await refreshAccessIfDue(force: true)
+    }
 
     func revealInActivityMonitor() {
         let url = URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app")

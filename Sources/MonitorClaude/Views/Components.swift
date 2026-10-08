@@ -155,35 +155,6 @@ struct Trail: View {
     }
 }
 
-/// Token volume per 5-minute slot. Bars, not a line: tokens arrive in bursts, and a line
-/// would imply a continuum that is not there.
-struct TokenBars: View {
-    let buckets: [(Date, Int64)]
-    var span: ClosedRange<Date>
-    var height: CGFloat = 24
-
-    var body: some View {
-        Canvas { ctx, size in
-            guard !buckets.isEmpty else { return }
-            let peak = Double(buckets.map(\.1).max() ?? 1)
-            guard peak > 0 else { return }
-            let t0 = span.lowerBound.timeIntervalSince1970
-            let dt = max(1, span.upperBound.timeIntervalSince1970 - t0)
-            let slot = size.width / CGFloat(max(1, dt / 300))
-            let barW = max(1.5, min(5, slot - 1))
-
-            for (at, v) in buckets {
-                let x = CGFloat((at.timeIntervalSince1970 - t0) / dt) * size.width
-                let h = max(1, CGFloat(Double(v) / peak) * size.height)
-                let rect = CGRect(x: x, y: size.height - h, width: barW, height: h)
-                ctx.fill(Path(roundedRect: rect, cornerRadius: 1),
-                         with: .color(Ink.ember.opacity(0.8)))
-            }
-        }
-        .frame(height: height)
-    }
-}
-
 /// Machine CPU over the last minute or so.
 struct Sparkline: View {
     let values: [Double]
@@ -246,26 +217,6 @@ struct StatusDot: View {
                     pulse = true
                 }
             }
-    }
-}
-
-struct SectionHead: View {
-    let title: String
-    var trailing: String?
-
-    var body: some View {
-        HStack {
-            Text(title.uppercased())
-                .font(Type.section)
-                .tracking(0.6)
-                .foregroundStyle(.tertiary)
-            Spacer()
-            if let trailing {
-                Text(trailing)
-                    .font(Type.labelTiny)
-                    .foregroundStyle(.tertiary)
-            }
-        }
     }
 }
 

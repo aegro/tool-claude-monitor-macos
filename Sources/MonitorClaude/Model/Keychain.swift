@@ -63,6 +63,17 @@ enum Keychain {
     /// The decoded top-level object of the `Claude Code-credentials` item. Read-only: we ask
     /// for the data, decode it, and never write it back.
     private static func readItem() throws -> [String: Any] {
+        // Dev builds and previews read through /usr/bin/security, the tool the item's ACL already trusts, so an
+        // unsigned binary never raises a Keychain prompt.
+        if ProcessInfo.processInfo.environment["MONITOR_CLAUDE_KEYCHAIN_VIA_SECURITY"] == "1" {
+            let result = AccountRouter.run(URL(fileURLWithPath: "/usr/bin/security"),
+                                           ["find-generic-password", "-s", service, "-w"], timeout: 8)
+            guard result.ok else { throw Failure.notFound }
+            guard let root = try? JSONSerialization.jsonObject(
+                with: Data(result.output.trimmingCharacters(in: .whitespacesAndNewlines).utf8)) as? [String: Any]
+            else { throw Failure.malformed }
+            return root
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

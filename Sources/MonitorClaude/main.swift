@@ -194,7 +194,23 @@ if CommandLine.arguments.contains("--test-awake") {
     exit(0)
 }
 
-if CommandLine.arguments.contains("--preview") {
+// --render=<panel:tab|settings:tab|wizard:step> <saída.png> [--dark] [--wait=N]: draws one screen into a PNG in an
+// off-screen window, with the real data, without the menu bar and without a visible window (works on a locked
+// screen too). Read-only, like --preview.
+if let target = CommandLine.arguments.first(where: { $0.hasPrefix("--render=") }) {
+    let args = CommandLine.arguments
+    let out = args.first { $0.hasSuffix(".png") } ?? "render.png"
+    let dark = args.contains("--dark")
+    let wait = args.first { $0.hasPrefix("--wait=") }.flatMap { Double($0.dropFirst("--wait=".count)) } ?? 6
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    MainActor.assumeIsolated {
+        Renderer.render(PreviewTarget(arguments: ["--preview=" + target.dropFirst("--render=".count)]),
+                        to: URL(fileURLWithPath: out), dark: dark, wait: wait)
+    }
+    exit(0)
+}
+
+if CommandLine.arguments.contains(where: { $0 == "--preview" || $0.hasPrefix("--preview=") }) {
     NSApplication.shared.setActivationPolicy(.regular)
     PreviewApp.main()
 } else {

@@ -61,12 +61,19 @@ struct MenuBarLabel: View {
                     // that stopped moving hours ago.
                     pace: current ? session.paceTarget / 100 : 0,
                     tint: nsTone,
-                    hot: showCPU ? false : monitor.system.cpuPercent > 60
+                    hot: showCPU ? false : monitor.system.cpuPercent > 60,
+                    alert: monitor.access.attention > 0
                 ))
                 Text("\(Int(session.utilization.rounded()))%\(current ? "" : "·")")
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(tone)
                     .modifier(StaleHint(text: current ? nil : staleHelp))
+                // Off the head of the queue, the menu bar says which account new sessions open on.
+                if let monogram = monitor.menuBarMonogram {
+                    Text(monogram)
+                        .font(.system(size: 9.5, weight: .bold))
+                        .help("Sessões novas abrem nesta conta")
+                }
             } else if showLimit {
                 Image(systemName: "gauge.with.dots.needle.33percent")
             }
@@ -99,7 +106,7 @@ private struct StaleHint: ViewModifier {
 enum RingIcon {
     /// A ring filled to the limit used, with a notch at the sustainable pace and, when the
     /// machine is loaded, an ember dot at the corner.
-    static func make(fraction: Double, pace: Double, tint: NSColor, hot: Bool) -> NSImage {
+    static func make(fraction: Double, pace: Double, tint: NSColor, hot: Bool, alert: Bool = false) -> NSImage {
         let side: CGFloat = 15
         let image = NSImage(size: NSSize(width: hot ? side + 5 : side, height: side))
 
@@ -145,6 +152,13 @@ enum RingIcon {
         if hot {
             let dot = NSBezierPath(ovalIn: NSRect(x: side + 0.5, y: side / 2 - 1.75,
                                                   width: 3.5, height: 3.5))
+            NSColor(Ink.ember).setFill()
+            dot.fill()
+        }
+
+        // Something in Acessos needs the person: a small dot at the ring's top right.
+        if alert {
+            let dot = NSBezierPath(ovalIn: NSRect(x: side - 5, y: side - 5, width: 5, height: 5))
             NSColor(Ink.ember).setFill()
             dot.fill()
         }

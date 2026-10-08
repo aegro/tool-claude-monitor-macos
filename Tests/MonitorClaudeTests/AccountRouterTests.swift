@@ -359,6 +359,19 @@ struct AccountRouterTests {
         #expect(permissions?.intValue == 0o600)
     }
 
+    @Test func ritmoQueNãoPôdeSerPublicadoNãoDeixaTemporário() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let estado = dir.appendingPathComponent(".estado")
+        let url = estado.appendingPathComponent("ritmo.json")
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("ocupado"), withIntermediateDirectories: true)
+        let rate = SlotBurnRate(account: "u:o", window: "cinco", pointsPerMinute: 1, used: 90,
+                                usedAt: Date(timeIntervalSince1970: 1_791_399_940), at: Date(timeIntervalSince1970: 1_791_400_000))
+
+        #expect(throws: (any Error).self) { try AccountRouter.publish(rate, to: url) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: estado.path) == ["ritmo.json"])
+    }
+
     @Test func ritmoRetiradoSomeDoDisco() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }

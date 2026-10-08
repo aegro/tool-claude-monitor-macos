@@ -331,8 +331,18 @@ enum AccountRouter {
         encoder.outputFormatting = .sortedKeys
         let data = try encoder.encode(rate)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let temporary = "\(url.path).\(getpid()).\(UUID().uuidString).tmp"
+        let descriptor = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        do {
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            try handle.write(contentsOf: data)
+            try handle.close()
+            guard rename(temporary, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        } catch {
+            unlink(temporary)
+            throw error
+        }
     }
 
     static func withdrawSlotBurnRate(at url: URL = slotBurnRateURL) {

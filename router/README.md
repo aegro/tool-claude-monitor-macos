@@ -10,7 +10,7 @@ Roteador de contas do Claude Code que vem dentro do Monitor Claude. Escolhe a co
 claude-accounts add <id> [--name N] [--reserve]
 claude-accounts login <id>
 claude-accounts status | pick | switches | release <id> | sync | env <id> | run <id>
-claude-accounts on | off      # o mesmo botão de Configurações → Troca de conta
+claude-accounts on | off      # o mesmo botão de Troca automática do Monitor
 ```
 
 Config em `~/.claude-accounts/config.json`:
@@ -21,7 +21,9 @@ Config em `~/.claude-accounts/config.json`:
 | `principal` | `"principal"` | id da conta que usa o próprio `~/.claude` |
 | `rota` | `["principal"]` | contas usadas normalmente; vence a de maior folga |
 | `reserva` | `[]` | só entra quando todas da rota estão abaixo de `limites.reserva` |
-| `preferida` | nenhuma | conta usada primeiro sempre que tem folga; veja [Conta preferida](#conta-preferida) |
+| `preferida` | nenhuma | conta usada primeiro sempre que tem folga; veja [Conta preferida](#conta-preferida). A fila do Monitor grava aqui a primeira da rota na regra “A do topo primeiro” e tira a chave na “A de mais folga” |
+| `contas.<id>.nome` | o id | nome da conta nas notificações, no `status` e no Monitor |
+| `contas.<id>.sigla` | iniciais do nome | duas letras que o Monitor mostra no avatar e na barra de menu; o roteador não usa |
 | `limites.reserva` | `3` | folga (%) abaixo da qual a reserva entra e a preferida deixa de ser escolhida |
 | `limites.preventiva` | `5` | folga (%) abaixo da qual a troca preventiva dispara (stream-json no fim do turno; `claude agents` só enquanto o ritmo de uso é desconhecido) |
 | `limites.horizonteMinutos` | `2` | minutos à frente que o `claude agents` projeta a folga pelo ritmo de uso |
@@ -38,11 +40,12 @@ Folga é 100% menos o maior uso entre as janelas de 5h e de 7 dias. Conta que ba
 
 - **Stream-json (T3 Code, Agent SDK).** O `claude-auto` fica entre o cliente e o `claude`, lendo as mensagens. Num `rate_limit_event` rejeitado ou num erro de conta (autenticação, cobrança), ele segura o erro, encerra o processo, reabre a mesma sessão com `--resume` na próxima conta, repete o `initialize` e os ajustes da sessão e manda continuar. Subagentes e Workflows que estavam rodando entram na mensagem, com a instrução de relançar (Workflow com `resumeFromRunId`). No fim de cada turno, se a folga ficou abaixo de `limites.preventiva`, troca antes de falhar, esperando as tarefas em segundo plano acabarem.
 - **Terminal.** Com `alias claude=claude-auto`, a sessão interativa roda dentro de um supervisor com pty (`lib/tui.py`). Quando a tela mostra o aviso de limite (`You've hit your … limit`), ele fecha o processo, reabre a mesma sessão com `--resume` na conta com mais folga e digita a mensagem de continuação. `CLAUDE_AUTO_SEM_SUPERVISOR=1` desliga.
+- **VS Code.** Com `claudeCode.claudeProcessWrapper` apontando para o `claude-auto` (o Monitor grava isso em Ajustes → Integrações), a extensão roda `claude-auto <claude da extensão> <argumentos>`. Um primeiro argumento que é um caminho absoluto para um executável chamado `claude` vira o binário a usar (`CLAUDE_AUTO_CLAUDE_BIN`) e sai da lista de argumentos; se esse caminho é o próprio `claude-auto`, ele só sai da lista. O resto segue como no stream-json.
 - **T3 abrindo sessão nova numa thread.** Se o T3 manda `--session-id` novo numa thread que já tinha conversa, o `claude-auto` acha a sessão anterior em `~/.t3/userdata/statev2.sqlite` e abre com `--resume=<anterior> --fork-session --session-id=<nova>`: o histórico volta e o id que o T3 espera é mantido.
 - **`claude agents`.** Veja a seção abaixo.
 - **`-p`** só escolhe a conta ao abrir.
 
-Cada troca vai para `~/.claude-accounts/.estado/trocas.jsonl`, para o log `claude-auto.log` e vira notificação.
+Cada troca vai para `~/.claude-accounts/.estado/trocas.jsonl`, para o log `claude-auto.log` e vira notificação, com o nome das contas, o motivo e a hora em que a anterior volta: “Trocou para Thomas (Max)” e “Thomas (Aegro) bateu o limite de 5h. Volta às 18:59.” A volta para a preferida diz “Voltou para …”, e a troca dos agentes acrescenta “Os agentes seguiram junto.”
 
 ## Troca no `claude agents`
 
@@ -69,10 +72,10 @@ A troca guarda uma impressão (hash) do refresh token que está em `~/.claude` n
 
 ## Conta preferida
 
-`preferida` na config, ou **Conta preferida** em Configurações → Troca de conta (**Nenhuma** remove a chave). Ela é escolhida sempre que está logada, não está esgotada e tem folga de pelo menos `limites.reserva`; fora isso vale a conta com mais folga, como sem preferida.
+`preferida` na config. No Monitor, é a primeira conta da fila na regra **A do topo primeiro**; a regra **A de mais folga** remove a chave. Ela é escolhida sempre que está logada, não está esgotada e tem folga de pelo menos `limites.reserva`; fora isso vale a conta com mais folga, como sem preferida.
 
 - **Sessão nova** (terminal, T3 e `-p`) começa nela.
-- **`claude agents`**: o login de `~/.claude` é um só para todos os agentes, então ele só volta para a preferida pela regra de volta. A cada 5 minutos, sem agente parado por limite, e a cada `claude agents`/`--bg`, a preferida é conferida; trocar a conta preferida nos Ajustes dispara a conferência na hora. Se ela não está esgotada, está logada e voltou a ter `limites.voltar` de folga, o login de `~/.claude` volta para ela e os agentes ociosos são reiniciados nela. Agente no meio de um turno não é interrompido: muda quando ficar ocioso. Precisa do login de agentes da preferida.
+- **`claude agents`**: o login de `~/.claude` é um só para todos os agentes, então ele só volta para a preferida pela regra de volta. A cada 5 minutos, sem agente parado por limite, e a cada `claude agents`/`--bg`, a preferida é conferida; mudar a primeira da fila ou a regra no Monitor dispara a conferência na hora. Se ela não está esgotada, está logada e voltou a ter `limites.voltar` de folga, o login de `~/.claude` volta para ela e os agentes ociosos são reiniciados nela. Agente no meio de um turno não é interrompido: muda quando ficar ocioso. Precisa do login de agentes da preferida.
 - **T3 e stream-json**: no fim de um turno, sem subagente nem Workflow rodando, confere a mesma regra no máximo uma vez por minuto e volta como na troca preventiva, sem mensagem de continuação. Instância com `CLAUDE_AUTO_CONTA` fica na conta pedida.
 - **Terminal já aberto** não volta: fica na conta atual até o próximo limite.
 

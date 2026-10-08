@@ -105,6 +105,10 @@ final class Monitor: ObservableObject {
     private var usageInterval: TimeInterval { Settings.shared.usageIntervalSeconds }
     /// Extra accounts the server asked us to stop asking about for a while (HTTP 429), and until when.
     private var probePausedUntil: [String: Date] = [:]
+    /// A router edit is being written; the next one waits for it instead of racing it.
+    @Published private(set) var savingRouter = false
+    /// What the terminal feed last failed with, typed, so the access check does not read error text.
+    private var terminalFailure: Error?
     private let ledgerInterval: TimeInterval = 20
 
     init() {
@@ -224,13 +228,14 @@ final class Monitor: ObservableObject {
         integrations = IntegrationsState.read()
     }
 
-    /// The terminal login problem in words, when the Keychain read itself is what failed.
+    /// The terminal login problem in words: the Keychain has no usable login, or the server refused the token.
     private var claudeLoginProblem: String? {
-        guard case .broken = feeds.terminal, let error = usageError else { return nil }
-        let lower = error.lowercased()
-        guard lower.contains("expir") || lower.contains("venc") || lower.contains("keychain") || lower.contains("login")
-                || lower.contains("token") else { return nil }
-        return error
+        guard case .broken = feeds.terminal, let error = terminalFailure else { return nil }
+        switch error {
+        case let failure as Keychain.Failure: return failure.errorDescription
+        case UsageError.unauthorized: return UsageError.unauthorized.errorDescription
+        default: return nil
+        }
     }
 
     func watchAgentsNow() {
@@ -424,6 +429,7 @@ final class Monitor: ObservableObject {
             apiSnapshot = snap
             apiSnapshotOrg = identity?.organizationUuid
             usageError = nil
+            terminalFailure = nil
             feeds.terminal = .live(at: snap.fetchedAt)
 
             if let id = identity {
@@ -432,6 +438,7 @@ final class Monitor: ObservableObject {
                                 snapshot: snap, at: snap.fetchedAt)
             }
         } catch {
+            terminalFailure = error
             usageError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             feeds.terminal = .broken(FeedState.shortReason(for: error))
         }
@@ -745,7 +752,8 @@ final class Monitor: ObservableObject {
                 isLive: live)
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
-                            reserveBelow: router.config.reserveBelow, configured: true)
+                            reserveBelow: router.config.reserveBelow, configured: true,
+                            principal: router.config.principal)
     }
 
     /// The monogram the menu bar shows: only when new sessions are not opening on the head of the queue.
@@ -756,20 +764,25 @@ final class Monitor: ObservableObject {
     }
 
     func moveAccount(_ id: String, to index: Int) async {
-        let q = accountQueue
-        let ids = q.route.map(\.id) + q.reserve.map(\.id)
-        guard let moved = AccountQueue.moving(ids, reserveFrom: q.route.count, id: id, to: index) else {
-            actionError = "A fila precisa de pelo menos uma conta fora da reserva."
-            return
+        // The move is computed inside the save, from the config on disk, so two quick moves never build on the
+        // same stale order.
+        await save {
+            guard let config = AccountRouter.loadConfig() else { throw AccountRouter.UnreadableConfig() }
+            let ids = config.route.map(\.id) + config.reserve.map(\.id)
+            guard let moved = AccountQueue.moving(ids, reserveFrom: config.route.count, id: id, to: index) else {
+                throw AccountRouter.EmptyRoute()
+            }
+            try AccountRouter.saveQueue(route: moved.route, reserve: moved.reserve, strategy: config.strategy)
         }
-        await save { try AccountRouter.saveQueue(route: moved.route, reserve: moved.reserve, strategy: q.strategy) }
         // A new head of the queue is a new preferred account: the agents check it now, not in five minutes.
         watchAgentsNow()
     }
 
     func setStrategy(_ strategy: AccountRouter.Strategy) async {
-        let route = accountQueue.route.map(\.id)
-        await save { try AccountRouter.setStrategy(strategy, route: route) }
+        await save {
+            guard let config = AccountRouter.loadConfig() else { throw AccountRouter.UnreadableConfig() }
+            try AccountRouter.setStrategy(strategy, route: config.route.map(\.id))
+        }
         watchAgentsNow()
     }
 
@@ -785,14 +798,33 @@ final class Monitor: ObservableObject {
         await save { try AccountRouter.renameAccount(id, name: name, monogram: monogram) }
     }
 
+    /// One router edit at a time, then the config is read back into the panel right away. The usage stays as it
+    /// was: an edit to the queue changes no number, and a fresh poll would only spend the endpoint.
     private func save(_ change: @escaping @Sendable () throws -> Void) async {
+        guard !savingRouter else { return }
+        savingRouter = true
+        defer { savingRouter = false }
         do {
             try await Task.detached(priority: .userInitiated) { try change() }.value
             actionError = nil
         } catch {
             actionError = error.localizedDescription
         }
-        await refreshUsage(force: true)
+        reloadRouterConfig()
+    }
+
+    private func reloadRouterConfig() {
+        guard var state = router, let config = AccountRouter.loadConfig(), config.hasExtraAccounts else {
+            Task { await refreshUsage(force: true) }
+            return
+        }
+        state.config = config
+        state.pick = config.enabled
+            ? AccountRouter.pick(config, headroom: state.usage.mapValues { AccountRouter.headroom($0) },
+                                 available: state.available, exhausted: state.exhausted)
+            : nil
+        state.switches = AccountRouter.switches(limit: 20)
+        router = state
     }
 
     // MARK: assistant and actions

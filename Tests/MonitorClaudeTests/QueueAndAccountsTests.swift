@@ -171,11 +171,40 @@ struct QueueAndAccountsTests {
         #expect(q.next(after: "compare") == nil)
     }
 
-    @Test func trocaDesligadaFicaNaCabecaDaFilaSemProxima() {
+    @Test func trocaDesligadaAbreNaPrincipalSemProxima() {
         let q = AccountQueue(entries: [entry("aegro", used: 100), entry("max", used: 0)],
                              strategy: .order, enabled: false, configured: true)
         #expect(q.newSessions() == "aegro")
         #expect(q.next(after: "aegro") == nil)
+        // Plain claude opens on ~/.claude, whatever the order of the queue.
+        let moved = AccountQueue(entries: [entry("max", used: 0), entry("aegro", used: 10)],
+                                 strategy: .order, enabled: false, configured: true, principal: "aegro")
+        #expect(moved.newSessions() == "aegro")
+        let gone = AccountQueue(entries: [entry("max", used: 0)], strategy: .order, enabled: false, configured: true,
+                                principal: "sumiu")
+        #expect(gone.newSessions() == "max")
+    }
+
+    // MARK: commands
+
+    @Test func comandoNaoEsperaUmAjudanteQueFicouComOPipe() throws {
+        let pidFile = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-ajudante-\(UUID().uuidString)")
+        let started = Date()
+        let result = AccountRouter.run(URL(fileURLWithPath: "/bin/sh"),
+                                       ["-c", "sleep 30 & echo $! > '\(pidFile.path)'; echo pronto"], timeout: 20)
+        #expect(Date().timeIntervalSince(started) < 6)
+        #expect(result.ok && result.output.contains("pronto"))
+        if let pid = pid_t((try? String(contentsOf: pidFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") {
+            kill(pid, SIGKILL)
+        }
+    }
+
+    @Test func comandoQuePassaDoPrazoEEncerrado() {
+        let started = Date()
+        let result = AccountRouter.run(URL(fileURLWithPath: "/bin/sh"), ["-c", "echo antes; exec sleep 30"], timeout: 1)
+        #expect(Date().timeIntervalSince(started) < 6)
+        #expect(!result.ok)
+        #expect(result.output.contains("antes"))
     }
 
     @Test func moverDentroDaRotaParaAReservaEDeVolta() throws {

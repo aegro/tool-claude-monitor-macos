@@ -310,11 +310,11 @@ enum Integrations {
 
     struct EditedByHand: LocalizedError {
         var file: String
-        var errorDescription: String? { "o alias está no \(file) escrito à mão; o Monitor não mexe nele" }
+        var errorDescription: String? { "O alias está no \(file), escrito à mão. O Monitor não mexe nele." }
     }
 
     struct UnreadableSettings: LocalizedError {
-        var errorDescription: String? { "o settings.json do VS Code não é um JSON válido; corrija antes de ligar" }
+        var errorDescription: String? { "O settings.json do VS Code não é um JSON válido. Corrija o arquivo antes de ligar." }
     }
 
     /// Keeps the previous version as `<file>.monitor-claude.bak` and writes the new one atomically.

@@ -63,7 +63,8 @@ final class MCPUsageScanner: @unchecked Sendable {
     private static let needle = Data(#""name":"mcp__"#.utf8)
     private static let chunk = 4 * 1024 * 1024
 
-    /// Server key → the newest modification time of a transcript that used it, within `window`.
+    /// Server key → when a transcript last called it, within `window`: the line's own `timestamp`, or the file's
+    /// modification time when the line has none.
     func scan(root: URL, window: TimeInterval = 7 * 86_400, now: Date = Date()) -> [String: Date] {
         lock.lock()
         defer { lock.unlock() }
@@ -82,8 +83,9 @@ final class MCPUsageScanner: @unchecked Sendable {
             var from = progress[path] ?? 0
             if size < from { from = 0 }
             guard size > from else { continue }
-            for key in Self.servers(in: url, from: from) {
-                if (lastUse[key] ?? .distantPast) < modified { lastUse[key] = modified }
+            for (key, at) in Self.uses(in: url, from: from) {
+                let used = at == .distantPast ? modified : min(at, modified)
+                if (lastUse[key] ?? .distantPast) < used { lastUse[key] = used }
             }
             progress[path] = size
         }
@@ -91,38 +93,65 @@ final class MCPUsageScanner: @unchecked Sendable {
         return lastUse
     }
 
-    static func servers(in url: URL, from offset: UInt64) -> Set<String> {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+    static func uses(in url: URL, from offset: UInt64) -> [String: Date] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [:] }
         defer { try? handle.close() }
-        do { try handle.seek(toOffset: offset) } catch { return [] }
-        var found = Set<String>()
+        do { try handle.seek(toOffset: offset) } catch { return [:] }
+        var found: [String: Date] = [:]
         var carry = Data()
         while let block = try? handle.read(upToCount: chunk), !block.isEmpty {
             var data = carry
             data.append(block)
-            found.formUnion(servers(in: data))
+            found.merge(uses(in: data)) { max($0, $1) }
             carry = data.count > 256 ? data.suffix(256) : data
         }
         return found
     }
 
-    static func servers(in data: Data) -> Set<String> {
-        var found = Set<String>()
+    static func servers(in data: Data) -> Set<String> { Set(uses(in: data).keys) }
+
+    /// Server key → the newest `timestamp` of a line in `data` that called it; `.distantPast` when the line has none.
+    static func uses(in data: Data) -> [String: Date] {
+        var found: [String: Date] = [:]
         var start = data.startIndex
         while let hit = data.range(of: needle, in: start..<data.endIndex) {
+            start = hit.upperBound
             var i = hit.upperBound
             var name = [UInt8]()
+            var terminated = false
             while i < data.endIndex, name.count < 120 {
                 let b = data[i]
-                if b == UInt8(ascii: "_"), i + 1 < data.endIndex, data[i + 1] == UInt8(ascii: "_") { break }
-                if b == UInt8(ascii: "\"") { name.removeAll(); break }
+                if b == UInt8(ascii: "_"), i + 1 < data.endIndex, data[i + 1] == UInt8(ascii: "_") { terminated = true; break }
+                if b == UInt8(ascii: "\"") { break }
                 name.append(b)
                 i += 1
             }
-            if !name.isEmpty { found.insert(String(decoding: name, as: UTF8.self)) }
-            start = hit.upperBound
+            // A name the end of the block cut short is read again, whole, with the next block.
+            guard terminated, !name.isEmpty else { continue }
+            let key = String(decoding: name, as: UTF8.self)
+            let at = timestamp(around: hit.lowerBound, in: data) ?? .distantPast
+            if (found[key] ?? .distantPast) <= at { found[key] = at }
         }
         return found
+    }
+
+    private static let stamp = Data(#""timestamp":""#.utf8)
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    /// The `timestamp` of the transcript line that holds `index`.
+    static func timestamp(around index: Data.Index, in data: Data) -> Date? {
+        let newline = UInt8(ascii: "\n")
+        let lineStart = data[..<index].lastIndex(of: newline).map { $0 + 1 } ?? data.startIndex
+        let lineEnd = data[index...].firstIndex(of: newline) ?? data.endIndex
+        guard let field = data.range(of: stamp, in: lineStart..<lineEnd),
+              let quote = data[field.upperBound..<lineEnd].firstIndex(of: UInt8(ascii: "\""))
+        else { return nil }
+        let text = String(decoding: data[field.upperBound..<quote], as: UTF8.self)
+        return iso.date(from: text) ?? ISO8601DateFormatter.flexible.date(from: text)
     }
 }
 

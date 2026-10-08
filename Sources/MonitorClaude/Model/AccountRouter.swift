@@ -166,7 +166,7 @@ enum AccountRouter {
 
     struct UnreadableConfig: LocalizedError {
         var errorDescription: String? {
-            "o arquivo não é um JSON válido; corrija ou apague antes de mudar a troca de conta"
+            "O config.json do roteador não é um JSON válido. Corrija ou apague o arquivo antes de mudar a troca de conta."
         }
     }
 
@@ -209,7 +209,7 @@ enum AccountRouter {
     }
 
     struct EmptyRoute: LocalizedError {
-        var errorDescription: String? { "a fila precisa de pelo menos uma conta fora da reserva" }
+        var errorDescription: String? { "A fila precisa de pelo menos uma conta fora da reserva." }
     }
 
     /// Two letters for the menu bar and the avatar: the initials of a name with two words or more, the first two
@@ -253,7 +253,7 @@ enum AccountRouter {
 
     struct ConfigBusy: LocalizedError {
         var errorDescription: String? {
-            "outro processo está mudando a config agora; tente de novo"
+            "Outro processo está mudando a config do roteador agora. Tente de novo."
         }
     }
 
@@ -521,25 +521,27 @@ enum AccountRouter {
         process.standardOutput = out
         process.standardError = err
         process.standardInput = FileHandle.nullDevice
+        // Both pipes drain as the command writes, so one that fills stderr never blocks on it.
+        let output = PipeCollector(out.fileHandleForReading)
+        let errors = PipeCollector(err.fileHandleForReading)
         do { try process.run() } catch {
             return CommandResult(status: 127, output: "", error: error.localizedDescription)
         }
-        // On a timeout the whole tree goes: a grandchild that inherited the pipes would keep them open, and the
-        // reads below would wait for it instead of for the deadline.
+        let pid = process.processIdentifier
         let stop = DispatchWorkItem {
+            terminateDescendants(of: pid)
             guard process.isRunning else { return }
-            terminateDescendants(of: process.processIdentifier)
             process.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { if process.isRunning { kill(pid, SIGKILL) } }
         }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: stop)
-        // Both pipes drain at once, so a command that fills stderr never blocks on it while stdout is being read.
-        let errData = PipeReader(err.fileHandleForReading)
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         stop.cancel()
+        // A helper the command left behind can keep the pipes open after it exits: the output gets a moment to
+        // end, and then it is whatever arrived.
         return CommandResult(status: process.terminationStatus,
-                             output: String(decoding: outData, as: UTF8.self),
-                             error: String(decoding: errData.wait(), as: UTF8.self))
+                             output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
+                             error: String(decoding: errors.finish(waiting: 2), as: UTF8.self))
     }
 
     /// Sends SIGTERM to everything under `pid`, deepest first, and leaves `pid` itself alone.
@@ -691,20 +693,35 @@ struct RouterState: Equatable {
 
     func isRouted(_ key: String?) -> Bool { key != nil && key == pickKey }}
 
-/// Reads a pipe to its end on a background queue; `wait()`, called once, returns what it read.
-final class PipeReader: @unchecked Sendable {
+/// Collects what arrives on a pipe as it arrives. `finish(waiting:)` waits up to that long for the end of the
+/// output and returns what came, so a pipe someone else still holds open never blocks the caller for good.
+final class PipeCollector: @unchecked Sendable {
     private var data = Data()
-    private let done = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private let ended = DispatchSemaphore(value: 0)
+    private let handle: FileHandle
 
     init(_ handle: FileHandle) {
-        DispatchQueue.global(qos: .utility).async { [self] in
-            data = handle.readDataToEndOfFile()
-            done.signal()
+        self.handle = handle
+        handle.readabilityHandler = { [weak self] h in
+            let chunk = h.availableData
+            guard let self else { return }
+            guard !chunk.isEmpty else {
+                h.readabilityHandler = nil
+                self.ended.signal()
+                return
+            }
+            self.lock.lock()
+            self.data.append(chunk)
+            self.lock.unlock()
         }
     }
 
-    func wait() -> Data {
-        done.wait()
+    func finish(waiting seconds: TimeInterval) -> Data {
+        _ = ended.wait(timeout: .now() + seconds)
+        handle.readabilityHandler = nil
+        lock.lock()
+        defer { lock.unlock() }
         return data
     }
 }

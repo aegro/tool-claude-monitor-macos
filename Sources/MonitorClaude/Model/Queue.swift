@@ -30,6 +30,9 @@ struct AccountQueue: Equatable {
     var reserveBelow: Double = 3
     /// The queue comes from the router's config; without one there is a single, implicit entry.
     var configured: Bool
+    /// The account in `~/.claude`: with switching off, the router hands everything to plain `claude`, which opens
+    /// there whatever the order of the queue.
+    var principal: String?
 
     var route: [Entry] { entries.filter { $0.role == .route } }
     var reserve: [Entry] { entries.filter { $0.role == .reserve } }
@@ -59,9 +62,11 @@ struct AccountQueue: Equatable {
                                   exhausted: exhausted)
     }
 
-    /// Where a session opened now lands. With switching off, always the head of the queue.
+    /// Where a session opened now lands. With switching off, always the principal (`~/.claude`).
     func newSessions(now: Date = Date()) -> String? {
-        guard enabled, configured, !isSingle else { return entries.first?.id }
+        guard enabled, configured, !isSingle else {
+            return principal.flatMap { id in entries.contains { $0.id == id } ? id : nil } ?? entries.first?.id
+        }
         return pick(excluding: [], now: now)
     }
 

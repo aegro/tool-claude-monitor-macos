@@ -177,10 +177,11 @@ final class AddAccountFlow: ObservableObject, Identifiable {
         onFinish?()
     }
 
-    /// Stops a login in flight and, for an account this assistant created and never finished, removes it again.
+    /// Stops a login in flight and, for an account this assistant created and never finished, removes it again:
+    /// logged in or not, it is not in the queue the person asked for (a duplicate organization, say).
     func cancel() {
         stopLogin()
-        if created, let id = accountId, identity == nil {
+        if created, let id = accountId {
             try? AccountRouter.discard(id)
         }
         created = false
@@ -231,6 +232,16 @@ final class AddAccountFlow: ObservableObject, Identifiable {
         }
         process.terminationHandler = { [weak self] p in
             output.fileHandleForReading.readabilityHandler = nil
+            // The last lines, usually the reason it stopped, may still be in the pipe: read what is there now,
+            // without waiting on a pipe something else might hold open.
+            let fd = output.fileHandleForReading.fileDescriptor
+            _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+            var buffer = [UInt8](repeating: 0, count: 16_384)
+            while true {
+                let n = read(fd, &buffer, buffer.count)
+                guard n > 0 else { break }
+                _ = transcript.append(String(decoding: buffer[0..<n], as: UTF8.self))
+            }
             let status = p.terminationStatus
             let text = transcript.text
             Task { @MainActor in self?.loginEnded(attempt: current, status: status, agents: agents, transcript: text) }

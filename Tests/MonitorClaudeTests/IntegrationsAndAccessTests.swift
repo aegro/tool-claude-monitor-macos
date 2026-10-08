@@ -222,6 +222,31 @@ struct AccessTests {
                 == ["claude_ai_Slack", "plugin_github_github", "claude_ai_Plataforma_-_Aegro"])
     }
 
+    @Test func nomeCortadoNoFimDoBlocoNaoConta() {
+        #expect(MCPUsageScanner.servers(in: Data(#"{"name":"mcp__claude_ai_Slack__x"} {"name":"mcp__claude_ai_Sl"#.utf8))
+                == ["claude_ai_Slack"])
+    }
+
+    @Test func horaDoUsoVemDaLinhaENaoDoArquivo() throws {
+        let lines = [
+            #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__claude_ai_Slack__send"}]},"timestamp":"2026-10-01T12:00:00.000Z"}"#,
+            #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__claude_ai_Slack__read"}]},"timestamp":"2026-10-03T08:30:00.500Z"}"#,
+            #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__claude_ai_Gmail__x"}]}}"#,
+        ].joined(separator: "\n")
+        let uses = MCPUsageScanner.uses(in: Data(lines.utf8))
+        #expect(uses["claude_ai_Slack"] == ISO8601DateFormatter().date(from: "2026-10-03T08:30:00Z")?.addingTimeInterval(0.5))
+        #expect(uses["claude_ai_Gmail"] == .distantPast)
+
+        // A transcript still being written today does not make a connector used weeks ago look recent.
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("monitor-transcripts-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        let old = #"{"name":"mcp__claude_ai_Figma__x","timestamp":"2026-09-01T10:00:00.000Z"}"#
+        let recent = #"{"name":"mcp__claude_ai_Slack__x","timestamp":"\#(ISO8601DateFormatter().string(from: Date()))"}"#
+        try Data((old + "\n" + recent + "\n").utf8).write(to: root.appendingPathComponent("s.jsonl"))
+        #expect(Set(MCPUsageScanner().scan(root: root).keys) == ["claude_ai_Slack"])
+    }
+
     @Test func varreduraLeSoOQueCresceuEIgnoraOAntigo() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("monitor-transcripts-\(UUID().uuidString)")

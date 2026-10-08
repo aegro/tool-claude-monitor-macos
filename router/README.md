@@ -23,7 +23,9 @@ Config em `~/.claude-accounts/config.json`:
 | `reserva` | `[]` | só entra quando todas da rota estão abaixo de `limites.reserva` |
 | `preferida` | nenhuma | conta usada primeiro sempre que tem folga; veja [Conta preferida](#conta-preferida) |
 | `limites.reserva` | `3` | folga (%) abaixo da qual a reserva entra e a preferida deixa de ser escolhida |
-| `limites.preventiva` | `5` | folga (%) no fim do turno que dispara a troca preventiva (stream-json) |
+| `limites.preventiva` | `5` | folga (%) abaixo da qual a troca preventiva dispara (stream-json no fim do turno; `claude agents` só enquanto o ritmo de uso é desconhecido) |
+| `limites.horizonteMinutos` | `2` | minutos à frente que o `claude agents` projeta a folga pelo ritmo de uso |
+| `limites.margem` | `2` | folga (%) projetada no horizonte que dispara a troca preventiva do `claude agents`; com a folga já nesse valor, troca sempre |
 | `limites.voltar` | `20` | folga (%) que a preferida precisa recuperar para as sessões voltarem para ela |
 | `cacheUsoSegundos` | `60` | idade máxima da leitura de cota antes de consultar de novo |
 | `notificar` | `true` | notificação do macOS a cada troca |
@@ -49,7 +51,9 @@ claude-accounts login <nome> --agents   # navegador; use janela anônima se já 
 claude-accounts agents                  # login de agentes de cada conta e onde os agentes rodam
 ```
 
-Quando um agente para por limite, o Monitor troca o login de `~/.claude` para a conta com mais folga, reinicia o agente e manda continuar. Conta sem login de agentes não entra na troca.
+A troca acontece antes do limite. A cada checagem (cerca de 30 s, com algum agente em segundo plano), o Monitor guarda a leitura de uso da conta dos agentes e mede o ritmo, em pontos percentuais por minuto, da janela que limita (5h ou 7 dias) pelas leituras dos últimos 10 minutos; leituras de antes de uma renovação da janela são descartadas. Quando a folga projetada para daqui a `limites.horizonteMinutos` (folga menos ritmo vezes horizonte) chega a `limites.margem`, ou a folga já está nesse valor, e outra conta com login de agentes tem mais folga, o login de `~/.claude` troca para ela. Com os padrões, uma conta gastando 4 pontos por minuto troca com 10% de folga e uma gastando pouco troca com 2%. Sem ritmo conhecido (menos de duas leituras), vale a regra fixa: folga abaixo de `limites.preventiva`. Os agentes ociosos são reiniciados na conta nova na hora; o que está no meio de um turno não é interrompido e muda quando ficar ocioso. A conta anterior não é marcada como esgotada, e folga desconhecida não dispara a troca.
+
+Se um turno gasta o resto da folga antes disso, vale a troca por limite: o Monitor troca o login de `~/.claude` para a conta com mais folga (ou usa a que já entrou pela troca preventiva), reinicia o agente e manda continuar. Conta sem login de agentes não entra na troca.
 
 ## Conta preferida
 

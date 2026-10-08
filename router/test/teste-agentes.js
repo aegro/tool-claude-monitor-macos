@@ -569,6 +569,87 @@ const testes = {
     const rotaMaisFolgada = candidatas({ principal: { folga: 30 }, segunda: { folga: 50 }, extra: { folga: 90 } });
     assert.strictEqual(agentes.alvoPreventivo(4, null, rotaMaisFolgada, cfg, 'extra').id, 'segunda');
   },
+  ritmoDoMonitorSoValeFrescoEDaContaDoSlot() {
+    const ritmo = { conta: 'u1:o1', janela: 'cinco', ppPorMinuto: 1.2, usado: 95, usadoEm: agora - 30000, em: agora - 60000 };
+    assert.strictEqual(agentes.ritmoDoMonitor(ritmo, 'u1:o1', agora), ritmo);
+    assert.strictEqual(agentes.ritmoDoMonitor({ ...ritmo, em: agora - 2 * 60000 }, 'u1:o1', agora).ppPorMinuto, 1.2);
+    assert.strictEqual(agentes.ritmoDoMonitor({ ...ritmo, em: agora - 2 * 60000 - 1 }, 'u1:o1', agora), null);
+    assert.strictEqual(agentes.ritmoDoMonitor(ritmo, 'u2:o2', agora), null);
+    assert.strictEqual(agentes.ritmoDoMonitor(ritmo, null, agora), null);
+    assert.strictEqual(agentes.ritmoDoMonitor({ ...ritmo, janela: 'semana' }, 'u1:o1', agora), null);
+    assert.strictEqual(agentes.ritmoDoMonitor({ ...ritmo, ppPorMinuto: '1.2' }, 'u1:o1', agora), null);
+    assert.strictEqual(agentes.ritmoDoMonitor({ ...ritmo, ppPorMinuto: -1 }, 'u1:o1', agora), null);
+    assert.strictEqual(agentes.ritmoDoMonitor({ ...ritmo, em: undefined }, 'u1:o1', agora), null);
+    assert.strictEqual(agentes.ritmoDoMonitor(null, 'u1:o1', agora), null);
+    assert.strictEqual(agentes.ritmoDoMonitor([ritmo], 'u1:o1', agora), null);
+  },
+  folgaProjetadaDescontaORitmoDesdeALeitura() {
+    assert.strictEqual(agentes.projetarFolga(10, agora - 4 * 60000, 1, agora), 6);
+    assert.strictEqual(agentes.projetarFolga(10, agora - 4 * 60000, 0, agora), 10);
+    assert.strictEqual(agentes.projetarFolga(3, agora - 10 * 60000, 1, agora), 0);
+    assert.strictEqual(agentes.projetarFolga(10, agora + 60000, 1, agora), 10);
+    assert.strictEqual(agentes.projetarFolga(10, agora - 4 * 60000, null, agora), 10);
+    assert.strictEqual(agentes.projetarFolga(null, agora - 4 * 60000, 1, agora), null);
+    assert.strictEqual(agentes.projetarFolga(10, null, 1, agora), 10);
+  },
+  leituraVelhaPor429UsaORitmoEOUsoDoMonitor() {
+    const cfg = configurar();
+    const velha = { ok: false, erro: 'HTTP 429', limitada: true, verificadoEm: agora, usoDe: agora - 8 * 60000, uso: sondaCom(-8, 90, 30).uso };
+    const leituras = agentes.guardarLeitura({}, 'principal', velha, agora).principal;
+    const semMonitor = agentes.folgaERitmo(velha, leituras, null, agora);
+    assert.deepStrictEqual(semMonitor, { folga: 10, ritmo: null, fonte: 'leituras' });
+    assert.strictEqual(agentes.deveTrocarAntes(semMonitor.folga, semMonitor.ritmo, cfg), false);
+
+    const monitor = { conta: 'u1:o1', janela: 'cinco', ppPorMinuto: 1.1, usado: 98, usadoEm: agora - 60000, em: agora };
+    const doMonitor = agentes.folgaERitmo(velha, leituras, monitor, agora);
+    assert.strictEqual(doMonitor.fonte, 'monitor');
+    assert.strictEqual(doMonitor.ritmo, 1.1);
+    assert.ok(Math.abs(doMonitor.folga - 0.9) < 1e-9);
+    assert.strictEqual(agentes.deveTrocarAntes(doMonitor.folga, doMonitor.ritmo, cfg), true);
+
+    const usoMaisVelho = { ...monitor, ppPorMinuto: 1, usado: 85, usadoEm: agora - 9 * 60000 };
+    const projetada = agentes.folgaERitmo(velha, leituras, usoMaisVelho, agora);
+    assert.deepStrictEqual(projetada, { folga: 2, ritmo: 1, fonte: 'monitor' });
+    assert.strictEqual(agentes.deveTrocarAntes(projetada.folga, projetada.ritmo, cfg), true);
+
+    const semUso = { conta: 'u1:o1', janela: 'cinco', ppPorMinuto: 0.5, em: agora };
+    assert.deepStrictEqual(agentes.folgaERitmo(velha, leituras, semUso, agora), { folga: 6, ritmo: 0.5, fonte: 'monitor' });
+  },
+  ritmoDoMonitorDeOutraJanelaNaoProjetaALeituraDoRoteador() {
+    const sonda = sondaCom(-1, 90, 30);
+    const monitor = { conta: 'u1:o1', janela: 'sete', ppPorMinuto: 3, usado: 31, usadoEm: agora - 5 * 60000, em: agora };
+    assert.deepStrictEqual(agentes.folgaERitmo(sonda, [], monitor, agora), { folga: 10, ritmo: null, fonte: 'leituras' });
+    const leituras = [leitura(-4, 86), leitura(0, 90)];
+    assert.deepStrictEqual(agentes.folgaERitmo(sondaCom(0, 90, 30), leituras, monitor, agora), { folga: 10, ritmo: 1, fonte: 'leituras' });
+  },
+  semLeituraDoRoteadorUsaOUsoDoMonitor() {
+    const monitor = { conta: 'u1:o1', janela: 'cinco', ppPorMinuto: 0.5, usado: 96, usadoEm: agora, em: agora };
+    assert.deepStrictEqual(agentes.folgaERitmo({ ok: false, verificadoEm: agora }, [], monitor, agora), { folga: 4, ritmo: 0.5, fonte: 'monitor' });
+    assert.deepStrictEqual(agentes.folgaERitmo({ ok: false, verificadoEm: agora }, [], null, agora), { folga: null, ritmo: null, fonte: 'leituras' });
+  },
+  voltaParaAPreferidaIgnoraLeituraDeAntesDaSaidaPreventiva() {
+    const cfg = configurar({ preferida: 'principal' });
+    const saida = { conta: 'principal', em: agora - 5 * 60000 };
+    const velha = { ok: false, verificadoEm: agora, usoDe: agora - 20 * 60000, uso: sondaCom(-20, 70, 30).uso };
+    const principal = { id: 'principal', papel: 'rota', folga: contas.folgaDe(velha, agora), sonda: velha, esgotada: null, logada: true };
+    const segunda = { id: 'segunda', papel: 'rota', folga: 80, sonda: sondaCom(0, 20, 10), esgotada: null, logada: true };
+    assert.strictEqual(principal.folga, 30);
+    assert.strictEqual(contas.preferidaDeVolta([principal, segunda], 'segunda', cfg).id, 'principal');
+    const ajustadas = [principal, segunda].map((c) => agentes.folgaParaVolta(c, saida, agora));
+    assert.strictEqual(ajustadas[0].folga, null);
+    assert.strictEqual(ajustadas[1], segunda);
+    assert.strictEqual(contas.preferidaDeVolta(ajustadas, 'segunda', cfg), null);
+
+    const nova = { ...principal, sonda: sondaCom(-1, 70, 30) };
+    assert.strictEqual(agentes.folgaParaVolta(nova, saida, agora), nova);
+    assert.strictEqual(agentes.folgaParaVolta(principal, null, agora), principal);
+    assert.strictEqual(agentes.folgaParaVolta(principal, { conta: 'extra', em: saida.em }, agora), principal);
+
+    const renovou = { ...velha, uso: { ...velha.uso, cinco: { usado: 70, renovaEm: agora - 60000 } } };
+    const renovada = { ...principal, sonda: renovou, folga: contas.folgaDe(renovou, agora) };
+    assert.strictEqual(agentes.folgaParaVolta(renovada, saida, agora), renovada);
+    assert.strictEqual(contas.preferidaDeVolta([renovada, segunda], 'segunda', cfg).id, 'principal');
+  },
 };
 
 (async () => {

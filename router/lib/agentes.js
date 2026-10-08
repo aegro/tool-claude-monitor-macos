@@ -14,12 +14,14 @@ const ARQ_SLOT = SLOT_PADRAO ? path.join(os.homedir(), '.claude.json') : path.jo
 const DIR_LOGINS = path.join(contas.DIR_ESTADO, 'agentes');
 const ARQ_ESTADO = path.join(contas.DIR_ESTADO, 'agentes.json');
 const DIR_TRAVA = path.join(contas.DIR_ESTADO, 'agentes.trava');
+const ARQ_RITMO_DO_MONITOR = path.join(contas.DIR_ESTADO, 'ritmo.json');
 const CONTA_KEYCHAIN = os.userInfo().username;
 const LIMITE_DA_LINHA_DO_SECURITY = 4032;
 const JANELA_DE_RETOMADA_MS = 6 * 3600 * 1000;
 const TENTATIVAS_DE_RETOMADA = 3;
 const JANELA_DO_RITMO_MS = 10 * 60 * 1000;
 const INTERVALO_MINIMO_DO_RITMO_MS = 2 * 60 * 1000;
+const VALIDADE_DO_RITMO_DO_MONITOR_MS = 2 * 60 * 1000;
 const TOLERANCIA_DA_RENOVACAO_MS = 60 * 1000;
 const FOLGA_DO_ACCESS_TOKEN_MS = 5 * 60 * 1000;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
@@ -212,9 +214,12 @@ function principalSemIdentidadeGuardada(cfg) {
   return SLOT_PADRAO && !(loginGuardado(cfg.principal) || {}).chave ? cfg.principal : null;
 }
 
+function chaveDoSlot() {
+  return chaveDe((contas.lerJson(ARQ_SLOT, {}) || {}).oauthAccount);
+}
+
 function contaNoSlot(cfg = contas.carregarConfig()) {
-  const chave = chaveDe((contas.lerJson(ARQ_SLOT, {}) || {}).oauthAccount);
-  return contaDaChave(chave, cfg) || principalSemIdentidadeGuardada(cfg);
+  return contaDaChave(chaveDoSlot(), cfg) || principalSemIdentidadeGuardada(cfg);
 }
 
 async function contaRealNoSlot(cfg = contas.carregarConfig()) {
@@ -289,11 +294,49 @@ function ritmoDeUso(leituras, chave, agora = Date.now()) {
   return (ultima.usado - primeira.usado) / ((ultima.em - primeira.em) / 60000);
 }
 
+function janelaQueLimita(uso, agora = Date.now()) {
+  return contas.usadoEfetivo(uso.sete, agora) > contas.usadoEfetivo(uso.cinco, agora) ? 'sete' : 'cinco';
+}
+
 function ritmoDaConta(leituras, sonda, agora = Date.now()) {
   const uso = sonda && sonda.uso;
   if (!uso) return null;
-  const chave = contas.usadoEfetivo(uso.sete, agora) > contas.usadoEfetivo(uso.cinco, agora) ? 'sete' : 'cinco';
-  return ritmoDeUso(leituras, chave, agora);
+  return ritmoDeUso(leituras, janelaQueLimita(uso, agora), agora);
+}
+
+function ritmoDoMonitor(ritmo, chave, agora = Date.now()) {
+  if (!ehObjeto(ritmo) || !chave || ritmo.conta !== chave) return null;
+  if (ritmo.janela !== 'cinco' && ritmo.janela !== 'sete') return null;
+  if (!Number.isFinite(ritmo.ppPorMinuto) || ritmo.ppPorMinuto < 0) return null;
+  if (!Number.isFinite(ritmo.em) || Math.abs(agora - ritmo.em) > VALIDADE_DO_RITMO_DO_MONITOR_MS) return null;
+  return ritmo;
+}
+
+function projetarFolga(folga, desde, ritmo, agora = Date.now()) {
+  if (folga == null || ritmo == null || !desde) return folga;
+  return Math.max(0, folga - ritmo * Math.max(0, (agora - desde) / 60000));
+}
+
+function folgaERitmo(sonda, leituras, monitor, agora = Date.now()) {
+  const folga = contas.folgaDe(sonda, agora);
+  const leitura = leituraDe(sonda);
+  const usoDoMonitor = monitor && Number.isFinite(monitor.usado) && Number.isFinite(monitor.usadoEm);
+  if (usoDoMonitor && (!leitura || !leitura.em || monitor.usadoEm > leitura.em)) {
+    const base = Math.max(0, Math.min(100, 100 - monitor.usado));
+    return { folga: projetarFolga(base, monitor.usadoEm, monitor.ppPorMinuto, agora), ritmo: monitor.ppPorMinuto, fonte: 'monitor' };
+  }
+  if (monitor && leitura && monitor.janela === janelaQueLimita(sonda.uso, agora)) {
+    return { folga: projetarFolga(folga, leitura.em, monitor.ppPorMinuto, agora), ritmo: monitor.ppPorMinuto, fonte: 'monitor' };
+  }
+  return { folga, ritmo: ritmoDaConta(leituras, sonda, agora), fonte: 'leituras' };
+}
+
+function folgaParaVolta(candidata, saida, agora = Date.now()) {
+  if (!saida || candidata.id !== saida.conta || candidata.folga == null) return candidata;
+  const leitura = leituraDe(candidata.sonda);
+  if (leitura && leitura.em > saida.em) return candidata;
+  if (contas.folgaDe(candidata.sonda, agora) > contas.folgaDe(candidata.sonda, saida.em)) return candidata;
+  return { ...candidata, folga: null };
 }
 
 function deveTrocarAntes(folga, ritmo, cfg) {
@@ -692,7 +735,8 @@ async function voltarParaPreferida(cfg, estado) {
   if (!deveChecarVolta(estado, cfg.preferida)) return null;
   estado.ultimaChecagemDeVolta = Date.now();
   estado.preferidaChecada = cfg.preferida;
-  const preferida = contas.preferidaDeVolta(await avaliarParaAgentes(cfg), atual, cfg);
+  const candidatas = (await avaliarParaAgentes(cfg)).map((c) => folgaParaVolta(c, estado.saidaPreventiva));
+  const preferida = contas.preferidaDeVolta(candidatas, atual, cfg);
   if (!preferida) return null;
   try {
     const troca = await trocarSlotSemTrava(preferida.id, 'preferida', estado);
@@ -709,20 +753,22 @@ async function trocarPreventiva(cfg, lista, estado) {
   const atual = contaNoSlot(cfg);
   if (!atual) return null;
   const agora = Date.now();
-  const { sonda, folga } = await avaliarUmaParaAgentes(atual);
+  const { sonda } = await avaliarUmaParaAgentes(atual);
   estado.leituras = guardarLeitura(estado.leituras, atual, sonda, agora);
-  const ritmo = ritmoDaConta(estado.leituras[atual], sonda, agora);
+  const monitor = ritmoDoMonitor(contas.lerJson(ARQ_RITMO_DO_MONITOR, null), chaveDoSlot(), agora);
+  const { folga, ritmo, fonte } = folgaERitmo(sonda, estado.leituras[atual], monitor, agora);
   if (!deveTrocarAntes(folga, ritmo, cfg) || !deveProcurarAlvoPreventivo(estado, atual, agora)) return null;
   const escolhida = alvoPreventivo(folga, ritmo, await avaliarParaAgentes(cfg), cfg, atual);
   if (!escolhida) {
     estado.semAlvoPreventivo = { conta: atual, em: agora };
     return null;
   }
-  const ritmoLido = ritmo == null ? 'desconhecido' : `${ritmo.toFixed(2)} pp/min`;
-  contas.log(`agentes: folga ${folga}% em ${atual}, ritmo ${ritmoLido}; troca preventiva para ${escolhida.id}`);
+  const ritmoLido = ritmo == null ? 'desconhecido' : `${ritmo.toFixed(2)} pp/min (${fonte})`;
+  contas.log(`agentes: folga ${Math.round(folga * 10) / 10}% em ${atual}, ritmo ${ritmoLido}; troca preventiva para ${escolhida.id}`);
   try {
     const troca = await trocarSlotSemTrava(escolhida.id, 'preventiva', estado);
     estado.ultimaTroca = Date.now();
+    if (troca.mudou) estado.saidaPreventiva = { conta: troca.de, em: estado.ultimaTroca };
     return troca;
   } catch (e) {
     contas.log(`agentes: troca preventiva para ${escolhida.id} falhou: ${e.message}`);
@@ -850,11 +896,12 @@ async function prepararSlot({ prazoDaAvaliacaoMs = 8000, prazoDaTravaMs = 15000 
       contas.log('agentes: avaliação das contas passou do prazo; abrindo sem trocar');
       return null;
     }
+    const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
     const noSlot = prontas.find((c) => c.id === atual);
     const sair = Boolean(noSlot && (noSlot.esgotada || noSlot.folga === 0));
-    const escolhida = sair ? contas.decidir(prontas, { excluir: [atual] }) : contas.preferidaDeVolta(prontas, atual, cfg);
+    const paraVolta = prontas.map((c) => folgaParaVolta(c, estado.saidaPreventiva));
+    const escolhida = sair ? contas.decidir(prontas, { excluir: [atual] }) : contas.preferidaDeVolta(paraVolta, atual, cfg);
     if (!escolhida || escolhida.id === atual) return null;
-    const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
     const troca = await trocarSlotSemTrava(escolhida.id, 'ao abrir', estado);
     estado.ultimaTroca = Date.now();
     contas.escreverJson(ARQ_ESTADO, estado);
@@ -889,6 +936,10 @@ module.exports = {
   guardarLeitura,
   ritmoDeUso,
   ritmoDaConta,
+  ritmoDoMonitor,
+  projetarFolga,
+  folgaERitmo,
+  folgaParaVolta,
   deveTrocarAntes,
   alvoPreventivo,
   vigiar,

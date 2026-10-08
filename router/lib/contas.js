@@ -46,7 +46,7 @@ const CHAVES_PROJETO = [
 const CONFIG_PADRAO = {
   principal: PRINCIPAL_PADRAO,
   reserva: [],
-  limites: { reserva: 3, preventiva: 5, voltar: 20 },
+  limites: { reserva: 3, preventiva: 5, voltar: 20, horizonteMinutos: 2, margem: 2 },
   ativo: true,
   cacheUsoSegundos: 60,
   notificar: true,
@@ -573,6 +573,7 @@ module.exports = {
   sondar,
   lerUso,
   folgaDe,
+  usadoEfetivo,
   avaliarContas,
   decidir,
   preferidaDeVolta,

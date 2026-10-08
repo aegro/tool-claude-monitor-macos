@@ -45,6 +45,16 @@ function limite(ms) {
   return { type: 'assistant', isApiErrorMessage: true, error: 'rate_limit', timestamp: new Date(ms).toISOString() };
 }
 
+const renovaEm = agora + 3 * 3600000;
+
+function leitura(minutos, usado, renovacao = renovaEm) {
+  return { em: agora + minutos * 60000, cinco: { usado, renovaEm: renovacao } };
+}
+
+function sondaCom(minutos, cinco, sete) {
+  return { ok: true, verificadoEm: agora + minutos * 60000, uso: { cinco: { usado: cinco, renovaEm }, sete: { usado: sete, renovaEm }, janelas: [] } };
+}
+
 const mcp = { 'servidor|1': { accessToken: 'mcp', refreshToken: 'mcp-r' } };
 const design = { accessToken: 'design' };
 const slotDaConta = JSON.stringify({ mcpOAuth: mcp, claudeAiOauth: { accessToken: 'a', refreshToken: 'a-r' }, designOauth: design });
@@ -174,6 +184,99 @@ const testes = {
     assert.strictEqual(agentes.deveChecarVolta(estado, 'principal', agora + 5 * 60 * 1000), true);
     assert.strictEqual(agentes.deveChecarVolta({}, 'principal', agora), true);
     assert.strictEqual(agentes.deveChecarVolta(estado, null, agora + 10 * 60 * 1000), false);
+  },
+  ritmoDeUsoMedeOsUltimosDezMinutos() {
+    const leituras = [leitura(-12, 10), leitura(-8, 50), leitura(-4, 54), leitura(0, 58)];
+    assert.strictEqual(agentes.ritmoDeUso(leituras, 'cinco', agora), 1);
+    assert.strictEqual(agentes.ritmoDeUso([leitura(0, 58)], 'cinco', agora), null);
+    assert.strictEqual(agentes.ritmoDeUso([leitura(-12, 10), leitura(0, 58)], 'cinco', agora), null);
+    assert.strictEqual(agentes.ritmoDeUso([], 'cinco', agora), null);
+  },
+  ritmoDescartaLeiturasDeAntesDaRenovacao() {
+    const caiu = [leitura(-9, 90), leitura(-6, 95), leitura(-4, 2), leitura(-2, 4), leitura(0, 6)];
+    assert.strictEqual(agentes.ritmoDeUso(caiu, 'cinco', agora), 1);
+    const novaRenovacao = renovaEm + 5 * 3600000;
+    const mudouARenovacao = [leitura(-8, 40), leitura(-6, 60), leitura(-4, 61, novaRenovacao), leitura(0, 63, novaRenovacao)];
+    assert.strictEqual(agentes.ritmoDeUso(mudouARenovacao, 'cinco', agora), 0.5);
+    assert.strictEqual(agentes.ritmoDeUso([leitura(-4, 40), leitura(0, 44, renovaEm + 500)], 'cinco', agora), 1);
+    assert.strictEqual(agentes.ritmoDeUso([leitura(-2, 90), leitura(0, 1)], 'cinco', agora), null);
+  },
+  guardarLeituraPodaAntigasEIgnoraRepetida() {
+    const mapa = { principal: [leitura(-11, 30)], segunda: [leitura(-20, 10)] };
+    const sonda = sondaCom(-1, 40, 5);
+    const novo = agentes.guardarLeitura(mapa, 'principal', sonda, agora);
+    assert.deepStrictEqual(Object.keys(novo), ['principal']);
+    assert.deepStrictEqual(novo.principal, [{ em: agora - 60000, cinco: { usado: 40, renovaEm }, sete: { usado: 5, renovaEm } }]);
+    assert.strictEqual(agentes.guardarLeitura(novo, 'principal', sonda, agora).principal.length, 1);
+    assert.deepStrictEqual(agentes.guardarLeitura(novo, 'principal', { ok: false, verificadoEm: agora }, agora), novo);
+    const doCache = { ...sondaCom(0, 41, 5), usoDe: agora - 30000 };
+    assert.strictEqual(agentes.guardarLeitura(novo, 'principal', doCache, agora).principal[1].em, agora - 30000);
+  },
+  ritmoDaContaUsaAJanelaQueLimita() {
+    const leituras = [
+      { em: agora - 4 * 60000, cinco: { usado: 20, renovaEm }, sete: { usado: 80, renovaEm } },
+      { em: agora, cinco: { usado: 28, renovaEm }, sete: { usado: 82, renovaEm } },
+    ];
+    assert.strictEqual(agentes.ritmoDaConta(leituras, sondaCom(0, 28, 82), agora), 0.5);
+    assert.strictEqual(agentes.ritmoDaConta(leituras, sondaCom(0, 90, 82), agora), 2);
+    assert.strictEqual(agentes.ritmoDaConta(leituras, { ok: false }, agora), null);
+  },
+  ritmoLentoEm4NaoTroca() {
+    const cfg = configurar();
+    assert.strictEqual(cfg.limites.horizonteMinutos, 2);
+    assert.strictEqual(cfg.limites.margem, 2);
+    assert.strictEqual(agentes.deveTrocarAntes(4, 0.5, cfg), false);
+    assert.strictEqual(agentes.deveTrocarAntes(4, 0.99, cfg), false);
+    assert.strictEqual(agentes.alvoPreventivo(4, 0.5, candidatas({ principal: { folga: 4 } }), cfg, 'principal'), null);
+  },
+  ritmoRapidoTrocaAntes() {
+    const cfg = configurar();
+    assert.strictEqual(agentes.deveTrocarAntes(10, 4, cfg), true);
+    assert.strictEqual(agentes.deveTrocarAntes(10, 3.9, cfg), false);
+    const alvo = agentes.alvoPreventivo(10, 4, candidatas({ principal: { folga: 10 } }), cfg, 'principal');
+    assert.strictEqual(alvo && alvo.id, 'segunda');
+    const daReserva = agentes.alvoPreventivo(0, 0, candidatas({ principal: { folga: 0 }, segunda: { folga: 1 } }), cfg, 'principal');
+    assert.strictEqual(daReserva && daReserva.id, 'extra');
+  },
+  margemSempreTroca() {
+    const cfg = configurar();
+    assert.strictEqual(agentes.deveTrocarAntes(2, 0, cfg), true);
+    assert.strictEqual(agentes.deveTrocarAntes(2, null, cfg), true);
+    assert.strictEqual(agentes.deveTrocarAntes(3, 0, cfg), false);
+    const comMargem = configurar({ limites: { margem: 4 } });
+    assert.strictEqual(agentes.deveTrocarAntes(4, 0, comMargem), true);
+    assert.strictEqual(agentes.deveTrocarAntes(10, 3, comMargem), true);
+  },
+  ritmoDesconhecidoUsaAPreventiva() {
+    const cfg = configurar();
+    assert.strictEqual(cfg.limites.preventiva, 5);
+    assert.strictEqual(agentes.deveTrocarAntes(4, null, cfg), true);
+    assert.strictEqual(agentes.deveTrocarAntes(5, null, cfg), false);
+    const alvo = agentes.alvoPreventivo(4, null, candidatas({ principal: { folga: 4 } }), cfg, 'principal');
+    assert.strictEqual(alvo && alvo.id, 'segunda');
+    assert.strictEqual(agentes.alvoPreventivo(40, null, candidatas(), cfg, 'principal'), null);
+  },
+  folgaDesconhecidaNaoTroca() {
+    const cfg = configurar();
+    assert.strictEqual(agentes.deveTrocarAntes(null, 10, cfg), false);
+    assert.strictEqual(agentes.alvoPreventivo(null, 10, candidatas({ principal: { folga: null } }), cfg, 'principal'), null);
+    assert.strictEqual(agentes.alvoPreventivo(undefined, null, candidatas(), cfg, 'principal'), null);
+  },
+  semOutraContaComLoginDeAgentesNaoTroca() {
+    const cfg = configurar();
+    const soOSlot = candidatas({ principal: { folga: 2 } }).filter((c) => c.id === 'principal');
+    assert.strictEqual(agentes.alvoPreventivo(2, null, soOSlot, cfg, 'principal'), null);
+    const semLogin = candidatas({ principal: { folga: 2 }, segunda: { logada: false }, extra: { logada: false } });
+    assert.strictEqual(agentes.alvoPreventivo(2, null, semLogin, cfg, 'principal'), null);
+  },
+  contaQueNaoTemMaisFolgaNaoTroca() {
+    const cfg = configurar();
+    const piores = candidatas({ principal: { folga: 4 }, segunda: { folga: 4 }, extra: { folga: 3 } });
+    assert.strictEqual(agentes.alvoPreventivo(4, null, piores, cfg, 'principal'), null);
+    const desconhecidas = candidatas({ principal: { folga: 4 }, segunda: { folga: null }, extra: { folga: null } });
+    assert.strictEqual(agentes.alvoPreventivo(4, null, desconhecidas, cfg, 'principal'), null);
+    const esgotadas = candidatas({ principal: { folga: 4 }, segunda: { esgotada: { ate: agora + 60000 } }, extra: { esgotada: { ate: agora + 60000 } } });
+    assert.strictEqual(agentes.alvoPreventivo(4, null, esgotadas, cfg, 'principal'), null);
   },
 };
 

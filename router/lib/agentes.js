@@ -18,6 +18,8 @@ const CONTA_KEYCHAIN = os.userInfo().username;
 const LIMITE_DA_LINHA_DO_SECURITY = 4032;
 const JANELA_DE_RETOMADA_MS = 6 * 3600 * 1000;
 const TENTATIVAS_DE_RETOMADA = 3;
+const JANELA_DO_RITMO_MS = 10 * 60 * 1000;
+const TOLERANCIA_DA_RENOVACAO_MS = 60 * 1000;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
 const CONTINUAR =
   '[claude-auto] A conta anterior atingiu o limite e esta sessão foi retomada em outra conta. ' +
@@ -163,17 +165,83 @@ async function credencialGuardada(id) {
   return credencialDoItem(await lerItem(servicoGuardado(id)));
 }
 
+async function comLoginDeAgentes(c) {
+  if (c.logada || !loginGuardado(c.id)) return c;
+  const credencial = await credencialGuardada(c.id);
+  if (!credencial) return c;
+  const sonda = await contas.lerUso(c.id, { credencial, chaveDoCache: `agents ${c.id}` });
+  return { ...c, sonda, folga: contas.folgaDe(sonda), logada: !sonda.semLogin };
+}
+
 async function avaliarParaAgentes(cfg = contas.carregarConfig()) {
   const prontas = (await contas.avaliarContas()).filter((c) => prontaParaAgentes(c.id, cfg));
-  return Promise.all(
-    prontas.map(async (c) => {
-      if (c.logada || !loginGuardado(c.id)) return c;
-      const credencial = await credencialGuardada(c.id);
-      if (!credencial) return c;
-      const sonda = await contas.lerUso(c.id, { credencial, chaveDoCache: `agents ${c.id}` });
-      return { ...c, sonda, folga: contas.folgaDe(sonda), logada: !sonda.semLogin };
-    }),
-  );
+  return Promise.all(prontas.map(comLoginDeAgentes));
+}
+
+async function avaliarUmaParaAgentes(id) {
+  const sonda = await contas.lerUso(id);
+  return comLoginDeAgentes({ id, sonda, folga: contas.folgaDe(sonda), logada: !sonda.semLogin });
+}
+
+function leituraDe(sonda) {
+  const uso = sonda && sonda.uso;
+  if (!uso || (!uso.cinco && !uso.sete)) return null;
+  const janela = (j) => (j && typeof j.usado === 'number' ? { usado: j.usado, renovaEm: j.renovaEm || null } : null);
+  return { em: sonda.usoDe || sonda.verificadoEm, cinco: janela(uso.cinco), sete: janela(uso.sete) };
+}
+
+function guardarLeitura(mapa, id, sonda, agora = Date.now()) {
+  const novo = {};
+  for (const [conta, lista] of Object.entries(mapa || {})) {
+    const recentes = (Array.isArray(lista) ? lista : []).filter((l) => l && agora - l.em <= JANELA_DO_RITMO_MS);
+    if (recentes.length) novo[conta] = recentes;
+  }
+  const leitura = leituraDe(sonda);
+  if (!leitura || !leitura.em || agora - leitura.em > JANELA_DO_RITMO_MS) return novo;
+  if ((novo[id] || []).some((l) => l.em === leitura.em)) return novo;
+  novo[id] = [...(novo[id] || []), leitura].sort((a, b) => a.em - b.em);
+  return novo;
+}
+
+function renovou(anterior, janela) {
+  return janela.usado < anterior.usado || Math.abs((janela.renovaEm || 0) - (anterior.renovaEm || 0)) > TOLERANCIA_DA_RENOVACAO_MS;
+}
+
+function ritmoDeUso(leituras, chave, agora = Date.now()) {
+  let validas = [];
+  for (const leitura of [...(leituras || [])].sort((a, b) => a.em - b.em)) {
+    const janela = leitura[chave];
+    if (!janela || agora - leitura.em > JANELA_DO_RITMO_MS) continue;
+    const anterior = validas[validas.length - 1];
+    if (anterior && renovou(anterior, janela)) validas = [];
+    validas.push({ em: leitura.em, ...janela });
+  }
+  if (validas.length < 2) return null;
+  const primeira = validas[0];
+  const ultima = validas[validas.length - 1];
+  const minutos = (ultima.em - primeira.em) / 60000;
+  return minutos > 0 ? (ultima.usado - primeira.usado) / minutos : null;
+}
+
+function ritmoDaConta(leituras, sonda, agora = Date.now()) {
+  const uso = sonda && sonda.uso;
+  if (!uso) return null;
+  const chave = contas.usadoEfetivo(uso.sete, agora) > contas.usadoEfetivo(uso.cinco, agora) ? 'sete' : 'cinco';
+  return ritmoDeUso(leituras, chave, agora);
+}
+
+function deveTrocarAntes(folga, ritmo, cfg) {
+  if (folga == null) return false;
+  const { margem, preventiva, horizonteMinutos } = cfg.limites;
+  if (folga <= margem) return true;
+  if (ritmo == null) return folga < preventiva;
+  return folga - ritmo * horizonteMinutos <= margem;
+}
+
+function alvoPreventivo(folga, ritmo, candidatos, cfg, atual) {
+  if (!deveTrocarAntes(folga, ritmo, cfg)) return null;
+  const escolhida = contas.decidir(candidatos, { excluir: [atual] });
+  return escolhida && escolhida.folga != null && escolhida.folga > folga ? escolhida : null;
 }
 
 let donoDaTrava = null;
@@ -466,6 +534,29 @@ async function voltarParaPreferida(cfg, estado) {
   }
 }
 
+async function trocarPreventiva(cfg, lista, estado) {
+  if (!lista.some((a) => a.kind === 'background')) return null;
+  const atual = contaNoSlot(cfg);
+  if (!atual) return null;
+  const agora = Date.now();
+  const { sonda, folga } = await avaliarUmaParaAgentes(atual);
+  estado.leituras = guardarLeitura(estado.leituras, atual, sonda, agora);
+  const ritmo = ritmoDaConta(estado.leituras[atual], sonda, agora);
+  if (!deveTrocarAntes(folga, ritmo, cfg)) return null;
+  const escolhida = alvoPreventivo(folga, ritmo, await avaliarParaAgentes(cfg), cfg, atual);
+  if (!escolhida) return null;
+  const ritmoLido = ritmo == null ? 'desconhecido' : `${ritmo.toFixed(2)} pp/min`;
+  contas.log(`agentes: folga ${folga}% em ${atual}, ritmo ${ritmoLido}; troca preventiva para ${escolhida.id}`);
+  try {
+    const troca = await trocarSlotSemTrava(escolhida.id, 'preventiva');
+    estado.ultimaTroca = Date.now();
+    return troca;
+  } catch (e) {
+    contas.log(`agentes: troca preventiva para ${escolhida.id} falhou: ${e.message}`);
+    return null;
+  }
+}
+
 async function migrarOciosos(lista, estado) {
   const ultimaTroca = estado.ultimaTroca || 0;
   if (!ultimaTroca) return [];
@@ -496,7 +587,7 @@ async function vigiar() {
 
     let troca = null;
     if (!novas.length) {
-      troca = await voltarParaPreferida(cfg, estado);
+      troca = (await voltarParaPreferida(cfg, estado)) || (await trocarPreventiva(cfg, lista, estado));
       const migrados = await migrarOciosos(lista, estado);
       contas.escreverJson(ARQ_ESTADO, estado);
       return { acao: troca || migrados.length ? 'migrou' : 'nada', agentes: lista.length, troca, migrados };
@@ -581,6 +672,11 @@ module.exports = {
   listarAgentes,
   paradoPorLimite,
   planejar,
+  guardarLeitura,
+  ritmoDeUso,
+  ritmoDaConta,
+  deveTrocarAntes,
+  alvoPreventivo,
   vigiar,
   prepararSlot,
   deveChecarVolta,

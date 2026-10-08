@@ -70,12 +70,20 @@ async function lerItem(servico) {
   return r.ok ? r.saida.replace(/\n$/, '') : null;
 }
 
-async function gravarItem(servico, texto) {
-  if (/["\\\r\n]/.test(servico + CONTA_KEYCHAIN)) return false;
+function linhaDoSecurity(servico, texto) {
+  if (/["\\\r\n]/.test(servico + CONTA_KEYCHAIN)) return null;
   const hex = Buffer.from(texto, 'utf8').toString('hex');
   const linha = `add-generic-password -U -a "${CONTA_KEYCHAIN}" -s "${servico}" -X ${hex}\n`;
-  if (Buffer.byteLength(linha) <= LIMITE_DA_LINHA_DO_SECURITY) await rodar('security', ['-i'], { entrada: linha });
-  else await rodar('security', ['add-generic-password', '-U', '-a', CONTA_KEYCHAIN, '-s', servico, '-X', hex]);
+  return Buffer.byteLength(linha) <= LIMITE_DA_LINHA_DO_SECURITY ? linha : null;
+}
+
+async function gravarItem(servico, texto) {
+  const linha = linhaDoSecurity(servico, texto);
+  if (!linha) {
+    contas.log(`agentes: ${servico} não cabe no security -i; o login não vai em argv, a troca foi recusada`);
+    return false;
+  }
+  await rodar('security', ['-i'], { entrada: linha });
   return (await lerItem(servico)) === texto;
 }
 
@@ -679,5 +687,6 @@ module.exports = {
   alvoPreventivo,
   vigiar,
   prepararSlot,
+  linhaDoSecurity,
   deveChecarVolta,
 };

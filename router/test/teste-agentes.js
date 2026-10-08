@@ -278,17 +278,27 @@ const testes = {
     const esgotadas = candidatas({ principal: { folga: 4 }, segunda: { esgotada: { ate: agora + 60000 } }, extra: { esgotada: { ate: agora + 60000 } } });
     assert.strictEqual(agentes.alvoPreventivo(4, null, esgotadas, cfg, 'principal'), null);
   },
+
+  loginGrandeNaoVaiEmArgv() {
+    const pequena = agentes.linhaDoSecurity('Claude Code-credentials', loginDaSegunda);
+    assert.ok(pequena && pequena.startsWith('add-generic-password -U '));
+    assert.strictEqual(agentes.linhaDoSecurity('Claude Code-credentials', 'x'.repeat(4000)), null);
+    assert.strictEqual(agentes.linhaDoSecurity('nome"quebrado', loginDaSegunda), null);
+  },
+
 };
 
-let falhas = 0;
-for (const [nome, teste] of Object.entries(testes)) {
-  try {
-    teste();
-    console.log(`ok    ${nome}`);
-  } catch (e) {
-    falhas += 1;
-    console.log(`FALHA ${nome}\n  ${e.message}`);
+(async () => {
+  let falhas = 0;
+  for (const [nome, teste] of Object.entries(testes)) {
+    try {
+      await teste();
+      console.log(`ok    ${nome}`);
+    } catch (e) {
+      falhas += 1;
+      console.log(`FALHA ${nome}\n  ${e.message}`);
+    }
   }
-}
-fs.rmSync(raiz, { recursive: true, force: true });
-process.exit(falhas ? 1 : 0);
+  fs.rmSync(raiz, { recursive: true, force: true });
+  process.exit(falhas ? 1 : 0);
+})();

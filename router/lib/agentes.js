@@ -127,20 +127,57 @@ function chaveDe(conta) {
   return conta && conta.accountUuid ? [conta.accountUuid, conta.organizationUuid].filter(Boolean).join(':') : null;
 }
 
-async function chaveDoToken(texto) {
+function chaveDoPerfil(perfil) {
+  if (!perfil || !perfil.account || !perfil.account.uuid) return null;
+  return [perfil.account.uuid, perfil.organization && perfil.organization.uuid].filter(Boolean).join(':');
+}
+
+function resultadoDoPerfil(status, perfil, chaveEsperada = null) {
+  if (status === 401 || status === 403) return { valido: false, motivo: `HTTP ${status}` };
+  if (status < 200 || status >= 300) return { valido: null, motivo: `HTTP ${status}` };
+  const chave = chaveDoPerfil(perfil);
+  if (!chave) return { valido: null, motivo: 'profile without an account' };
+  if (chaveEsperada && chave !== chaveEsperada) return { valido: false, motivo: 'login of another account', chave };
+  return { valido: true, chave };
+}
+
+function loginVencido(texto, agora = Date.now()) {
+  const credencial = credencialDoItem(texto);
+  return Boolean(credencial && credencial.expiresAt && credencial.expiresAt <= agora);
+}
+
+async function conferirLogin(texto, chaveEsperada = null) {
+  const credencial = credencialDoItem(texto);
+  if (!credencial || !credencial.accessToken) return { valido: false, motivo: 'no claudeAiOauth' };
+  if (loginVencido(texto)) return { valido: false, motivo: 'access token expired' };
   try {
-    const token = JSON.parse(texto).claudeAiOauth.accessToken;
     const resposta = await fetch(URL_PERFIL, {
-      headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' },
+      headers: { Authorization: `Bearer ${credencial.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' },
       signal: AbortSignal.timeout(10000),
     });
-    if (!resposta.ok) return null;
-    const perfil = await resposta.json();
-    if (!perfil.account || !perfil.account.uuid) return null;
-    return [perfil.account.uuid, perfil.organization && perfil.organization.uuid].filter(Boolean).join(':');
-  } catch {
-    return null;
+    const perfil = resposta.ok ? await resposta.json().catch(() => null) : null;
+    return resultadoDoPerfil(resposta.status, perfil, chaveEsperada);
+  } catch (e) {
+    return { valido: null, motivo: e.name === 'TimeoutError' ? 'timeout' : e.message };
   }
+}
+
+async function chaveDoToken(texto) {
+  const r = await conferirLogin(texto);
+  return r.valido ? r.chave : null;
+}
+
+function loginUtilizavel(guardado) {
+  return Boolean(guardado) && !guardado.invalidoEm;
+}
+
+function marcarLoginInvalido(id, motivo) {
+  const guardado = loginGuardado(id);
+  if (!guardado || guardado.invalidoEm) return false;
+  contas.escreverJson(arquivoDoLogin(id), { ...guardado, invalidoEm: Date.now(), motivoInvalido: motivo });
+  contas.log(`agentes: o login de agentes de ${id} não serve mais (${motivo}); falta claude-accounts login ${id} --agents`);
+  contas.notificar('Claude: agents login needs a new sign-in', `${contas.nomeDaConta(id)}: run claude-accounts login ${id} --agents`);
+  return true;
 }
 
 function contaDaChave(chave, cfg = contas.carregarConfig()) {
@@ -167,7 +204,7 @@ async function contaRealNoSlot(cfg = contas.carregarConfig()) {
 }
 
 function prontaParaAgentes(id, cfg = contas.carregarConfig()) {
-  return Boolean(loginGuardado(id)) || contaNoSlot(cfg) === id;
+  return loginUtilizavel(loginGuardado(id)) || contaNoSlot(cfg) === id;
 }
 
 async function credencialGuardada(id) {
@@ -175,7 +212,7 @@ async function credencialGuardada(id) {
 }
 
 async function comLoginDeAgentes(c) {
-  if (c.logada || !loginGuardado(c.id)) return c;
+  if (c.logada || !loginUtilizavel(loginGuardado(c.id))) return c;
   const credencial = await credencialGuardada(c.id);
   if (!credencial) return c;
   const sonda = await contas.lerUso(c.id, { credencial, chaveDoCache: `agents ${c.id}` });
@@ -378,8 +415,19 @@ async function trocarSlotSemTrava(para, motivo) {
   if (de === para) return { de, para, mudou: false };
   if (!de) throw new Error('the login in the agents slot matches no account; leaving it alone');
   const destino = loginGuardado(para);
+  if (destino && !loginUtilizavel(destino)) {
+    throw erroDaTroca(`the ${para} agents login needs a new sign-in: run claude-accounts login ${para} --agents`, 'login-invalido');
+  }
   const textoDestino = destino && (await lerItem(servicoGuardado(para)));
   if (!credencialDoItem(textoDestino)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
+  const conferido = await conferirLogin(textoDestino, destino.chave);
+  if (conferido.valido === false) {
+    marcarLoginInvalido(para, conferido.motivo);
+    throw erroDaTroca(`the ${para} agents login no longer works (${conferido.motivo}): run claude-accounts login ${para} --agents`, 'login-invalido');
+  }
+  if (conferido.valido !== true) {
+    throw erroDaTroca(`could not check the ${para} agents login (${conferido.motivo}); leaving the slot alone`, 'sem-conferencia');
+  }
 
   const contaDe = chaveReal === chaveDeclarada ? configDoSlot.oauthAccount : (loginGuardado(de) || {}).oauthAccount;
   if (donoDaTrava && !travaEhDe(donoDaTrava)) throw new Error('lost the agents lock; leaving the slot alone');
@@ -581,7 +629,7 @@ function deveProcurarAlvoPreventivo(estado, atual, agora = Date.now()) {
 
 async function voltarParaPreferida(cfg, estado) {
   const atual = contaNoSlot(cfg);
-  if (!cfg.preferida || cfg.preferida === atual || !loginGuardado(cfg.preferida)) return null;
+  if (!cfg.preferida || cfg.preferida === atual || !loginUtilizavel(loginGuardado(cfg.preferida))) return null;
   if (!deveChecarVolta(estado, cfg.preferida)) return null;
   estado.ultimaChecagemDeVolta = Date.now();
   estado.preferidaChecada = cfg.preferida;
@@ -641,6 +689,21 @@ async function migrarOciosos(lista, estado) {
   return migrados;
 }
 
+async function trocarParaAPrimeiraQueServe(candidatos, excluir, motivo) {
+  let restantes = candidatos;
+  for (;;) {
+    const escolhida = contas.decidir(restantes, { excluir });
+    if (!escolhida) return { troca: null };
+    try {
+      return { troca: await trocarSlotSemTrava(escolhida.id, motivo), escolhida };
+    } catch (e) {
+      if (e.tipo !== 'login-invalido') return { erro: e, escolhida };
+      contas.log(`agentes: ${escolhida.id} fica fora da troca: ${e.message}`);
+      restantes = restantes.filter((c) => c.id !== escolhida.id);
+    }
+  }
+}
+
 async function vigiar() {
   const cfg = contas.carregarConfig();
   if (cfg.ativo === false) return { acao: 'desligado' };
@@ -662,25 +725,24 @@ async function vigiar() {
       const de = await contaRealNoSlot(cfg);
       if (de) contas.marcarEsgotada(de, null, 'limite');
       const candidatos = (await avaliarParaAgentes(cfg)).filter((c) => c.id !== de);
-      const escolhida = contas.decidir(candidatos, { excluir: de ? [de] : [] });
-      if (!escolhida) {
+      const r = await trocarParaAPrimeiraQueServe(candidatos, de ? [de] : [], 'limite');
+      if (r.erro && r.erro.tipo === 'slot-mudou') {
+        contas.escreverJson(ARQ_ESTADO, estado);
+        return { acao: 'adiada', parados: novas.map((p) => p.nome), erro: r.erro.message };
+      }
+      if (r.erro) {
+        avisarUmaVez(estado, 'troca-falhou', 'Claude: agents hit the limit', `Could not switch the agents login: ${r.erro.message}`);
+        contas.escreverJson(ARQ_ESTADO, estado);
+        contas.log(`agentes: trocar para ${r.escolhida.id} falhou: ${r.erro.message}`);
+        return { acao: 'troca-falhou', parados: novas.map((p) => p.nome), erro: r.erro.message };
+      }
+      if (!r.troca) {
         avisarUmaVez(estado, 'sem-conta', 'Claude: agents hit the limit', 'No other account with headroom has an agents login.');
         contas.escreverJson(ARQ_ESTADO, estado);
         contas.log(`agentes: ${novas.length} parados por limite e nenhuma outra conta pronta`);
         return { acao: 'sem-conta', parados: novas.map((p) => p.nome) };
       }
-      try {
-        troca = await trocarSlotSemTrava(escolhida.id, 'limite');
-      } catch (e) {
-        if (e.tipo === 'slot-mudou') {
-          contas.escreverJson(ARQ_ESTADO, estado);
-          return { acao: 'adiada', parados: novas.map((p) => p.nome), erro: e.message };
-        }
-        avisarUmaVez(estado, 'troca-falhou', 'Claude: agents hit the limit', `Could not switch the agents login: ${e.message}`);
-        contas.escreverJson(ARQ_ESTADO, estado);
-        contas.log(`agentes: trocar para ${escolhida.id} falhou: ${e.message}`);
-        return { acao: 'troca-falhou', parados: novas.map((p) => p.nome), erro: e.message };
-      }
+      troca = r.troca;
       estado.ultimaTroca = Date.now();
       contas.escreverJson(ARQ_ESTADO, estado);
     }
@@ -746,6 +808,9 @@ module.exports = {
   contaRealNoSlot,
   prontaParaAgentes,
   loginGuardado,
+  loginUtilizavel,
+  loginVencido,
+  resultadoDoPerfil,
   loginDoItem,
   slotComLogin,
   impressaoDoLogin,

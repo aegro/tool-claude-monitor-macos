@@ -54,7 +54,13 @@ enum AccountRouter {
     static var agentsLoginsDirectory: URL { home.appendingPathComponent(".estado/agentes") }
 
     static func hasAgentsLogin(_ id: String) -> Bool {
-        FileManager.default.fileExists(atPath: agentsLoginsDirectory.appendingPathComponent("\(id).json").path)
+        guard let data = try? Data(contentsOf: agentsLoginsDirectory.appendingPathComponent("\(id).json")) else { return false }
+        return isUsableAgentsLogin(data)
+    }
+
+    static func isUsableAgentsLogin(_ data: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return root["invalidoEm"] == nil
     }
 
     static var accountsCommand: URL? {

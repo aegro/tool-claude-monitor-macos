@@ -134,7 +134,15 @@ async function statusDosAgentes() {
   const noSlot = agentes.contaNoSlot(cfg);
   const linhas = [['account', 'login', 'agents']];
   for (const id of [...cfg.rota, ...cfg.reserva]) {
-    const pronta = id === noSlot ? 'running the agents now' : agentes.loginGuardado(id) ? 'ready' : `missing: claude-accounts login ${id} --agents`;
+    const guardado = agentes.loginGuardado(id);
+    const pronta =
+      id === noSlot
+        ? 'running the agents now'
+        : agentes.loginUtilizavel(guardado)
+          ? 'ready'
+          : guardado
+            ? `stopped working: claude-accounts login ${id} --agents`
+            : `missing: claude-accounts login ${id} --agents`;
     linhas.push([id, contas.identidade(id, cfg).email || 'not logged in', pronta]);
   }
   console.log(tabela(linhas));

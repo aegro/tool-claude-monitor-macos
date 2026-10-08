@@ -151,6 +151,35 @@ const testes = {
     assert.strictEqual(agentes.textoParaDesfazer(slotDaConta, escrito, slotDaConta), null);
     assert.strictEqual(agentes.textoParaDesfazer(null, escrito, slotDaConta), null);
   },
+  perfilDoLoginGuardadoDecideSeEleEntraNoSlot() {
+    const perfil = { account: { uuid: 'u2' }, organization: { uuid: 'o2' } };
+    assert.deepStrictEqual(agentes.resultadoDoPerfil(200, perfil, 'u2:o2'), { valido: true, chave: 'u2:o2' });
+    assert.deepStrictEqual(agentes.resultadoDoPerfil(200, perfil, null), { valido: true, chave: 'u2:o2' });
+    assert.strictEqual(agentes.resultadoDoPerfil(200, perfil, 'u1:o1').valido, false);
+    assert.strictEqual(agentes.resultadoDoPerfil(401, null, 'u2:o2').valido, false);
+    assert.strictEqual(agentes.resultadoDoPerfil(403, null, 'u2:o2').valido, false);
+    assert.strictEqual(agentes.resultadoDoPerfil(429, null, 'u2:o2').valido, null);
+    assert.strictEqual(agentes.resultadoDoPerfil(500, null, 'u2:o2').valido, null);
+    assert.strictEqual(agentes.resultadoDoPerfil(200, {}, 'u2:o2').valido, null);
+  },
+  loginGuardadoVencidoNaoEntraNoSlot() {
+    const com = (expiresAt) => JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt } });
+    assert.strictEqual(agentes.loginVencido(com(agora - 1000), agora), true);
+    assert.strictEqual(agentes.loginVencido(com(agora + 60000), agora), false);
+    assert.strictEqual(agentes.loginVencido(loginDaSegunda, agora), false);
+  },
+  loginMarcadoComoInvalidoSaiDaTroca() {
+    configurar();
+    const arquivo = path.join(contas.DIR_ESTADO, 'agentes', 'segunda.json');
+    fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+    fs.writeFileSync(arquivo, JSON.stringify({ chave: 'u2:o2', guardadoEm: agora }));
+    assert.strictEqual(agentes.prontaParaAgentes('segunda'), true);
+    fs.writeFileSync(arquivo, JSON.stringify({ chave: 'u2:o2', guardadoEm: agora, invalidoEm: agora, motivoInvalido: 'HTTP 401' }));
+    assert.strictEqual(agentes.loginUtilizavel(agentes.loginGuardado('segunda')), false);
+    assert.strictEqual(agentes.prontaParaAgentes('segunda'), false);
+    assert.strictEqual(agentes.loginUtilizavel(null), false);
+    fs.rmSync(arquivo);
+  },
   trocaDePrincipalSoMudaAPrincipal() {
     fs.writeFileSync(contas.ARQ_CONFIG, JSON.stringify({ contas: { segunda: {} }, preferida: 'segunda', ativo: false }));
     contas.definirPrincipal('segunda');

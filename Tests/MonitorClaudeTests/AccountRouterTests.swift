@@ -178,6 +178,12 @@ struct AccountRouterTests {
                                    available: ["squad"], exhausted: [:]) == "squad")
     }
 
+    @Test func loginDeAgentesMarcadoComoInválidoNãoContaComoPronto() {
+        #expect(AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","guardadoEm":1}"#.utf8)))
+        #expect(!AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","invalidoEm":2,"motivoInvalido":"HTTP 401"}"#.utf8)))
+        #expect(!AccountRouter.isUsableAgentsLogin(Data("{".utf8)))
+    }
+
     @Test func ligarComConfigIlegívelNãoApagaOArquivo() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("router-\(UUID().uuidString)/config.json")

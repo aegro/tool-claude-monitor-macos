@@ -55,6 +55,8 @@ A troca acontece antes do limite. A cada checagem (cerca de 30 s, com algum agen
 
 Se um turno gasta o resto da folga antes disso, vale a troca por limite: o Monitor troca o login de `~/.claude` para a conta com mais folga (ou usa a que já entrou pela troca preventiva), reinicia o agente e manda continuar. Conta sem login de agentes não entra na troca.
 
+Antes de carregar o login guardado de uma conta em `~/.claude`, a troca confere o access token dele no perfil da API, sem renovar nada. Token vencido, recusado (401/403) ou de outra conta: o login não é carregado, a conta fica marcada como precisando de `claude-accounts login <id> --agents` (aparece em `claude-accounts agents` e nos Ajustes), uma notificação avisa uma vez e a conta sai da troca até o novo login; na troca por limite, a próxima conta é tentada na hora. Como o Monitor não renova o token, um login guardado há mais tempo que a validade do access token também precisa de novo login. Sem resposta da API, nada é trocado e a próxima checagem tenta de novo.
+
 A troca guarda uma impressão (hash) do refresh token que está em `~/.claude` no início e relê o item logo antes de cada gravação. Se ele mudou no meio (o Claude Code renovou o login), nada é gravado e a próxima checagem tenta de novo. Se a gravação falha, o item só volta ao texto anterior quando ainda contém o que a troca gravou.
 
 ## Conta preferida

@@ -105,7 +105,11 @@ function soltarTravaDeArquivo(dir, dono) {
       fs.rmdirSync(dir);
     } catch (e) {
       if (e.code !== 'ENOTEMPTY' && e.code !== 'EEXIST') return;
-      fs.rmdirSync(path.join(dir, 'tomada'));
+      const tomada = path.join(dir, 'tomada');
+      // Tomada fresca é de um tomador vivo que já conferiu o inode desta trava: ela fica para ele terminar,
+      // senão um terceiro pegaria uma trava nova que esse tomador renomearia em seguida.
+      if (inodeDaTravaVelha(tomada) == null) return;
+      fs.rmdirSync(tomada);
       fs.rmdirSync(dir);
     }
   } catch {}

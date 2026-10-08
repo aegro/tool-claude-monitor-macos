@@ -169,15 +169,19 @@ enum AccountRouter {
             usleep(50_000)
             owner = takeFileLock(lock, staleAfter: staleAfter)
         }
-        defer { releaseFileLock(lock, owner: owner) }
+        defer { releaseFileLock(lock, owner: owner, staleAfter: staleAfter) }
         return try body()
     }
 
-    private static func releaseFileLock(_ lock: String, owner: UInt64?) {
+    private static func releaseFileLock(_ lock: String, owner: UInt64?, staleAfter: TimeInterval) {
         guard inode(of: lock) == owner else { return }
         if rmdir(lock) == 0 { return }
         guard errno == ENOTEMPTY || errno == EEXIST else { return }
-        rmdir(lock + "/tomada")
+        // A fresh claim marker belongs to a live claimer that already checked this lock's inode: leave the
+        // lock for it to finish the takeover, or a third process could take a new lock it would then move.
+        let claim = lock + "/tomada"
+        guard staleInode(of: claim, after: staleAfter) != nil else { return }
+        rmdir(claim)
         rmdir(lock)
     }
 

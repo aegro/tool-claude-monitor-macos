@@ -299,12 +299,22 @@ const testes = {
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(arquivo, 'utf8')), { ativo: false });
     assert.strictEqual(fs.existsSync(`${arquivo}.lock`), false);
   },
-  donoSoltaATravaMesmoComTomadaDentro() {
+  donoSoltaATravaComTomadaAbandonadaDentro() {
     const arquivo = path.join(raiz, 'solta', 'config.json');
     contas.comTravaDeArquivo(arquivo, () => {
       fs.mkdirSync(`${arquivo}.lock/tomada`);
+      const antiga = new Date(Date.now() - 60000);
+      fs.utimesSync(`${arquivo}.lock/tomada`, antiga, antiga);
     });
     assert.strictEqual(fs.existsSync(`${arquivo}.lock`), false);
+  },
+  donoDeixaATravaParaQuemEstaTomando() {
+    const arquivo = path.join(raiz, 'tomando', 'config.json');
+    contas.comTravaDeArquivo(arquivo, () => {
+      fs.mkdirSync(`${arquivo}.lock/tomada`);
+    });
+    assert.strictEqual(fs.existsSync(`${arquivo}.lock/tomada`), true);
+    fs.rmSync(`${arquivo}.lock`, { recursive: true });
   },
   travaDeOutroNaoEhApagadaNaSaida() {
     const arquivo = path.join(raiz, 'outro', 'config.json');

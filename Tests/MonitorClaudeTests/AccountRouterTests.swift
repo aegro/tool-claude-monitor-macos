@@ -276,17 +276,32 @@ struct AccountRouterTests {
         #expect(!FileManager.default.fileExists(atPath: lock.path))
     }
 
-    @Test func donoSoltaATravaMesmoComTomadaDentro() throws {
+    @Test func donoSoltaATravaComTomadaAbandonadaDentro() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("config.json")
         let lock = dir.appendingPathComponent("config.json.lock")
+        let claim = lock.appendingPathComponent("tomada")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         try AccountRouter.withFileLock(for: url) {
-            try FileManager.default.createDirectory(at: lock.appendingPathComponent("tomada"), withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: claim, withIntermediateDirectories: false)
+            try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: claim.path)
         }
         #expect(!FileManager.default.fileExists(atPath: lock.path))
+    }
+
+    @Test func donoDeixaATravaParaQuemEstáTomando() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("config.json")
+        let claim = dir.appendingPathComponent("config.json.lock/tomada")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        try AccountRouter.withFileLock(for: url) {
+            try FileManager.default.createDirectory(at: claim, withIntermediateDirectories: false)
+        }
+        #expect(FileManager.default.fileExists(atPath: claim.path))
     }
 
     @Test func loginDeAgentesMarcadoComoInválidoNãoContaComoPronto() {

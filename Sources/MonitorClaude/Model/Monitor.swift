@@ -172,8 +172,11 @@ final class Monitor: ObservableObject {
     private func publishSlotBurnRate() {
         guard liveIsCurrent, let identity = activeAccount, let snapshot = usage,
               snapshot.source == .api, liveOrg == identity.organizationUuid,
-              let rate = AccountRouter.slotBurnRate(account: identity.key, snapshot: snapshot,
-                                                    session: sessionBurn, weekly: weeklyBurn)
+              let rate = AccountRouter.slotBurnRate(
+                  account: identity.key, snapshot: snapshot,
+                  session: history.burnRate(\.session, account: identity.key, org: liveOrg),
+                  weekly: history.burnRate(\.weekly, account: identity.key, org: liveOrg,
+                                           window: 6 * 3600, minPoints: 8, minSpan: 3600))
         else { return }
         try? AccountRouter.publish(rate)
     }
@@ -511,7 +514,8 @@ final class Monitor: ObservableObject {
             sessionResetsAt: snap.session?.resetsAt,
             weekly: snap.weekly?.utilization,
             tokensCumulative: ledger.block.total,
-            org: org
+            org: org,
+            account: snap.source == .api ? activeAccount?.key : nil
         ))
         history.flush()
     }

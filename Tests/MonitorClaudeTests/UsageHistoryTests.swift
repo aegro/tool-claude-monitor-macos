@@ -111,4 +111,37 @@ struct UsageHistoryTests {
         #expect(burn.percentPerHour > 0)
         #expect(burn.basedOnMinutes == 60)
     }
+
+    private func sample(_ minute: Int, _ session: Double, account: String?) -> UsageSample {
+        UsageSample(at: at(minute), session: session, weekly: nil, org: "orgA", account: account)
+    }
+
+    @Test func ritmoDaContaUsaSóAsLeiturasDelaDepoisDaÚltimaTroca() throws {
+        let h = store()
+        for i in 0...4 { h.append(sample(i * 4, Double(90 + i), account: "a:orgA")) }
+        for i in 0...6 { h.append(sample(18 + i * 4, Double(20 + i * 4), account: nil)) }
+        for i in 0...6 { h.append(sample(20 + i * 4, Double(80 + i), account: "b:orgA")) }
+
+        let ritmoDeB = h.burnRate(\.session, account: "b:orgA", org: "orgA", window: 24 * 3600, minSpan: 15 * 60)
+        let b = try #require(ritmoDeB)
+        #expect(abs(b.percentPerHour - 15) < 1e-9)
+        #expect(b.basedOnMinutes == 24)
+        #expect(h.burnRate(\.session, account: "a:orgA", org: "orgA", window: 24 * 3600, minSpan: 15 * 60) == nil)
+        #expect(h.burnRate(\.session, account: "b:orgA", org: "orgB", window: 24 * 3600, minSpan: 15 * 60) == nil)
+
+        for i in 0...4 { h.append(sample(50 + i * 4, Double(92 + i), account: "a:orgA")) }
+        let ritmoDeA = h.burnRate(\.session, account: "a:orgA", org: "orgA", window: 24 * 3600, minSpan: 15 * 60)
+        let aDeVolta = try #require(ritmoDeA)
+        #expect(aDeVolta.basedOnMinutes == 16)
+        #expect(h.burnRate(\.session, account: "b:orgA", org: "orgA", window: 24 * 3600, minSpan: 15 * 60) == nil)
+    }
+
+    @Test func amostraGravadaSemContaContinuaCarregando() throws {
+        let data = Data(#"[{"at":"2026-10-08T12:00:00Z","session":40,"org":"orgA"}]"#.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let loaded = try decoder.decode([UsageSample].self, from: data)
+        #expect(loaded.first?.org == "orgA")
+        #expect(loaded.first?.account == nil)
+    }
 }

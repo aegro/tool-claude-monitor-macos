@@ -286,6 +286,19 @@ const testes = {
     assert.strictEqual(agentes.linhaDoSecurity('nome"quebrado', loginDaSegunda), null);
   },
 
+  async aberturaEsperaATravaOcupada() {
+    const trava = path.join(contas.DIR_ESTADO, 'agentes.trava');
+    fs.mkdirSync(trava, { recursive: true });
+    fs.writeFileSync(path.join(trava, 'dono'), 'outro:processo');
+    let rodou = 0;
+    const ocupada = await agentes.comTravaEsperando(async () => (rodou += 1), { prazoMs: 300, intervaloMs: 50 });
+    assert.deepStrictEqual(ocupada, { acao: 'ocupado' });
+    assert.strictEqual(rodou, 0);
+    setTimeout(() => fs.rmSync(trava, { recursive: true, force: true }), 150);
+    const liberada = await agentes.comTravaEsperando(async () => (rodou += 1), { prazoMs: 2000, intervaloMs: 50 });
+    assert.strictEqual(liberada, 1);
+    assert.strictEqual(fs.existsSync(trava), false);
+  },
 };
 
 (async () => {

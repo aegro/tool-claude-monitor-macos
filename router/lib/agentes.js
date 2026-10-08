@@ -642,10 +642,23 @@ async function vigiar() {
   });
 }
 
-async function prepararSlot({ prazoDaAvaliacaoMs = 8000 } = {}) {
+async function comTravaEsperando(fn, { prazoMs = 15000, intervaloMs = 250 } = {}) {
+  const limite = Date.now() + prazoMs;
+  for (;;) {
+    const r = await comTrava(fn);
+    if (!(r && r.acao === 'ocupado')) return r;
+    if (Date.now() >= limite) {
+      contas.log('agentes: a trava do slot seguiu ocupada; abrindo sem trocar');
+      return r;
+    }
+    await esperar(intervaloMs);
+  }
+}
+
+async function prepararSlot({ prazoDaAvaliacaoMs = 8000, prazoDaTravaMs = 15000 } = {}) {
   const cfg = contas.carregarConfig();
   if (cfg.ativo === false) return null;
-  return comTrava(async () => {
+  return comTravaEsperando(async () => {
     const atual = contaNoSlot(cfg);
     const prontas = await Promise.race([avaliarParaAgentes(cfg), esperar(prazoDaAvaliacaoMs).then(() => null)]);
     if (!prontas) {
@@ -661,7 +674,7 @@ async function prepararSlot({ prazoDaAvaliacaoMs = 8000 } = {}) {
     estado.ultimaTroca = Date.now();
     contas.escreverJson(ARQ_ESTADO, estado);
     return troca;
-  });
+  }, { prazoMs: prazoDaTravaMs });
 }
 
 module.exports = {
@@ -688,5 +701,6 @@ module.exports = {
   vigiar,
   prepararSlot,
   linhaDoSecurity,
+  comTravaEsperando,
   deveChecarVolta,
 };

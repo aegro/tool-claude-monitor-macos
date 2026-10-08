@@ -166,10 +166,10 @@ function loginVencido(texto, agora = Date.now(), folga = 0) {
   return Boolean(credencial && credencial.expiresAt && credencial.expiresAt <= agora + folga);
 }
 
-async function conferirLogin(texto, chaveEsperada = null) {
+async function conferirLogin(texto, chaveEsperada = null, { folga = 0 } = {}) {
   const credencial = credencialDoItem(texto);
   if (!credencial || !credencial.accessToken) return { valido: false, motivo: 'no claudeAiOauth' };
-  if (loginVencido(texto, Date.now(), FOLGA_DO_ACCESS_TOKEN_MS)) return { valido: true, chave: chaveEsperada, vencido: true };
+  if (loginVencido(texto, Date.now(), folga)) return { valido: true, chave: chaveEsperada, vencido: true };
   try {
     const resposta = await fetch(URL_PERFIL, {
       headers: { Authorization: `Bearer ${credencial.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' },
@@ -464,7 +464,7 @@ async function trocarSlotSemTrava(para, motivo, estado = {}) {
   }
   const textoDestino = destino && (await lerItem(servicoGuardado(para)));
   if (!credencialDoItem(textoDestino)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
-  const conferido = await conferirLogin(textoDestino, destino.chave);
+  const conferido = await conferirLogin(textoDestino, destino.chave, { folga: FOLGA_DO_ACCESS_TOKEN_MS });
   if (conferido.valido === false) {
     marcarLoginInvalido(para, conferido.motivo);
     throw erroDaTroca(`the ${para} agents login no longer works (${conferido.motivo}): run claude-accounts login ${para} --agents`, 'login-invalido');

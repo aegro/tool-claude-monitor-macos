@@ -183,8 +183,10 @@ const testes = {
       assert.strictEqual(r.valido, true);
       assert.strictEqual(chamadas, 0);
       const quaseVencido = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt: Date.now() + 30000 } });
-      assert.strictEqual((await agentes.conferirLogin(quaseVencido, 'u2:o2')).valido, true);
+      assert.strictEqual((await agentes.conferirLogin(quaseVencido, 'u2:o2', { folga: 5 * 60000 })).valido, true);
       assert.strictEqual(chamadas, 0);
+      assert.strictEqual((await agentes.conferirLogin(quaseVencido)).valido, false);
+      assert.strictEqual(chamadas, 1);
     } finally {
       global.fetch = original;
     }

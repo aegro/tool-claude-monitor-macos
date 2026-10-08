@@ -34,4 +34,5 @@ jobs:
         run: |
           node router/test/teste-proxy.js
           node router/test/teste-agentes.js
+          node router/test/teste-wrapper.js
           python3 router/test/teste-tui.py

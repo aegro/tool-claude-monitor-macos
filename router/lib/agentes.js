@@ -431,7 +431,7 @@ function desfazerContaDoSlot(gravada, anterior) {
   }
 }
 
-async function trocarSlotSemTrava(para, motivo) {
+async function trocarSlotSemTrava(para, motivo, estado = {}) {
   const cfg = contas.carregarConfig();
   const atual = await lerItem(SERVICO_SLOT);
   if (!atual) throw new Error('there is no login in the agents slot');
@@ -484,22 +484,22 @@ async function trocarSlotSemTrava(para, motivo) {
     throw e;
   }
   contas.registrarTroca({ de, para, motivo: `agents ${motivo}` });
-  if (SLOT_PADRAO && cfg.principal === de) await avisarSemLoginNoTerminal(de);
+  if (SLOT_PADRAO && cfg.principal === de) await avisarSemLoginNoTerminal(de, estado);
   return { de, para, mudou: true };
 }
 
-async function avisarSemLoginNoTerminal(id) {
+async function avisarSemLoginNoTerminal(id, estado) {
   if (await contas.lerCredencial(id)) return false;
   contas.log(`agentes: ${id} saiu de ~/.claude e não tem login próprio em ${contas.dirDaConta(id)}; o terminal só volta a usá-la depois de claude-accounts login ${id}`);
-  contas.notificar('Claude: terminal login missing', `${contas.nomeDaConta(id)} left ~/.claude for the agents. Run claude-accounts login ${id} to keep it in terminal sessions.`);
+  avisarUmaVez(estado, `sem-login-terminal ${id}`, 'Claude: terminal login missing', `${contas.nomeDaConta(id)} left ~/.claude for the agents. Run claude-accounts login ${id} to keep it in terminal sessions.`);
   return true;
 }
 
 function trocarSlot(para, motivo = 'manual') {
   return comTrava(async () => {
-    const troca = await trocarSlotSemTrava(para, motivo);
+    const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
+    const troca = await trocarSlotSemTrava(para, motivo, estado);
     if (troca.mudou) {
-      const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
       estado.ultimaTroca = Date.now();
       contas.escreverJson(ARQ_ESTADO, estado);
     }
@@ -676,7 +676,7 @@ async function voltarParaPreferida(cfg, estado) {
   const preferida = contas.preferidaDeVolta(await avaliarParaAgentes(cfg), atual, cfg);
   if (!preferida) return null;
   try {
-    const troca = await trocarSlotSemTrava(preferida.id, 'preferida');
+    const troca = await trocarSlotSemTrava(preferida.id, 'preferida', estado);
     estado.ultimaTroca = Date.now();
     return troca;
   } catch (e) {
@@ -702,7 +702,7 @@ async function trocarPreventiva(cfg, lista, estado) {
   const ritmoLido = ritmo == null ? 'desconhecido' : `${ritmo.toFixed(2)} pp/min`;
   contas.log(`agentes: folga ${folga}% em ${atual}, ritmo ${ritmoLido}; troca preventiva para ${escolhida.id}`);
   try {
-    const troca = await trocarSlotSemTrava(escolhida.id, 'preventiva');
+    const troca = await trocarSlotSemTrava(escolhida.id, 'preventiva', estado);
     estado.ultimaTroca = Date.now();
     return troca;
   } catch (e) {
@@ -729,13 +729,13 @@ async function migrarOciosos(lista, estado) {
   return migrados;
 }
 
-async function trocarParaAPrimeiraQueServe(candidatos, excluir, motivo) {
+async function trocarParaAPrimeiraQueServe(candidatos, excluir, motivo, estado) {
   let restantes = candidatos;
   for (;;) {
     const escolhida = contas.decidir(restantes, { excluir });
     if (!escolhida) return { troca: null };
     try {
-      return { troca: await trocarSlotSemTrava(escolhida.id, motivo), escolhida };
+      return { troca: await trocarSlotSemTrava(escolhida.id, motivo, estado), escolhida };
     } catch (e) {
       if (e.tipo !== 'login-invalido') return { erro: e, escolhida };
       contas.log(`agentes: ${escolhida.id} fica fora da troca: ${e.message}`);
@@ -765,7 +765,7 @@ async function vigiar() {
       const de = await contaRealNoSlot(cfg);
       if (de) contas.marcarEsgotada(de, null, 'limite');
       const candidatos = (await avaliarParaAgentes(cfg)).filter((c) => c.id !== de);
-      const r = await trocarParaAPrimeiraQueServe(candidatos, de ? [de] : [], 'limite');
+      const r = await trocarParaAPrimeiraQueServe(candidatos, de ? [de] : [], 'limite', estado);
       if (r.erro && r.erro.tipo === 'slot-mudou') {
         contas.escreverJson(ARQ_ESTADO, estado);
         return { acao: 'adiada', parados: novas.map((p) => p.nome), erro: r.erro.message };
@@ -834,7 +834,7 @@ async function prepararSlot({ prazoDaAvaliacaoMs = 8000, prazoDaTravaMs = 15000 
     const escolhida = sair ? contas.decidir(prontas, { excluir: [atual] }) : contas.preferidaDeVolta(prontas, atual, cfg);
     if (!escolhida || escolhida.id === atual) return null;
     const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
-    const troca = await trocarSlotSemTrava(escolhida.id, 'ao abrir');
+    const troca = await trocarSlotSemTrava(escolhida.id, 'ao abrir', estado);
     estado.ultimaTroca = Date.now();
     contas.escreverJson(ARQ_ESTADO, estado);
     return troca;

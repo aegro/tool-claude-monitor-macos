@@ -81,6 +81,37 @@ async function apagarItem(servico) {
   await rodar('security', ['delete-generic-password', '-s', servico]);
 }
 
+function ehObjeto(valor) {
+  return Boolean(valor) && typeof valor === 'object' && !Array.isArray(valor);
+}
+
+function lerObjeto(texto) {
+  try {
+    const valor = JSON.parse(texto);
+    return ehObjeto(valor) ? valor : null;
+  } catch {
+    return null;
+  }
+}
+
+function credencialDoItem(texto) {
+  const item = lerObjeto(texto);
+  return item && ehObjeto(item.claudeAiOauth) ? item.claudeAiOauth : null;
+}
+
+function loginDoItem(texto) {
+  const credencial = credencialDoItem(texto);
+  return credencial ? JSON.stringify({ claudeAiOauth: credencial }) : null;
+}
+
+function slotComLogin(textoDoSlot, textoDoLogin) {
+  const slot = lerObjeto(textoDoSlot);
+  if (!slot) throw new Error('the agents slot item is not valid JSON; leaving it alone');
+  const credencial = credencialDoItem(textoDoLogin);
+  if (!credencial) throw new Error('the stored agents login has no claudeAiOauth');
+  return JSON.stringify({ ...slot, claudeAiOauth: credencial });
+}
+
 function chaveDe(conta) {
   return conta && conta.accountUuid ? [conta.accountUuid, conta.organizationUuid].filter(Boolean).join(':') : null;
 }
@@ -129,11 +160,7 @@ function prontaParaAgentes(id, cfg = contas.carregarConfig()) {
 }
 
 async function credencialGuardada(id) {
-  try {
-    return JSON.parse(await lerItem(servicoGuardado(id))).claudeAiOauth || null;
-  } catch {
-    return null;
-  }
+  return credencialDoItem(await lerItem(servicoGuardado(id)));
 }
 
 async function avaliarParaAgentes(cfg = contas.carregarConfig()) {
@@ -232,14 +259,17 @@ async function trocarSlotSemTrava(para, motivo) {
   if (!de) throw new Error('the login in the agents slot matches no account; leaving it alone');
   const destino = loginGuardado(para);
   const textoDestino = destino && (await lerItem(servicoGuardado(para)));
-  if (!textoDestino) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
+  if (!credencialDoItem(textoDestino)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
+  const novoSlot = slotComLogin(atual, textoDestino);
+  const loginDe = loginDoItem(atual);
+  if (!loginDe) throw new Error('there is no login in the agents slot');
 
   const contaDe = chaveReal === chaveDeclarada ? configDoSlot.oauthAccount : (loginGuardado(de) || {}).oauthAccount;
   if (donoDaTrava && !travaEhDe(donoDaTrava)) throw new Error('lost the agents lock; leaving the slot alone');
   renovarTrava();
-  if (!(await gravarItem(servicoGuardado(de), atual))) throw new Error(`could not keep the ${de} login`);
+  if (!(await gravarItem(servicoGuardado(de), loginDe))) throw new Error(`could not keep the ${de} login`);
   contas.escreverJson(arquivoDoLogin(de), { oauthAccount: contaDe || null, chave: chaveReal, guardadoEm: Date.now() });
-  if (!(await gravarItem(SERVICO_SLOT, textoDestino))) {
+  if (!(await gravarItem(SERVICO_SLOT, novoSlot))) {
     await gravarItem(SERVICO_SLOT, atual);
     throw new Error(`could not load the ${para} login into the agents slot`);
   }
@@ -264,7 +294,7 @@ function trocarSlot(para, motivo = 'manual') {
 }
 
 async function guardarLoginDoDir(id, dir) {
-  const texto = await lerItem(servicoDoDir(dir));
+  const texto = loginDoItem(await lerItem(servicoDoDir(dir)));
   const conta = (contas.lerJson(path.join(dir, '.claude.json'), {}) || {}).oauthAccount;
   if (!texto || !conta) throw new Error('the login did not finish');
   if (!(await gravarItem(servicoGuardado(id), texto))) throw new Error('could not store the agents login');
@@ -531,6 +561,8 @@ module.exports = {
   contaRealNoSlot,
   prontaParaAgentes,
   loginGuardado,
+  loginDoItem,
+  slotComLogin,
   trocarSlot,
   guardarLoginDoDir,
   servicoDoDir,

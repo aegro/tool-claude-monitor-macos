@@ -45,6 +45,11 @@ function limite(ms) {
   return { type: 'assistant', isApiErrorMessage: true, error: 'rate_limit', timestamp: new Date(ms).toISOString() };
 }
 
+const mcp = { 'servidor|1': { accessToken: 'mcp', refreshToken: 'mcp-r' } };
+const design = { accessToken: 'design' };
+const slotDaConta = JSON.stringify({ mcpOAuth: mcp, claudeAiOauth: { accessToken: 'a', refreshToken: 'a-r' }, designOauth: design });
+const loginDaSegunda = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r' } });
+
 const testes = {
   agenteParadoPorLimiteEhDetectado() {
     sessao('s1', [{ type: 'user', timestamp: new Date(agora - 70000).toISOString() }, limite(agora - 60000)]);
@@ -88,6 +93,32 @@ const testes = {
     const p = { sessionId: 's1', quando: agora - 60000, processoDesde: 0 };
     assert.strictEqual(agentes.planejar([p], { desistidos: { s1: agora - 60000 } }).novas.length, 0);
     assert.strictEqual(agentes.planejar([p], { desistidos: { s1: agora - 600000 } }).novas.length, 1);
+  },
+  trocaNoSlotSoMudaOLoginEMantemAsOutrasChaves() {
+    const guardado = agentes.loginDoItem(slotDaConta);
+    assert.deepStrictEqual(JSON.parse(guardado), { claudeAiOauth: { accessToken: 'a', refreshToken: 'a-r' } });
+    const trocado = JSON.parse(agentes.slotComLogin(slotDaConta, loginDaSegunda));
+    assert.deepStrictEqual(Object.keys(trocado), ['mcpOAuth', 'claudeAiOauth', 'designOauth']);
+    assert.deepStrictEqual(trocado.claudeAiOauth, { accessToken: 'b', refreshToken: 'b-r' });
+    assert.deepStrictEqual(trocado.mcpOAuth, mcp);
+    assert.deepStrictEqual(trocado.designOauth, design);
+    assert.strictEqual(agentes.slotComLogin(JSON.stringify(trocado), guardado), slotDaConta);
+  },
+  loginGuardadoComOutrasChavesSoEmprestaOClaudeAiOauth() {
+    const antigo = JSON.stringify({ claudeAiOauth: { accessToken: 'b' }, mcpOAuth: { velho: {} }, designOauth: { accessToken: 'velho' } });
+    const trocado = JSON.parse(agentes.slotComLogin(slotDaConta, antigo));
+    assert.deepStrictEqual(trocado.mcpOAuth, mcp);
+    assert.deepStrictEqual(trocado.designOauth, design);
+    assert.deepStrictEqual(JSON.parse(agentes.loginDoItem(antigo)), { claudeAiOauth: { accessToken: 'b' } });
+  },
+  slotIlegivelOuLoginSemClaudeAiOauthRecusamATroca() {
+    assert.throws(() => agentes.slotComLogin(slotDaConta.slice(0, 40), loginDaSegunda), /not valid JSON/);
+    assert.throws(() => agentes.slotComLogin('[]', loginDaSegunda), /not valid JSON/);
+    assert.throws(() => agentes.slotComLogin(slotDaConta, loginDaSegunda.slice(0, 20)), /no claudeAiOauth/);
+    assert.throws(() => agentes.slotComLogin(slotDaConta, JSON.stringify({ mcpOAuth: mcp })), /no claudeAiOauth/);
+    assert.strictEqual(agentes.loginDoItem(JSON.stringify({ mcpOAuth: mcp })), null);
+    assert.strictEqual(agentes.loginDoItem(slotDaConta.slice(0, 40)), null);
+    assert.strictEqual(agentes.loginDoItem(null), null);
   },
   trocaDePrincipalSoMudaAPrincipal() {
     fs.writeFileSync(contas.ARQ_CONFIG, JSON.stringify({ contas: { segunda: {} }, preferida: 'segunda', ativo: false }));

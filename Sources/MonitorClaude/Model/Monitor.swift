@@ -171,7 +171,7 @@ final class Monitor: ObservableObject {
 
     private func publishSlotBurnRate() {
         guard liveIsCurrent, let identity = activeAccount, let snapshot = usage,
-              liveOrg == identity.organizationUuid,
+              snapshot.source == .api, liveOrg == identity.organizationUuid,
               let rate = AccountRouter.slotBurnRate(account: identity.key, snapshot: snapshot,
                                                     session: sessionBurn, weekly: weeklyBurn)
         else { return }

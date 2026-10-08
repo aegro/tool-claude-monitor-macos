@@ -19,6 +19,7 @@ const LIMITE_DA_LINHA_DO_SECURITY = 4032;
 const JANELA_DE_RETOMADA_MS = 6 * 3600 * 1000;
 const TENTATIVAS_DE_RETOMADA = 3;
 const JANELA_DO_RITMO_MS = 10 * 60 * 1000;
+const INTERVALO_MINIMO_DO_RITMO_MS = 2 * 60 * 1000;
 const TOLERANCIA_DA_RENOVACAO_MS = 60 * 1000;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
 const CONTINUAR =
@@ -227,8 +228,8 @@ function ritmoDeUso(leituras, chave, agora = Date.now()) {
   if (validas.length < 2) return null;
   const primeira = validas[0];
   const ultima = validas[validas.length - 1];
-  const minutos = (ultima.em - primeira.em) / 60000;
-  return minutos > 0 ? (ultima.usado - primeira.usado) / minutos : null;
+  if (ultima.em - primeira.em < INTERVALO_MINIMO_DO_RITMO_MS) return null;
+  return (ultima.usado - primeira.usado) / ((ultima.em - primeira.em) / 60000);
 }
 
 function ritmoDaConta(leituras, sonda, agora = Date.now()) {

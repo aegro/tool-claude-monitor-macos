@@ -192,6 +192,13 @@ const testes = {
     assert.strictEqual(agentes.ritmoDeUso([leitura(-12, 10), leitura(0, 58)], 'cinco', agora), null);
     assert.strictEqual(agentes.ritmoDeUso([], 'cinco', agora), null);
   },
+  ritmoPedeDoisMinutosEntreAsLeituras() {
+    const proximas = [{ em: agora - 5000, cinco: { usado: 70, renovaEm } }, { em: agora, cinco: { usado: 71, renovaEm } }];
+    assert.strictEqual(agentes.ritmoDeUso(proximas, 'cinco', agora), null);
+    assert.strictEqual(agentes.ritmoDeUso([leitura(-1.9, 70), leitura(0, 72)], 'cinco', agora), null);
+    assert.strictEqual(agentes.ritmoDeUso([leitura(-2, 70), leitura(0, 72)], 'cinco', agora), 1);
+    assert.strictEqual(agentes.ritmoDeUso([leitura(-2, 70), leitura(-1, 71), leitura(0, 72)], 'cinco', agora), 1);
+  },
   ritmoDescartaLeiturasDeAntesDaRenovacao() {
     const caiu = [leitura(-9, 90), leitura(-6, 95), leitura(-4, 2), leitura(-2, 4), leitura(0, 6)];
     assert.strictEqual(agentes.ritmoDeUso(caiu, 'cinco', agora), 1);

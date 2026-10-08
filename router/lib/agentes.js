@@ -23,8 +23,6 @@ const INTERVALO_MINIMO_DO_RITMO_MS = 2 * 60 * 1000;
 const TOLERANCIA_DA_RENOVACAO_MS = 60 * 1000;
 const FOLGA_DO_ACCESS_TOKEN_MS = 5 * 60 * 1000;
 const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
-const URL_TOKEN = 'https://platform.claude.com/v1/oauth/token';
-const ID_DO_CLIENTE_OAUTH = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'; // gitleaks:allow (client_id público do Claude Code, não é segredo)
 const CONTINUAR =
   '[claude-auto] A conta anterior atingiu o limite e esta sessão foi retomada em outra conta. ' +
   'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
@@ -182,76 +180,6 @@ async function conferirLogin(texto, chaveEsperada = null) {
   } catch (e) {
     return { valido: null, motivo: e.name === 'TimeoutError' ? 'timeout' : e.message };
   }
-}
-
-async function renovarLogin(texto) {
-  const credencial = credencialDoItem(texto);
-  if (!credencial || !credencial.refreshToken || !Array.isArray(credencial.scopes) || !credencial.scopes.length) {
-    return { texto: null, impossivel: true, motivo: 'no refresh token or scopes' };
-  }
-  try {
-    const resposta = await fetch(URL_TOKEN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'refresh_token',
-        refresh_token: credencial.refreshToken,
-        client_id: ID_DO_CLIENTE_OAUTH,
-        scope: credencial.scopes.join(' '),
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-    const corpo = await resposta.json().catch(() => null);
-    if (resposta.status === 200 && corpo && corpo.access_token && typeof corpo.expires_in === 'number') {
-      const renovada = {
-        ...credencial,
-        accessToken: corpo.access_token,
-        refreshToken: corpo.refresh_token || credencial.refreshToken,
-        expiresAt: Date.now() + corpo.expires_in * 1000,
-      };
-      if (typeof corpo.scope === 'string' && corpo.scope.trim()) renovada.scopes = corpo.scope.split(' ').filter(Boolean);
-      return { texto: JSON.stringify({ claudeAiOauth: renovada }) };
-    }
-    if (resposta.status === 400 && corpo && corpo.error === 'invalid_grant') return { texto: null, invalido: true, motivo: 'invalid_grant' };
-    return { texto: null, motivo: `HTTP ${resposta.status}` };
-  } catch (e) {
-    return { texto: null, motivo: e.name === 'TimeoutError' ? 'timeout' : e.message };
-  }
-}
-
-async function renovarLoginGuardado(id, texto) {
-  const r = await renovarLogin(texto);
-  if (r.invalido) return { invalido: r.motivo };
-  if (!r.texto) {
-    contas.log(`agentes: não deu para renovar o login guardado de ${id} (${r.motivo})`);
-    return { texto, impossivel: Boolean(r.impossivel) };
-  }
-  if (!(await gravarItem(servicoGuardado(id), r.texto))) {
-    contas.log(`agentes: o login renovado de ${id} não ficou guardado; segue para o slot com ele`);
-  }
-  return { texto: r.texto, renovado: true };
-}
-
-async function conferirLoginGuardado(id, texto, chave) {
-  let renovado = false;
-  if (loginVencido(texto, Date.now(), FOLGA_DO_ACCESS_TOKEN_MS)) {
-    const r = await renovarLoginGuardado(id, texto);
-    if (r.invalido) return { texto, conferido: { valido: false, motivo: r.invalido } };
-    texto = r.texto;
-    renovado = Boolean(r.renovado);
-  }
-  let conferido = await conferirLogin(texto, chave);
-  if (conferido.valido === false && conferido.motivo === 'HTTP 401' && !renovado) {
-    const r = await renovarLoginGuardado(id, texto);
-    if (r.invalido) return { texto, conferido: { valido: false, motivo: r.invalido } };
-    if (r.renovado) {
-      texto = r.texto;
-      conferido = await conferirLogin(texto, chave);
-    } else if (!r.impossivel) {
-      conferido = { valido: null, motivo: 'HTTP 401 and the token server did not answer' };
-    }
-  }
-  return { texto, conferido };
 }
 
 async function chaveDoToken(texto) {
@@ -534,9 +462,9 @@ async function trocarSlotSemTrava(para, motivo, estado = {}) {
   if (destino && !loginUtilizavel(destino)) {
     throw erroDaTroca(`the ${para} agents login needs a new sign-in: run claude-accounts login ${para} --agents`, 'login-invalido');
   }
-  const textoGuardado = destino && (await lerItem(servicoGuardado(para)));
-  if (!credencialDoItem(textoGuardado)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
-  const { texto: textoDestino, conferido } = await conferirLoginGuardado(para, textoGuardado, destino.chave);
+  const textoDestino = destino && (await lerItem(servicoGuardado(para)));
+  if (!credencialDoItem(textoDestino)) throw new Error(`${para} has no agents login: run claude-accounts login ${para} --agents`);
+  const conferido = await conferirLogin(textoDestino, destino.chave);
   if (conferido.valido === false) {
     marcarLoginInvalido(para, conferido.motivo);
     throw erroDaTroca(`the ${para} agents login no longer works (${conferido.motivo}): run claude-accounts login ${para} --agents`, 'login-invalido');
@@ -944,7 +872,6 @@ module.exports = {
   loginUtilizavel,
   loginVencido,
   conferirLogin,
-  renovarLogin,
   resultadoDoPerfil,
   loginDoItem,
   slotComLogin,

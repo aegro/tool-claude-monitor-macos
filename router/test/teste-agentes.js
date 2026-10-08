@@ -189,51 +189,6 @@ const testes = {
       global.fetch = original;
     }
   },
-  async loginGuardadoVencidoERenovadoAntesDeEntrarNoSlot() {
-    const original = global.fetch;
-    const pedidos = [];
-    const respostas = [];
-    global.fetch = async (url, opcoes) => {
-      pedidos.push({ url, corpo: JSON.parse(opcoes.body) });
-      return respostas.shift()();
-    };
-    const vencido = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt: agora - 1000, scopes: ['user:inference', 'user:profile'], subscriptionType: 'max' } });
-    try {
-      respostas.push(async () => ({ status: 200, json: async () => ({ access_token: 'b2', refresh_token: 'b-r2', expires_in: 3600 }) }));
-      const r = await agentes.renovarLogin(vencido);
-      const renovada = JSON.parse(r.texto).claudeAiOauth;
-      assert.strictEqual(pedidos[0].url, 'https://platform.claude.com/v1/oauth/token');
-      assert.deepStrictEqual(pedidos[0].corpo, {
-        grant_type: 'refresh_token',
-        refresh_token: 'b-r',
-        client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-        scope: 'user:inference user:profile',
-      });
-      assert.strictEqual(renovada.accessToken, 'b2');
-      assert.strictEqual(renovada.refreshToken, 'b-r2');
-      assert.strictEqual(renovada.subscriptionType, 'max');
-      assert.ok(renovada.expiresAt > Date.now());
-      assert.strictEqual(agentes.loginVencido(r.texto), false);
-
-      respostas.push(async () => ({ status: 400, json: async () => ({ error: 'invalid_grant' }) }));
-      assert.deepStrictEqual(await agentes.renovarLogin(vencido), { texto: null, invalido: true, motivo: 'invalid_grant' });
-      respostas.push(async () => ({ status: 503, json: async () => null }));
-      const fora = await agentes.renovarLogin(vencido);
-      assert.strictEqual(fora.texto, null);
-      assert.strictEqual(fora.invalido, undefined);
-      respostas.push(async () => {
-        throw new Error('network down');
-      });
-      assert.strictEqual((await agentes.renovarLogin(vencido)).invalido, undefined);
-
-      const semEscopo = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r', expiresAt: agora - 1000 } });
-      const antes = pedidos.length;
-      assert.strictEqual((await agentes.renovarLogin(semEscopo)).texto, null);
-      assert.strictEqual(pedidos.length, antes);
-    } finally {
-      global.fetch = original;
-    }
-  },
   async loginGuardadoComAccessTokenValidoConsultaOPerfil() {
     const original = global.fetch;
     const respostas = [];

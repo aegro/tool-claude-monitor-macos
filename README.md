@@ -130,7 +130,7 @@ O resultado é uma partição exata: cada processo cai em um único balde, nada 
 
 O app lê o Keychain, os arquivos em `~/.claude/`, o histórico de uso que o app desktop do Claude grava em `~/Library/Application Support/Claude/`, e a tabela de processos do seu usuário. Ele fala com um único endpoint, `api.anthropic.com/api/oauth/usage`, o mesmo do comando `/usage`. O token sai da máquina apenas nesse GET, como Bearer.
 
-Com o roteador configurado, o app também lê as credenciais das contas de `~/.claude-accounts` pelo `/usr/bin/security` e consulta o mesmo endpoint com cada uma. Nele, escreve só a chave `ativo` de `~/.claude-accounts/config.json` e os links de `~/.local/bin`.
+Com o roteador configurado, o app também lê as credenciais das contas de `~/.claude-accounts` pelo `/usr/bin/security` e consulta o mesmo endpoint com cada uma. Nele, escreve só as chaves `ativo` e `preferida` de `~/.claude-accounts/config.json` e os links de `~/.local/bin`.
 
 O app nunca escreve a sua credencial, nem no Keychain nem em disco. Em `~/Library/Application Support/Farol/` ficam dois arquivos, ambos sem credenciais: `usage-history.json` (porcentagens, horários de reset e o uuid da organização a que cada leitura pertence) e `accounts.json` (o último snapshot de limites por conta, com rótulo e plano).
 

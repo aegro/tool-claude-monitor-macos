@@ -91,6 +91,17 @@ const testes = {
     const r = contas.textoDaTroca({ de: 'a', para: 'b', motivo: 'five_hour' }, (id) => id, agora - 60000, agora);
     assert.strictEqual(r.texto, 'a bateu o limite de 5h.');
   },
+
+  voltaSoQuandoOMotivoEUmLimite() {
+    const agora = new Date(2026, 9, 8, 15, 0).getTime();
+    const volta = new Date(2026, 9, 8, 16, 0).getTime();
+    const texto = (motivo) => contas.textoDaTroca({ de: 'a', para: 'b', motivo }, (id) => id, volta, agora).texto;
+    assert.strictEqual(texto('rate_limit'), 'a bateu o limite. Volta às 16:00.');
+    assert.strictEqual(texto('agents seven_day_opus'), 'a bateu o limite da semana. Volta às 16:00. Os agentes seguiram junto.');
+    assert.strictEqual(texto('manual'), 'a foi trocada à mão.');
+    assert.strictEqual(texto('auth'), 'a pediu login de novo.');
+    assert.strictEqual(texto('agents preventiva'), 'a estava quase no limite. Os agentes seguiram junto.');
+  },
 };
 
 let falhas = 0;

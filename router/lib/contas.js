@@ -613,6 +613,11 @@ function motivoLegivel(motivo) {
   return 'ficou sem folga';
 }
 
+function eLimite(motivo) {
+  const base = String(motivo || '').replace(/^agents /, '');
+  return base === 'five_hour' || base.startsWith('seven_day') || base === 'limite' || base === 'rate_limit';
+}
+
 function horaDaVolta(ms, agora = Date.now()) {
   const d = new Date(ms);
   const p = (n) => String(n).padStart(2, '0');
@@ -629,7 +634,8 @@ function textoDaTroca({ de, para, motivo }, nome = (id) => id, volta = null, ago
     };
   }
   let texto = `${nome(de)} ${motivoLegivel(motivo)}.`;
-  if (volta && volta > agora) texto += ` Volta às ${horaDaVolta(volta, agora)}.`;
+  // Só um limite renova numa hora certa; para os outros motivos, o prazo guardado é um palpite.
+  if (volta && volta > agora && eLimite(motivo)) texto += ` Volta às ${horaDaVolta(volta, agora)}.`;
   if (agentes) texto += ' Os agentes seguiram junto.';
   return { titulo: `Trocou para ${nome(para)}`, texto };
 }

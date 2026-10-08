@@ -254,6 +254,28 @@ const testes = {
       global.fetch = original;
     }
   },
+  async loginSemConferenciaPassaParaAProximaConta() {
+    const erro = (tipo) => Object.assign(new Error(tipo), { tipo });
+    const lista = candidatas();
+    const tentadas = [];
+    const trocar = (falhas) => async (id) => {
+      tentadas.push(id);
+      if (falhas[id]) throw erro(falhas[id]);
+      return { de: 'principal', para: id, mudou: true };
+    };
+    let r = await agentes.trocarParaAPrimeiraQueServe(lista, ['principal'], 'limite', {}, trocar({ segunda: 'sem-conferencia' }));
+    assert.deepStrictEqual(tentadas, ['segunda', 'extra']);
+    assert.strictEqual(r.troca.para, 'extra');
+    tentadas.length = 0;
+    r = await agentes.trocarParaAPrimeiraQueServe(lista, ['principal'], 'limite', {}, trocar({ segunda: 'sem-conferencia', extra: 'login-invalido' }));
+    assert.deepStrictEqual(tentadas, ['segunda', 'extra']);
+    assert.strictEqual(r.erro.tipo, 'sem-conferencia');
+    assert.strictEqual(r.escolhida.id, 'segunda');
+    tentadas.length = 0;
+    r = await agentes.trocarParaAPrimeiraQueServe(lista, ['principal'], 'limite', {}, trocar({ segunda: 'slot-mudou' }));
+    assert.deepStrictEqual(tentadas, ['segunda']);
+    assert.strictEqual(r.erro.tipo, 'slot-mudou');
+  },
   loginMarcadoComoInvalidoSaiDaTroca() {
     configurar();
     const arquivo = path.join(contas.DIR_ESTADO, 'agentes', 'segunda.json');

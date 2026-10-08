@@ -820,16 +820,18 @@ async function migrarOciosos(lista, estado) {
   return migrados;
 }
 
-async function trocarParaAPrimeiraQueServe(candidatos, excluir, motivo, estado) {
+async function trocarParaAPrimeiraQueServe(candidatos, excluir, motivo, estado, trocar = trocarSlotSemTrava) {
   let restantes = candidatos;
+  let semConferencia = null;
   for (;;) {
     const escolhida = contas.decidir(restantes, { excluir });
-    if (!escolhida) return { troca: null };
+    if (!escolhida) return semConferencia || { troca: null };
     try {
-      return { troca: await trocarSlotSemTrava(escolhida.id, motivo, estado), escolhida };
+      return { troca: await trocar(escolhida.id, motivo, estado), escolhida };
     } catch (e) {
-      if (e.tipo !== 'login-invalido') return { erro: e, escolhida };
+      if (e.tipo !== 'login-invalido' && e.tipo !== 'sem-conferencia') return { erro: e, escolhida };
       contas.log(`agentes: ${escolhida.id} fica fora da troca: ${e.message}`);
+      if (e.tipo === 'sem-conferencia' && !semConferencia) semConferencia = { erro: e, escolhida };
       restantes = restantes.filter((c) => c.id !== escolhida.id);
     }
   }
@@ -950,6 +952,7 @@ module.exports = {
   mesmoLogin,
   textoParaDesfazer,
   trocarSlot,
+  trocarParaAPrimeiraQueServe,
   guardarLoginDoDir,
   servicoDoDir,
   envDoSlot,

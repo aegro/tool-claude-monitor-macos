@@ -74,11 +74,12 @@ function dormir(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function travaDeArquivoVelha(dir, agora = Date.now()) {
+function inodeDaTravaVelha(dir, agora = Date.now()) {
   try {
-    return agora - fs.statSync(dir).mtimeMs > TRAVA_DE_ARQUIVO_VELHA_MS;
+    const info = fs.statSync(dir);
+    return agora - info.mtimeMs > TRAVA_DE_ARQUIVO_VELHA_MS ? info.ino : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -89,17 +90,33 @@ function tomarTravaDeArquivo(dir) {
   } catch (e) {
     if (e.code !== 'EEXIST') throw e;
   }
-  if (!travaDeArquivoVelha(dir)) return null;
+  const velha = inodeDaTravaVelha(dir);
+  if (velha == null) return null;
+  const tomada = path.join(dir, 'tomada');
+  try {
+    fs.mkdirSync(tomada);
+  } catch (e) {
+    if (e.code === 'EEXIST' && inodeDaTravaVelha(tomada) != null) {
+      try {
+        fs.rmdirSync(tomada);
+      } catch {}
+    }
+    return null;
+  }
+  let inode = null;
+  try {
+    inode = fs.statSync(dir).ino;
+  } catch {}
+  if (inode !== velha) {
+    try {
+      fs.rmdirSync(tomada);
+    } catch {}
+    return null;
+  }
   const afastada = `${dir}.${process.pid}.${crypto.randomUUID()}`;
   try {
     fs.renameSync(dir, afastada);
   } catch {
-    return null;
-  }
-  if (!travaDeArquivoVelha(afastada)) {
-    try {
-      fs.renameSync(afastada, dir);
-    } catch {}
     return null;
   }
   fs.rmSync(afastada, { recursive: true, force: true });

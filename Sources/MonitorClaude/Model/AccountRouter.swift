@@ -177,14 +177,19 @@ enum AccountRouter {
 
     private static func takeFileLock(_ lock: String, staleAfter: TimeInterval) -> UInt64? {
         if mkdir(lock, 0o755) == 0 { return inode(of: lock) }
-        guard errno == EEXIST, isStale(lock, after: staleAfter) else { return nil }
+        guard errno == EEXIST, isStale(lock, after: staleAfter), let stale = inode(of: lock) else { return nil }
+        let claim = lock + "/tomada"
+        guard mkdir(claim, 0o755) == 0 else {
+            if errno == EEXIST, isStale(claim, after: staleAfter) { rmdir(claim) }
+            return nil
+        }
+        guard inode(of: lock) == stale else {
+            rmdir(claim)
+            return nil
+        }
         let aside = "\(lock).\(getpid()).\(UUID().uuidString)"
         guard rename(lock, aside) == 0 else { return nil }
-        if isStale(aside, after: staleAfter) {
-            try? FileManager.default.removeItem(atPath: aside)
-        } else {
-            rename(aside, lock)
-        }
+        try? FileManager.default.removeItem(atPath: aside)
         return nil
     }
 

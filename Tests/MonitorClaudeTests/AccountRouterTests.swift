@@ -246,6 +246,21 @@ struct AccountRouterTests {
         #expect(!FileManager.default.fileExists(atPath: lock.path))
     }
 
+    @Test func travaVelhaSendoTomadaPorOutroFicaComEle() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("config.json")
+        let lock = dir.appendingPathComponent("config.json.lock")
+        let claim = lock.appendingPathComponent("tomada")
+        try FileManager.default.createDirectory(at: claim, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: lock.path)
+
+        #expect(throws: AccountRouter.ConfigBusy.self) {
+            try AccountRouter.withFileLock(for: url, timeout: 0.2) {}
+        }
+        #expect(FileManager.default.fileExists(atPath: claim.path))
+    }
+
     @Test func loginDeAgentesMarcadoComoInválidoNãoContaComoPronto() {
         #expect(AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","guardadoEm":1}"#.utf8)))
         #expect(!AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","invalidoEm":2,"motivoInvalido":"HTTP 401"}"#.utf8)))

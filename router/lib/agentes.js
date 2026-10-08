@@ -68,6 +68,7 @@ async function lerItem(servico) {
 }
 
 async function gravarItem(servico, texto) {
+  if (/["\\\r\n]/.test(servico + CONTA_KEYCHAIN)) return false;
   const hex = Buffer.from(texto, 'utf8').toString('hex');
   await rodar('security', ['-i'], { entrada: `add-generic-password -U -a "${CONTA_KEYCHAIN}" -s "${servico}" -X ${hex}\n` });
   return (await lerItem(servico)) === texto;

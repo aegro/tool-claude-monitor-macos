@@ -335,6 +335,10 @@ enum AccountRouter {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
+    static func withdrawSlotBurnRate(at url: URL = slotBurnRateURL) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
     // MARK: choice
 
     static func used(_ window: LimitWindow?, now: Date = Date()) -> Double {

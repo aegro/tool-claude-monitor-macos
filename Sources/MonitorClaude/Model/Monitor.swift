@@ -177,7 +177,10 @@ final class Monitor: ObservableObject {
                   session: history.burnRate(\.session, account: identity.key, org: liveOrg),
                   weekly: history.burnRate(\.weekly, account: identity.key, org: liveOrg,
                                            window: 6 * 3600, minPoints: 8, minSpan: 3600))
-        else { return }
+        else {
+            AccountRouter.withdrawSlotBurnRate()
+            return
+        }
         try? AccountRouter.publish(rate)
     }
 

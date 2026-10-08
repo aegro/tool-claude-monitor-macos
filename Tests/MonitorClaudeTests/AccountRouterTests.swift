@@ -359,6 +359,20 @@ struct AccountRouterTests {
         #expect(permissions?.intValue == 0o600)
     }
 
+    @Test func ritmoRetiradoSomeDoDisco() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent(".estado/ritmo.json")
+        let rate = SlotBurnRate(account: "u:o", window: "cinco", pointsPerMinute: 1, used: 90,
+                                usedAt: Date(timeIntervalSince1970: 1_791_399_940), at: Date(timeIntervalSince1970: 1_791_400_000))
+
+        try AccountRouter.publish(rate, to: url)
+        AccountRouter.withdrawSlotBurnRate(at: url)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        AccountRouter.withdrawSlotBurnRate(at: url)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test func loginDeAgentesMarcadoComoInválidoNãoContaComoPronto() {
         #expect(AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","guardadoEm":1}"#.utf8)))
         #expect(!AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","invalidoEm":2,"motivoInvalido":"HTTP 401"}"#.utf8)))

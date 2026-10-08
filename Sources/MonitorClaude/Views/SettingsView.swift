@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var preferred = AccountRouter.loadConfig()?.preferred
     @State private var commandsInstalled = AccountRouter.commandsInstalled
     @State private var routerError: String?
+    @State private var savingRouterConfig = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -195,18 +196,28 @@ struct SettingsView: View {
     }
 
     private func setRouter(_ on: Bool) {
+        guard !savingRouterConfig else { return }
         if on, !commandsInstalled, let bin = AccountRouter.bundledCommands {
             guard installBundledCommands(from: bin) else { return }
         }
+        Task {
+            guard await saveRouterConfig({ try AccountRouter.setEnabled(on) }) else { return }
+            routerOn = on
+            await monitor.refreshUsage(force: true)
+        }
+    }
+
+    private func saveRouterConfig(_ save: @escaping @Sendable () throws -> Void) async -> Bool {
+        savingRouterConfig = true
+        defer { savingRouterConfig = false }
         do {
-            try AccountRouter.setEnabled(on)
+            try await Task.detached(priority: .userInitiated) { try save() }.value
             routerError = nil
+            return true
         } catch {
             routerError = "Não deu para salvar \(AccountRouter.configURL.path): \(error.localizedDescription)"
-            return
+            return false
         }
-        routerOn = on
-        Task { await monitor.refreshUsage(force: true) }
     }
 
     private func preferredPicker(_ accounts: [AccountRouter.Account]) -> some View {
@@ -243,16 +254,13 @@ struct SettingsView: View {
     }
 
     private func setPreferred(_ id: String?) {
-        do {
-            try AccountRouter.setPreferred(id)
-            routerError = nil
-        } catch {
-            routerError = "Não deu para salvar \(AccountRouter.configURL.path): \(error.localizedDescription)"
-            return
+        guard !savingRouterConfig else { return }
+        Task {
+            guard await saveRouterConfig({ try AccountRouter.setPreferred(id) }) else { return }
+            preferred = id
+            monitor.watchAgentsNow()
+            await monitor.refreshUsage(force: true)
         }
-        preferred = id
-        monitor.watchAgentsNow()
-        Task { await monitor.refreshUsage(force: true) }
     }
 
     @discardableResult

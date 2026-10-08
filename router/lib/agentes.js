@@ -317,10 +317,16 @@ function projetarFolga(folga, desde, ritmo, agora = Date.now()) {
   return Math.max(0, folga - ritmo * Math.max(0, (agora - desde) / 60000));
 }
 
+function renovouDepoisDoMonitor(sonda, monitor, agora = Date.now()) {
+  const janela = sonda && sonda.uso && sonda.uso[monitor.janela];
+  return Boolean(janela && janela.renovaEm > monitor.usadoEm && janela.renovaEm <= agora);
+}
+
 function folgaERitmo(sonda, leituras, monitor, agora = Date.now()) {
   const folga = contas.folgaDe(sonda, agora);
   const leitura = leituraDe(sonda);
-  const usoDoMonitor = monitor && Number.isFinite(monitor.usado) && Number.isFinite(monitor.usadoEm);
+  const usoDoMonitor = monitor && Number.isFinite(monitor.usado) && Number.isFinite(monitor.usadoEm)
+    && !renovouDepoisDoMonitor(sonda, monitor, agora);
   if (usoDoMonitor && (!leitura || !leitura.em || monitor.usadoEm > leitura.em)) {
     const folgaDoMonitor = Math.max(0, Math.min(100, 100 - monitor.usado));
     const base = folga == null ? folgaDoMonitor : Math.min(folgaDoMonitor, folga);

@@ -71,20 +71,39 @@ async function lerItem(servico) {
   return r.ok ? r.saida.replace(/\n$/, '') : null;
 }
 
-function linhaDoSecurity(servico, texto) {
+function linhaCompletaDoSecurity(servico, hex) {
   if (/["\\\r\n]/.test(servico + CONTA_KEYCHAIN)) return null;
-  const hex = Buffer.from(texto, 'utf8').toString('hex');
-  const linha = `add-generic-password -U -a "${CONTA_KEYCHAIN}" -s "${servico}" -X ${hex}\n`;
-  return Buffer.byteLength(linha) <= LIMITE_DA_LINHA_DO_SECURITY ? linha : null;
+  return `add-generic-password -U -a "${CONTA_KEYCHAIN}" -s "${servico}" -X ${hex}\n`;
+}
+
+function linhaDoSecurity(servico, texto) {
+  const linha = linhaCompletaDoSecurity(servico, Buffer.from(texto, 'utf8').toString('hex'));
+  return linha && Buffer.byteLength(linha) <= LIMITE_DA_LINHA_DO_SECURITY ? linha : null;
+}
+
+function modoDeGravacao(servico, tamanhoDaLinha) {
+  if (tamanhoDaLinha <= LIMITE_DA_LINHA_DO_SECURITY) return 'stdin';
+  return servico === SERVICO_SLOT ? 'argv' : 'recusar';
 }
 
 async function gravarItem(servico, texto) {
-  const linha = linhaDoSecurity(servico, texto);
+  const hex = Buffer.from(texto, 'utf8').toString('hex');
+  const linha = linhaCompletaDoSecurity(servico, hex);
   if (!linha) {
+    contas.log(`agentes: ${servico} tem caracteres que o security -i não aceita; a troca foi recusada`);
+    return false;
+  }
+  const modo = modoDeGravacao(servico, Buffer.byteLength(linha));
+  if (modo === 'recusar') {
     contas.log(`agentes: ${servico} não cabe no security -i; o login não vai em argv, a troca foi recusada`);
     return false;
   }
-  await rodar('security', ['-i'], { entrada: linha });
+  if (modo === 'argv') {
+    contas.log(`agentes: ${servico} não cabe no security -i; gravando em argv como o Claude Code faz para o login do slot`);
+    await rodar('security', ['add-generic-password', '-U', '-a', CONTA_KEYCHAIN, '-s', servico, '-X', hex]);
+  } else {
+    await rodar('security', ['-i'], { entrada: linha });
+  }
   return (await lerItem(servico)) === texto;
 }
 
@@ -853,6 +872,8 @@ module.exports = {
   vigiar,
   prepararSlot,
   linhaDoSecurity,
+  modoDeGravacao,
+  SERVICO_SLOT,
   comTravaEsperando,
   deveChecarVolta,
   deveProcurarAlvoPreventivo,

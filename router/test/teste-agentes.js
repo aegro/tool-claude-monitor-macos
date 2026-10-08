@@ -455,6 +455,15 @@ const testes = {
     assert.strictEqual(agentes.linhaDoSecurity('nome"quebrado', loginDaSegunda), null);
   },
 
+  modoDeGravacaoSoLiberaArgvParaOSlot() {
+    const acima = 5000;
+    const abaixo = 100;
+    assert.strictEqual(agentes.modoDeGravacao(agentes.SERVICO_SLOT, acima), 'argv');
+    assert.strictEqual(agentes.modoDeGravacao(agentes.SERVICO_SLOT, abaixo), 'stdin');
+    assert.strictEqual(agentes.modoDeGravacao('claude-auto agents segunda', acima), 'recusar');
+    assert.strictEqual(agentes.modoDeGravacao('claude-auto agents segunda', abaixo), 'stdin');
+  },
+
   async aberturaEsperaATravaOcupada() {
     const trava = path.join(contas.DIR_ESTADO, 'agentes.trava');
     fs.mkdirSync(trava, { recursive: true });

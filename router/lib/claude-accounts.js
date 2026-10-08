@@ -105,9 +105,8 @@ function avisarDuplicadas() {
 }
 
 function entrarParaAgentes(id, args) {
-  const dir = path.join(contas.DIR_CONTAS, `.login-agentes-${id}`);
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(contas.DIR_CONTAS, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(contas.DIR_CONTAS, `.login-agentes-${id}-`));
   contas.escreverJson(path.join(dir, '.claude.json'), { hasCompletedOnboarding: true });
   const env = { ...agentes.envDoSlot(), CLAUDE_CONFIG_DIR: dir };
   const filho = spawn(contas.resolverClaude(), ['auth', 'login', ...args], { env, stdio: 'inherit' });

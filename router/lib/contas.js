@@ -43,6 +43,9 @@ const CHAVES_PROJETO = [
   'mcpContextUris', 'ignorePatterns', 'hasClaudeMdExternalIncludesApproved', 'hasClaudeMdExternalIncludesWarningShown',
 ];
 
+const TRAVA_DE_ARQUIVO_VELHA_MS = 10000;
+const PRAZO_DA_TRAVA_DE_ARQUIVO_MS = 5000;
+
 const CONFIG_PADRAO = {
   principal: PRINCIPAL_PADRAO,
   reserva: [],
@@ -67,8 +70,87 @@ function escreverJson(arquivo, dados) {
   fs.renameSync(tmp, arquivo);
 }
 
+function dormir(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function travaDeArquivoVelha(dir, agora = Date.now()) {
+  try {
+    return agora - fs.statSync(dir).mtimeMs > TRAVA_DE_ARQUIVO_VELHA_MS;
+  } catch {
+    return false;
+  }
+}
+
+function tomarTravaDeArquivo(dir) {
+  try {
+    fs.mkdirSync(dir);
+    return fs.statSync(dir).ino;
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+  }
+  if (!travaDeArquivoVelha(dir)) return null;
+  const afastada = `${dir}.${process.pid}.${crypto.randomUUID()}`;
+  try {
+    fs.renameSync(dir, afastada);
+  } catch {
+    return null;
+  }
+  if (!travaDeArquivoVelha(afastada)) {
+    try {
+      fs.renameSync(afastada, dir);
+    } catch {}
+    return null;
+  }
+  fs.rmSync(afastada, { recursive: true, force: true });
+  return null;
+}
+
+function comTravaDeArquivo(arquivo, fn, { prazoMs = PRAZO_DA_TRAVA_DE_ARQUIVO_MS } = {}) {
+  fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+  const dir = `${arquivo}.lock`;
+  const limite = Date.now() + prazoMs;
+  let dono = tomarTravaDeArquivo(dir);
+  while (dono == null) {
+    if (Date.now() >= limite) throw new Error(`${arquivo} is being changed by another process; try again`);
+    dormir(50);
+    dono = tomarTravaDeArquivo(dir);
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      if (fs.statSync(dir).ino === dono) fs.rmdirSync(dir);
+    } catch {}
+  }
+}
+
+function atualizarJson(arquivo, mudar, opcoes) {
+  return comTravaDeArquivo(
+    arquivo,
+    () => {
+      const atual = fs.existsSync(arquivo) ? lerJson(arquivo, null) : {};
+      if (!atual || typeof atual !== 'object' || Array.isArray(atual)) {
+        throw new Error(`${arquivo} is not valid JSON; fix it before changing accounts`);
+      }
+      const novo = mudar(atual);
+      if (novo) escreverJson(arquivo, novo);
+      return novo;
+    },
+    opcoes,
+  );
+}
+
+function atualizarConfig(mudar) {
+  return atualizarJson(ARQ_CONFIG, (salvo) => mudar(salvo, normalizarConfig(salvo)));
+}
+
 function carregarConfig() {
-  const salvo = lerJson(ARQ_CONFIG, {});
+  return normalizarConfig(lerJson(ARQ_CONFIG, {}));
+}
+
+function normalizarConfig(lido) {
+  const salvo = lido && typeof lido === 'object' && !Array.isArray(lido) ? lido : {};
   const principal = salvo.principal || PRINCIPAL_PADRAO;
   const cfg = {
     ...CONFIG_PADRAO,
@@ -83,18 +165,10 @@ function carregarConfig() {
   return cfg;
 }
 
-function salvarConfig(cfg) {
-  if (fs.existsSync(ARQ_CONFIG) && lerJson(ARQ_CONFIG, null) === null) {
-    throw new Error(`${ARQ_CONFIG} is not valid JSON; fix or remove it before changing accounts`);
-  }
-  escreverJson(ARQ_CONFIG, cfg);
-}
-
 function definirPrincipal(id) {
-  const atual = carregarConfig();
-  if (atual.principal === id) return;
-  const salvo = lerJson(ARQ_CONFIG, {}) || {};
-  salvarConfig({ ...salvo, principal: id, contas: atual.contas, rota: atual.rota });
+  atualizarConfig((salvo, atual) =>
+    atual.principal === id ? null : { ...salvo, principal: id, contas: atual.contas, rota: atual.rota },
+  );
 }
 
 function expandir(p) {
@@ -559,7 +633,9 @@ module.exports = {
   ARQ_CONFIG,
   ARQ_LOG,
   carregarConfig,
-  salvarConfig,
+  atualizarConfig,
+  atualizarJson,
+  comTravaDeArquivo,
   definirPrincipal,
   dirDaConta,
   nomeDaConta,

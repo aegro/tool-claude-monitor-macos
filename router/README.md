@@ -30,6 +30,8 @@ Config em `~/.claude-accounts/config.json`:
 | `cacheUsoSegundos` | `60` | idade máxima da leitura de cota antes de consultar de novo |
 | `notificar` | `true` | notificação do macOS a cada troca |
 
+`claude-accounts`, a troca dos agentes e os Ajustes do Monitor só mudam `config.json` e o `.claude.json` do slot (`~/.claude.json`) dentro de uma trava `<arquivo>.lock`, o mesmo diretório que o Claude Code usa para o `.claude.json`, e releem o arquivo dentro dela. Trava sem atividade há mais de 10 s é tratada como abandonada; trava ocupada por mais de alguns segundos faz a mudança desistir com erro, sem gravar. Arquivo com JSON inválido não é sobrescrito.
+
 Folga é 100% menos o maior uso entre as janelas de 5h e de 7 dias. Conta que bateu o limite fica marcada como esgotada até o horário de renovação.
 
 ## Como troca

@@ -402,6 +402,16 @@ async function desfazerSlot(escrito, anterior) {
   return gravarItem(SERVICO_SLOT, texto);
 }
 
+function desfazerContaDoSlot(gravada, anterior) {
+  try {
+    contas.atualizarJson(ARQ_SLOT, (config) =>
+      chaveDe(config.oauthAccount) === chaveDe(gravada) ? { ...config, oauthAccount: anterior } : null,
+    );
+  } catch (e) {
+    contas.log(`agentes: não deu para voltar o oauthAccount de ${ARQ_SLOT}: ${e.message}`);
+  }
+}
+
 async function trocarSlotSemTrava(para, motivo) {
   const cfg = contas.carregarConfig();
   const atual = await lerItem(SERVICO_SLOT);
@@ -442,15 +452,18 @@ async function trocarSlotSemTrava(para, motivo) {
     await desfazerSlot(novoSlot, slotAntes);
     throw new Error(`could not load the ${para} login into the agents slot`);
   }
+  let contaAnterior = null;
   try {
-    const novoConfig = contas.lerJson(ARQ_SLOT, {}) || {};
-    novoConfig.oauthAccount = destino.oauthAccount;
-    contas.escreverJson(ARQ_SLOT, novoConfig);
+    contas.atualizarJson(ARQ_SLOT, (config) => {
+      contaAnterior = { oauthAccount: config.oauthAccount };
+      return { ...config, oauthAccount: destino.oauthAccount };
+    });
+    if (SLOT_PADRAO) contas.definirPrincipal(para);
   } catch (e) {
+    if (contaAnterior) desfazerContaDoSlot(destino.oauthAccount, contaAnterior.oauthAccount);
     await desfazerSlot(novoSlot, slotAntes);
     throw e;
   }
-  if (SLOT_PADRAO) contas.definirPrincipal(para);
   contas.registrarTroca({ de, para, motivo: `agents ${motivo}` });
   return { de, para, mudou: true };
 }

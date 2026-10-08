@@ -180,6 +180,56 @@ const testes = {
     assert.strictEqual(agentes.loginUtilizavel(null), false);
     fs.rmSync(arquivo);
   },
+  travaDoArquivoUsaOPontoLockDoClaudeCode() {
+    const arquivo = path.join(raiz, 'travado', '.claude.json');
+    fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+    fs.writeFileSync(arquivo, JSON.stringify({ oauthAccount: { accountUuid: 'u1' }, projects: { a: 1 } }));
+    let dentro = null;
+    contas.atualizarJson(arquivo, (config) => {
+      dentro = fs.existsSync(`${arquivo}.lock`);
+      return { ...config, oauthAccount: { accountUuid: 'u2' } };
+    });
+    assert.strictEqual(dentro, true);
+    assert.strictEqual(fs.existsSync(`${arquivo}.lock`), false);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(arquivo, 'utf8')), { oauthAccount: { accountUuid: 'u2' }, projects: { a: 1 } });
+  },
+  travaOcupadaEsperaEDesisteSemGravar() {
+    const arquivo = path.join(raiz, 'ocupado', 'config.json');
+    fs.mkdirSync(`${arquivo}.lock`, { recursive: true });
+    fs.writeFileSync(arquivo, '{"ativo":true}');
+    const inicio = Date.now();
+    assert.throws(() => contas.atualizarJson(arquivo, () => ({ ativo: false }), { prazoMs: 200 }), /another process/);
+    assert.ok(Date.now() - inicio >= 200);
+    assert.strictEqual(fs.readFileSync(arquivo, 'utf8'), '{"ativo":true}');
+    assert.strictEqual(fs.existsSync(`${arquivo}.lock`), true);
+    fs.rmdirSync(`${arquivo}.lock`);
+  },
+  travaVelhaEhTomada() {
+    const arquivo = path.join(raiz, 'velho', 'config.json');
+    fs.mkdirSync(`${arquivo}.lock`, { recursive: true });
+    const antiga = new Date(Date.now() - 60000);
+    fs.utimesSync(`${arquivo}.lock`, antiga, antiga);
+    contas.atualizarJson(arquivo, () => ({ ativo: false }), { prazoMs: 1000 });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(arquivo, 'utf8')), { ativo: false });
+    assert.strictEqual(fs.existsSync(`${arquivo}.lock`), false);
+  },
+  travaDeOutroNaoEhApagadaNaSaida() {
+    const arquivo = path.join(raiz, 'outro', 'config.json');
+    contas.comTravaDeArquivo(arquivo, () => {
+      fs.rmdirSync(`${arquivo}.lock`);
+      fs.mkdirSync(`${arquivo}.lock`);
+    });
+    assert.strictEqual(fs.existsSync(`${arquivo}.lock`), true);
+    fs.rmdirSync(`${arquivo}.lock`);
+  },
+  jsonIlegivelNaoEhSobrescrito() {
+    const arquivo = path.join(raiz, 'ilegivel', '.claude.json');
+    fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+    fs.writeFileSync(arquivo, '{"projects":');
+    assert.throws(() => contas.atualizarJson(arquivo, (c) => ({ ...c, oauthAccount: {} })), /not valid JSON/);
+    assert.strictEqual(fs.readFileSync(arquivo, 'utf8'), '{"projects":');
+    assert.strictEqual(fs.existsSync(`${arquivo}.lock`), false);
+  },
   trocaDePrincipalSoMudaAPrincipal() {
     fs.writeFileSync(contas.ARQ_CONFIG, JSON.stringify({ contas: { segunda: {} }, preferida: 'segunda', ativo: false }));
     contas.definirPrincipal('segunda');

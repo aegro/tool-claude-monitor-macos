@@ -178,6 +178,39 @@ struct AccountRouterTests {
                                    available: ["squad"], exhausted: [:]) == "squad")
     }
 
+    @Test func salvarAConfigRespeitaATravaDoRoteador() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("config.json")
+        let lock = dir.appendingPathComponent("config.json.lock")
+        try FileManager.default.createDirectory(at: lock, withIntermediateDirectories: true)
+        try Data(#"{"ativo":true}"#.utf8).write(to: url)
+
+        #expect(throws: AccountRouter.ConfigBusy.self) {
+            try AccountRouter.withFileLock(for: url, timeout: 0.2) {}
+        }
+        #expect(FileManager.default.fileExists(atPath: lock.path))
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { try? FileManager.default.removeItem(at: lock) }
+        try AccountRouter.setEnabled(false, at: url)
+        #expect(try config(String(decoding: try Data(contentsOf: url), as: UTF8.self)).enabled == false)
+        #expect(!FileManager.default.fileExists(atPath: lock.path))
+    }
+
+    @Test func travaVelhaDaConfigÉTomada() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("config.json")
+        let lock = dir.appendingPathComponent("config.json.lock")
+        try FileManager.default.createDirectory(at: lock, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: lock.path)
+
+        try AccountRouter.setPreferred("squad", at: url)
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect(root["preferida"] as? String == "squad")
+        #expect(!FileManager.default.fileExists(atPath: lock.path))
+    }
+
     @Test func loginDeAgentesMarcadoComoInválidoNãoContaComoPronto() {
         #expect(AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","guardadoEm":1}"#.utf8)))
         #expect(!AccountRouter.isUsableAgentsLogin(Data(#"{"chave":"u:o","invalidoEm":2,"motivoInvalido":"HTTP 401"}"#.utf8)))

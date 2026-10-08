@@ -166,9 +166,7 @@ function entrar(id, args) {
 }
 
 function ligar(ativo) {
-  const cfg = contas.carregarConfig();
-  cfg.ativo = ativo;
-  contas.salvarConfig(cfg);
+  contas.atualizarConfig((salvo) => ({ ...salvo, ativo }));
   console.log(ativo ? 'account switching is on' : 'account switching is off: claude-auto now opens plain claude');
 }
 
@@ -178,12 +176,14 @@ function adicionar(args) {
     process.stderr.write('usage: claude-accounts add <id> [--name N] [--reserve]  (lowercase id, no spaces)\n');
     process.exit(2);
   }
+  contas.atualizarConfig((salvo, atual) => {
+    const nome = opcao(args, ['--name', '--nome'], (atual.contas[id] || {}).nome || id);
+    const rota = atual.rota.filter((c) => c !== id);
+    const reserva = atual.reserva.filter((c) => c !== id);
+    (args.includes('--reserve') || args.includes('--reserva') ? reserva : rota).push(id);
+    return { ...salvo, contas: { ...atual.contas, [id]: { ...(atual.contas[id] || {}), nome } }, rota, reserva };
+  });
   const cfg = contas.carregarConfig();
-  cfg.contas[id] = { ...(cfg.contas[id] || {}), nome: opcao(args, ['--name', '--nome'], (cfg.contas[id] || {}).nome || id) };
-  cfg.rota = cfg.rota.filter((c) => c !== id);
-  cfg.reserva = cfg.reserva.filter((c) => c !== id);
-  (args.includes('--reserve') || args.includes('--reserva') ? cfg.reserva : cfg.rota).push(id);
-  contas.salvarConfig(cfg);
   contas.prepararConta(id);
   console.log(`account ${id} ready at ${contas.dirDaConta(id)}`);
   console.log(`route: ${cfg.rota.join(', ')}${cfg.reserva.length ? ` | reserve: ${cfg.reserva.join(', ')}` : ''}`);

@@ -137,18 +137,67 @@ enum AccountRouter {
         try updateConfig(at: url) { $0["preferida"] = id }
     }
 
-    private static func updateConfig(at url: URL, _ change: (inout [String: Any]) -> Void) throws {
-        var root: [String: Any] = [:]
-        if FileManager.default.fileExists(atPath: url.path) {
-            let data = try Data(contentsOf: url)
-            guard let existing = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            else { throw UnreadableConfig() }
-            root = existing
+    struct ConfigBusy: LocalizedError {
+        var errorDescription: String? {
+            "outro processo está mudando a config agora; tente de novo"
         }
-        change(&root)
+    }
+
+    private static func updateConfig(at url: URL, _ change: (inout [String: Any]) -> Void) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: url, options: .atomic)
+        try withFileLock(for: url) {
+            var root: [String: Any] = [:]
+            if FileManager.default.fileExists(atPath: url.path) {
+                let data = try Data(contentsOf: url)
+                guard let existing = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                else { throw UnreadableConfig() }
+                root = existing
+            }
+            change(&root)
+            let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func withFileLock<T>(for url: URL, timeout: TimeInterval = 2, staleAfter: TimeInterval = 10,
+                                _ body: () throws -> T) throws -> T {
+        let lock = url.path + ".lock"
+        let deadline = Date().addingTimeInterval(timeout)
+        var owner = takeFileLock(lock, staleAfter: staleAfter)
+        while owner == nil {
+            guard Date() < deadline else { throw ConfigBusy() }
+            usleep(50_000)
+            owner = takeFileLock(lock, staleAfter: staleAfter)
+        }
+        defer {
+            if inode(of: lock) == owner { rmdir(lock) }
+        }
+        return try body()
+    }
+
+    private static func takeFileLock(_ lock: String, staleAfter: TimeInterval) -> UInt64? {
+        if mkdir(lock, 0o755) == 0 { return inode(of: lock) }
+        guard errno == EEXIST, isStale(lock, after: staleAfter) else { return nil }
+        let aside = "\(lock).\(getpid()).\(UUID().uuidString)"
+        guard rename(lock, aside) == 0 else { return nil }
+        if isStale(aside, after: staleAfter) {
+            try? FileManager.default.removeItem(atPath: aside)
+        } else {
+            rename(aside, lock)
+        }
+        return nil
+    }
+
+    private static func isStale(_ path: String, after interval: TimeInterval) -> Bool {
+        guard let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        else { return false }
+        return Date().timeIntervalSince(modified) > interval
+    }
+
+    private static func inode(of path: String) -> UInt64? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return UInt64(info.st_ino)
     }
 
     static func installCommands(from bin: URL, into directory: URL = commandsDirectory) throws {

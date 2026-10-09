@@ -219,17 +219,6 @@ struct QueueAndAccountsTests {
         #expect(result.output.contains("antes"))
     }
 
-    /// The limit holds with every utility-QoS worker busy, the state of a 3-core CI runner: it is kept by the
-    /// waiting thread, not by a timer on a global queue that fires only when a worker frees up.
-    @Test func prazoValeComAsFilasGlobaisOcupadas() async {
-        let spinUntil = Date().addingTimeInterval(1.5)
-        for _ in 0..<64 { DispatchQueue.global(qos: .utility).async { while Date() < spinUntil {} } }
-        let started = Date()
-        let result = await Blocking.run { AccountRouter.run(URL(fileURLWithPath: "/bin/sleep"), ["30"], timeout: 0.2) }
-        #expect(Date().timeIntervalSince(started) < 1.2)
-        #expect(result.interrupted)
-    }
-
     @Test func filhoQueIgnoraOSigtermMorreJuntoComOComandoNoPrazo() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-prazo-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

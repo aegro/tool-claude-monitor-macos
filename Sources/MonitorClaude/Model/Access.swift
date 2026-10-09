@@ -378,6 +378,8 @@ enum AccessBuilder {
         var hasLogin: Bool
         /// nil when the agents never needed a login for this account (it is where the agents run, or no agents).
         var agentsLoginWorks: Bool?
+        /// The Keychain read of its login waits for "Ler de novo" after a refused or unanswered prompt.
+        var keychainRefused = false
     }
 
     struct Inputs {
@@ -409,7 +411,13 @@ enum AccessBuilder {
                                     detail: "\(problem). Até corrigir, a fila não aparece no Monitor.",
                                     kind: .needsYou, action: .openURL(inputs.routerConfigURL), actionLabel: "Abrir"))
         }
-        for account in inputs.accounts where !account.hasLogin {
+        for account in inputs.accounts where account.keychainRefused {
+            items.append(AccessItem(id: "conta.\(account.id).keychain", badge: AccountRouter.monogram(for: account.label),
+                                    title: "\(account.label): login no Keychain",
+                                    detail: "O macOS pediu para liberar o login desta conta e o pedido foi recusado ou ficou sem resposta. Clique em Ler de novo e autorize (Sempre Permitir, quando ele oferecer).",
+                                    kind: .needsYou, action: .readAgain, actionLabel: "Ler de novo"))
+        }
+        for account in inputs.accounts where !account.hasLogin && !account.keychainRefused {
             items.append(AccessItem(id: "conta.\(account.id)", badge: AccountRouter.monogram(for: account.label),
                                     title: "\(account.label) sem login",
                                     detail: "A troca não usa esta conta até você autorizar de novo.",

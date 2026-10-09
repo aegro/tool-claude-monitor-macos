@@ -750,12 +750,24 @@ function python3() {
  * cabeçalhos da resposta), um arquivo por conta: o Monitor lê daqui sem gastar consulta ao `/usage`, que tem limite
  * apertado. `usado` em porcentagem (o evento traz fração), `renovaEm` em ms.
  */
+// O login de cada conta, relido no máximo uma vez por minuto: o evento chega a cada resposta e o login quase nunca
+// muda. Se mudar, por um minuto os números saem com o login anterior, e o Monitor os deixa de fora.
+const loginsLidos = new Map();
+function loginDaConta(id) {
+  const lido = loginsLidos.get(id);
+  if (lido && Date.now() - lido.em < 60000) return lido.chave;
+  let chave = null;
+  try { chave = identidade(id).chave; } catch {}
+  loginsLidos.set(id, { chave, em: Date.now() });
+  return chave;
+}
+
 function registrarLimiteAoVivo(id, info, agora = Date.now()) {
   if (!id || !info || typeof info !== 'object') return null;
-  const novas = {};
+  const janelas = {};
   const anotar = (chave, utilizacao, renova) => {
     if (typeof utilizacao !== 'number' || !Number.isFinite(utilizacao)) return;
-    novas[chave] = {
+    janelas[chave] = {
       usado: Math.round(Math.min(1, Math.max(0, utilizacao)) * 1000) / 10,
       renovaEm: typeof renova === 'number' ? renova * 1000 : null,
     };
@@ -763,23 +775,14 @@ function registrarLimiteAoVivo(id, info, agora = Date.now()) {
   for (const [chave, janela] of Object.entries(info.unifiedWindows || {})) {
     if (janela && typeof janela === 'object') anotar(chave, janela.utilization, janela.resetsAt);
   }
-  if (info.rateLimitType && !novas[info.rateLimitType]) anotar(info.rateLimitType, info.utilization, info.resetsAt);
-  if (!Object.keys(novas).length) return null;
-  const arquivo = path.join(DIR_AO_VIVO, `${id}.json`);
-  const conta = (() => { try { return identidade(id).chave; } catch { return null; } })();
-  // Um evento pode trazer só uma janela: as outras que o arquivo já tinha, do mesmo login e ainda sem renovar,
-  // ficam, para o Monitor não ler uma conta sem limite semanal.
-  const anterior = lerJson(arquivo, null);
-  const mantidas = {};
-  if (anterior && anterior.janelas && (!conta || anterior.conta === conta)) {
-    for (const [chave, janela] of Object.entries(anterior.janelas)) {
-      if (janela && !(janela.renovaEm && janela.renovaEm <= agora)) mantidas[chave] = janela;
-    }
-  }
-  const registro = { em: agora, conta, status: info.status || null, janelas: { ...mantidas, ...novas } };
+  if (info.rateLimitType && !janelas[info.rateLimitType]) anotar(info.rateLimitType, info.utilization, info.resetsAt);
+  if (!Object.keys(janelas).length) return null;
+  // Só as janelas deste evento, todas com a hora dele: o Monitor junta cada uma à última leitura completa, que
+  // guarda as outras. Repetir aqui uma janela de um evento antigo a faria parecer nova.
+  const registro = { em: agora, conta: loginDaConta(id), status: info.status || null, janelas };
   try {
     fs.mkdirSync(DIR_AO_VIVO, { recursive: true });
-    escreverJson(arquivo, registro);
+    escreverJson(path.join(DIR_AO_VIVO, `${id}.json`), registro);
   } catch {}
   return registro;
 }

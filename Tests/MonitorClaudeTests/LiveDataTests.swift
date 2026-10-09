@@ -121,8 +121,9 @@ struct LiveDataTests {
         let atual = AccountIdentity(accountUuid: "conta-b", organizationUuid: "org-1")
         #expect(Monitor.liveSnapshot(.init(snapshot: snap, key: "conta-a:org-1"), for: atual) == nil)
         #expect(Monitor.liveSnapshot(.init(snapshot: snap, key: "conta-b:org-1"), for: atual) == snap)
-        // A file without the login, or a slot whose login cannot be read: nothing to compare, the numbers stand.
-        #expect(Monitor.liveSnapshot(.init(snapshot: snap, key: nil), for: atual) == snap)
+        // A file whose login the router could not read proves nothing about this one.
+        #expect(Monitor.liveSnapshot(.init(snapshot: snap, key: nil), for: atual) == nil)
+        // A slot whose login this side cannot read either: nothing to compare, the numbers stand.
         #expect(Monitor.liveSnapshot(.init(snapshot: snap, key: "conta-a:org-1"), for: nil) == snap)
         #expect(Monitor.liveSnapshot(nil, for: atual) == nil)
     }
@@ -133,7 +134,7 @@ struct LiveDataTests {
         let now = Date(timeIntervalSince1970: 100_000)
         func plan(live: TimeInterval?, held: TimeInterval?, full: TimeInterval?, pause: TimeInterval? = nil) -> TerminalPlan {
             TerminalPlan.plan(live: live.map { now.addingTimeInterval(-$0) }, held: held.map { now.addingTimeInterval(-$0) },
-                              lastFullRead: full.map { now.addingTimeInterval(-$0) },
+                              lastAttempt: full.map { now.addingTimeInterval(-$0) },
                               pause: pause.map { now.addingTimeInterval($0) }, now: now, interval: 120)
         }
         // Streaming, whole read five minutes ago: the live numbers, no request.
@@ -203,6 +204,15 @@ struct LiveDataTests {
         #expect(item?.actionLabel == "Ler de novo")
         inputs.claudeLoginRetry = false
         #expect(AccessBuilder.build(inputs).items.first { $0.id == "claude.login" }?.action == .copy("claude"))
+
+        // An extra account refused the same way: "Ler de novo" for it, not the login flow.
+        var accounts = AccessBuilder.Inputs()
+        accounts.accounts = [.init(id: "max", label: "Thomas (Max)", hasLogin: false, agentsLoginWorks: nil, keychainRefused: true),
+                             .init(id: "compare", label: "Squad Compare", hasLogin: false, agentsLoginWorks: nil)]
+        let items = AccessBuilder.build(accounts).items
+        #expect(items.first { $0.id == "conta.max.keychain" }?.action == .readAgain)
+        #expect(!items.contains { $0.id == "conta.max" })
+        #expect(items.first { $0.id == "conta.compare" }?.action == .reauthorize(account: "compare", agents: false))
     }
 
     /// A read killed at its time limit (a dialog nobody answered) is told apart from one that failed on its own.

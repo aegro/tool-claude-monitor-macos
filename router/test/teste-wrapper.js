@@ -40,12 +40,17 @@ const testes = {
     assert.strictEqual(r.em, agora);
     const gravado = JSON.parse(fs.readFileSync(path.join(contas.DIR_AO_VIVO, 'principal.json'), 'utf8'));
     assert.deepStrictEqual(gravado, r);
-    // O evento seguinte só fala da janela de 5h: a semanal que já estava fica.
+    // O evento seguinte só fala da janela de 5h: o arquivo traz só ela, com a hora dele, e a semanal fica com a
+    // última leitura completa do Monitor, em vez de ser repetida aqui como se fosse nova.
     const depois = contas.registrarLimiteAoVivo('principal', { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.45, resetsAt: 1791514800 }, agora + 60000);
-    assert.deepStrictEqual(depois.janelas, { five_hour: { usado: 45, renovaEm: 1791514800000 }, seven_day: { usado: 76, renovaEm: 1791630000000 } });
-    // Janela que já renovou sai.
-    const muitoDepois = contas.registrarLimiteAoVivo('principal', { status: 'allowed', rateLimitType: 'seven_day', utilization: 0.8, resetsAt: 1791630000 }, 1791520000000);
-    assert.deepStrictEqual(Object.keys(muitoDepois.janelas), ['seven_day']);
+    assert.deepStrictEqual(depois.janelas, { five_hour: { usado: 45, renovaEm: 1791514800000 } });
+    assert.strictEqual(depois.em, agora + 60000);
+    // O login vai junto, para o Monitor não mostrar os números de um login com o nome de outro.
+    fs.mkdirSync(path.join(process.env.CLAUDE_AUTO_HOME, 'max'), { recursive: true });
+    fs.writeFileSync(path.join(process.env.CLAUDE_AUTO_HOME, 'max', '.claude.json'),
+      JSON.stringify({ oauthAccount: { accountUuid: 'conta-max', organizationUuid: 'org-x', emailAddress: 'max@exemplo.com' } }));
+    assert.strictEqual(contas.registrarLimiteAoVivo('max', { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.1 }, agora).conta,
+      'conta-max:org-x');
     // Só o tipo do evento, sem janelas unificadas, ainda conta; evento sem número nenhum não grava nada.
     assert.deepStrictEqual(contas.registrarLimiteAoVivo('max', { status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.9 }, agora).janelas,
       { seven_day: { usado: 90, renovaEm: null } });

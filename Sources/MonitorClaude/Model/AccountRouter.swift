@@ -747,6 +747,8 @@ struct RouterState: Equatable {
     /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while, and only a
     /// session renews it (the Monitor never does). Their numbers stay as last read until then.
     var idleLogins: Set<String> = []
+    /// Accounts whose Keychain read waits for "Ler de novo": macOS asked to let it through and got no, or no answer.
+    var keychainRefused: Set<String> = []
 
     func loginLabel(for id: String) -> String {
         guard available.contains(id) else { return "sem login: claude-accounts login \(id)" }

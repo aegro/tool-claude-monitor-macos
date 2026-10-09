@@ -22,6 +22,8 @@ struct AccountQueue: Equatable {
         var isLive = false
         /// Its token expired for lack of use: the numbers wait for the next session on it.
         var loginIdle = false
+        /// macOS was asked to let its login be read and refused (or nobody answered): "Ler de novo" asks again.
+        var loginRefused = false
 
         var headroom: Double? { snapshot.map { AccountRouter.headroom($0) } }
     }

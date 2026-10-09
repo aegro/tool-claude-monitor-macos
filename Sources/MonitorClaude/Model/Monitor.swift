@@ -119,6 +119,12 @@ final class Monitor: ObservableObject {
     /// only the session and the weekly window, so a whole read still runs every `fullReadInterval` for the
     /// per-model windows and the extra credit.
     private var lastFullRead: Date?
+    /// When a whole read was last tried, answered or not: a failing one waits the same ten minutes while live numbers
+    /// arrive, instead of being retried (and spending the endpoint) on every poll.
+    private var lastFullAttempt: Date?
+    /// What the last whole read failed with; nil after a success, and after a 429, which the pause already says.
+    private var lastFullFailure: Error?
+    /// When `/usage` last answered for each extra login, by its key.
     private var lastProbe: [String: Date] = [:]
     private var fullReadInterval: TimeInterval { TerminalPlan.fullReadInterval(usageInterval) }
     /// After a Keychain read failed in a way a retry would not fix soon, that item waits until then; after the
@@ -239,7 +245,8 @@ final class Monitor: ObservableObject {
                 accountInputs.append(.init(
                     id: account.id, label: account.label,
                     hasLogin: router.available.contains(account.id),
-                    agentsLoginWorks: (bgSessions > 0 && !isSlot) ? router.agentsLogins.contains(account.id) : nil))
+                    agentsLoginWorks: (bgSessions > 0 && !isSlot) ? router.agentsLogins.contains(account.id) : nil,
+                    keychainRefused: router.keychainRefused.contains(account.id)))
             }
         }
         access = AccessBuilder.build(.init(
@@ -335,6 +342,9 @@ final class Monitor: ObservableObject {
 
     /// "Ler de novo" and the refresh button: asks the Keychain again even after a refused prompt, then reads.
     func readAgain() async {
+        // A read already running (one waiting on a dialog, say) finishes first: clearing the refusals under it would
+        // let it write its answer back, and the click would do nothing.
+        for _ in 0..<400 where loadingUsage { try? await Task.sleep(nanoseconds: 200_000_000) }
         let refused = !keychainRefusal.isEmpty
         keychainRetryAt = [:]
         keychainRefusal = [:]
@@ -371,6 +381,10 @@ final class Monitor: ObservableObject {
             usageError = nil
             apiSnapshot = nil
             apiSnapshotOrg = nil
+            // The whole read was of the other login: this one gets its own now, not in ten minutes.
+            lastFullRead = nil
+            lastFullAttempt = nil
+            lastFullFailure = nil
             lastAccountKey = identity?.key
         }
         activeAccount = identity
@@ -409,15 +423,30 @@ final class Monitor: ObservableObject {
             date.map { now.timeIntervalSince($0) < interval } ?? false
         }
 
+        // Every login at once: a Keychain read waiting on a dialog holds only its own account, not the queue.
+        let credsById: [String: Keychain.Credentials] = await withTaskGroup(of: (String, Keychain.Credentials?).self) { group in
+            for account in config.accounts {
+                group.addTask { @MainActor in (account.id, await self.routerCredentials(for: account)) }
+            }
+            var out: [String: Keychain.Credentials] = [:]
+            for await (id, creds) in group { out[id] = creds }
+            return out
+        }
+        var refused: Set<String> = []
+
         for account in config.accounts {
             let identity = AccountRouter.identity(for: account)
             logins[account.id] = identity
             let stored = identity.flatMap { accounts.records[$0.key]?.snapshot }
             let routerRead = readings[account.id]
             let liveRead = Self.liveSnapshot(live[account.id], for: identity)
+            let service = AccountRouter.keychainService(for: account)
+            // The terminal's own login has its line in Acessos already.
+            if service != Keychain.service, keychainRefusal[service]?.waitsForPerson == true { refused.insert(account.id) }
 
-            guard let creds = await routerCredentials(for: account) else { continue }
+            guard let creds = credsById[account.id] else { continue }
             available.insert(account.id)
+            let probeKey = identity?.key ?? account.id
 
             if let identity, identity.key == active?.key {
                 // The terminal poll already merged the live numbers into its own read.
@@ -429,7 +458,7 @@ final class Monitor: ObservableObject {
             // A whole reading (the router's or our own) a moment ago, live numbers over one from the last ten
             // minutes, or a pause the server asked for: those numbers stand, and asking again would only spend this
             // account's share of the endpoint.
-            let fullAt = [routerRead?.snapshot.fetchedAt, lastProbe[account.id]].compactMap { $0 }.max()
+            let fullAt = [routerRead?.snapshot.fetchedAt, lastProbe[probeKey]].compactMap { $0 }.max()
             let waiting = [routerRead?.waitUntil, probePausedUntil[account.id]].compactMap { $0 }.contains { $0 > now }
             let current = recent(fullAt, within: usageInterval)
                 || (recent(liveRead?.fetchedAt, within: usageInterval) && recent(fullAt, within: fullReadInterval))
@@ -442,7 +471,7 @@ final class Monitor: ObservableObject {
             do {
                 let (snap, _) = try await UsageAPI.fetch(token: creds.accessToken)
                 probePausedUntil[account.id] = nil
-                lastProbe[account.id] = snap.fetchedAt
+                lastProbe[probeKey] = snap.fetchedAt
                 if let identity {
                     accounts.record(uuid: identity.key, label: identity.label,
                                     plan: creds.subscriptionType ?? identity.planFallback,
@@ -473,14 +502,16 @@ final class Monitor: ObservableObject {
             exhausted: exhausted,
             agentsLogins: Set(config.accounts.map(\.id).filter(AccountRouter.hasAgentsLogin)),
             switches: AccountRouter.switches(limit: 20),
-            idleLogins: idle)
+            idleLogins: idle,
+            keychainRefused: refused)
     }
 
-    /// The live numbers of one account, unless the router saved them under another login: the slot was logged into
-    /// a different account since, and those numbers are not this one's.
+    /// The live numbers of one account, only when the router saved them under its current login: the slot may have
+    /// been logged into a different account since, and a file whose login the router could not read proves nothing.
+    /// With no login to compare to (this side cannot read it either), the numbers stand.
     nonisolated static func liveSnapshot(_ live: AccountRouter.LiveLimits?, for identity: AccountIdentity?) -> UsageSnapshot? {
         guard let live else { return nil }
-        if let key = live.key, let identity, key != identity.key { return nil }
+        if let identity, live.key != identity.key { return nil }
         return live.snapshot
     }
 
@@ -540,12 +571,9 @@ final class Monitor: ObservableObject {
         feeds.stream = liveRead.map { now.timeIntervalSince($0.fetchedAt) < 600 ? .live(at: $0.fetchedAt) : .stale(at: $0.fetchedAt) }
             ?? .missing
         let pause = [livePausedUntil, readings[liveRouterId]?.waitUntil].compactMap { $0 }.max().flatMap { $0 > now ? $0 : nil }
-        let plan = TerminalPlan.plan(live: liveRead?.fetchedAt, held: apiSnapshot?.fetchedAt, lastFullRead: lastFullRead,
+        let plan = TerminalPlan.plan(live: liveRead?.fetchedAt, held: apiSnapshot?.fetchedAt, lastAttempt: lastFullAttempt,
                                      pause: pause, now: now, interval: usageInterval)
-        if let pause {
-            fullReadHealth = .broken("pausa pedida")
-            fullReadProblem = Self.fullReadPauseText(pause)
-        }
+        showFullRead(pause: pause)
         let otherwise: TerminalPlan.Live
         switch plan {
         case .takeLive:
@@ -561,6 +589,7 @@ final class Monitor: ObservableObject {
             otherwise = liveState
         }
         livePauseShown = nil
+        lastFullAttempt = now
         do {
             let creds = try await credentials()
             // Fail on the expiry we can read rather than on the 401 it is about to earn. Same
@@ -571,8 +600,8 @@ final class Monitor: ObservableObject {
 
             let snap = try await fetchUsage(creds: creds)
             lastFullRead = snap.fetchedAt
-            fullReadHealth = .live(at: snap.fetchedAt)
-            fullReadProblem = nil
+            lastFullFailure = nil
+            showFullRead(pause: nil)
             livePausedUntil = nil
             liveBackoff = 0
             apiSnapshot = snap
@@ -594,8 +623,8 @@ final class Monitor: ObservableObject {
                 livePausedUntil = until
                 pausedUntil = until
             }
-            fullReadHealth = .broken(FeedState.shortReason(for: error))
-            fullReadProblem = pausedUntil.map(Self.fullReadPauseText) ?? (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            lastFullFailure = pausedUntil == nil ? error : nil
+            showFullRead(pause: pausedUntil)
             // The whole read failed, but live numbers keep arriving: they stand, and only the per-model windows wait
             // for the next whole read.
             if otherwise == .current, let liveRead {
@@ -615,6 +644,20 @@ final class Monitor: ObservableObject {
 
     private static func pauseText(_ until: Date) -> String {
         "O servidor pediu uma pausa até \(Fmt.clock(until)). Os números voltam depois disso."
+    }
+
+    /// The settings' line for the whole read: the pause while it lasts, else the last failure, else when it answered.
+    private func showFullRead(pause: Date?) {
+        if let pause {
+            fullReadHealth = .broken("pausa pedida")
+            fullReadProblem = Self.fullReadPauseText(pause)
+        } else if let failure = lastFullFailure {
+            fullReadHealth = .broken(FeedState.shortReason(for: failure))
+            fullReadProblem = (failure as? LocalizedError)?.errorDescription ?? failure.localizedDescription
+        } else {
+            fullReadHealth = lastFullRead.map { .live(at: $0) } ?? .missing
+            fullReadProblem = nil
+        }
     }
 
     /// The same pause, said of the whole read alone: live numbers may well be arriving meanwhile.
@@ -948,7 +991,8 @@ final class Monitor: ObservableObject {
                 sessions: sessions.filter { $0.accountId == account.id }.count,
                 runsAgents: account.id == router.config.principal,
                 isLive: live,
-                loginIdle: router.idleLogins.contains(account.id))
+                loginIdle: router.idleLogins.contains(account.id),
+                loginRefused: router.keychainRefused.contains(account.id))
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
                             reserveBelow: router.config.reserveBelow, configured: true,

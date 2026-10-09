@@ -80,7 +80,8 @@ enum TerminalPlan: Equatable {
     case wait(until: Date, live: Live)
     case read(otherwise: Live)
 
-    static func plan(live: Date?, held: Date?, lastFullRead: Date?, pause: Date?, now: Date,
+    /// `lastAttempt` is when a whole read was last tried, answered or not: a failing read waits its turn too.
+    static func plan(live: Date?, held: Date?, lastAttempt: Date?, pause: Date?, now: Date,
                      interval: TimeInterval) -> TerminalPlan {
         let liveState: Live
         if let live, live > (held ?? .distantPast) {
@@ -88,7 +89,7 @@ enum TerminalPlan: Equatable {
         } else {
             liveState = .none
         }
-        let fullDue = lastFullRead.map { now.timeIntervalSince($0) >= fullReadInterval(interval) } ?? true
+        let fullDue = lastAttempt.map { now.timeIntervalSince($0) >= fullReadInterval(interval) } ?? true
         let paused = pause.flatMap { $0 > now ? $0 : nil }
         if liveState == .current, !fullDue || paused != nil { return .takeLive }
         if let paused { return .wait(until: paused, live: liveState) }

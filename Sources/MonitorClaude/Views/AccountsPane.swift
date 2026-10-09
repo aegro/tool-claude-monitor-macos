@@ -135,7 +135,9 @@ struct AccountsPane: View {
             Divider()
         }
         if queue.configured {
-            if !entry.hasLogin {
+            if !entry.hasLogin, entry.loginRefused {
+                Button("Ler de novo") { Task { await monitor.readAgain() } }
+            } else if !entry.hasLogin {
                 Button("Autorizar de novo…") { monitor.startReauthorize(entry.id, agents: false); openSettings() }
             }
             if entry.hasLogin, !entry.agentsLogin {
@@ -335,7 +337,7 @@ struct AccountRow: View {
         if exhausted {
             StateChip(text: "esgotada", tone: .gone)
         } else if !entry.hasLogin {
-            StateChip(text: "sem login", tone: .gone)
+            StateChip(text: entry.loginRefused ? "sem acesso" : "sem login", tone: .gone)
         } else if inUse {
             StateChip(text: "em uso", tone: .inUse)
         } else if next {
@@ -347,6 +349,7 @@ struct AccountRow: View {
         if let until = entry.exhaustedUntil, until > Date() {
             return "volta às \(Fmt.stamp(until)) · " + renewals
         }
+        if !entry.hasLogin, entry.loginRefused { return "o macOS não liberou o login: Ler de novo em Acessos" }
         if !entry.hasLogin { return "sem login: autorize de novo nos Ajustes" }
         var parts = [renewals]
         // Numbers this old say so, and why when the reason is known.

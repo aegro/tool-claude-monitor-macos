@@ -603,6 +603,19 @@ enum AccountRouter {
             // `isRunning` comes from the same exit notice as the handler, so it lags just as much: a command that
             // exited in time, with its notice still on the way, is not one that ran out of time.
             timedOut = process.isRunning && !hasExited(pid)
+            if !timedOut {
+                // Exited in time, with only the notice late: there is nothing to stop, and the kernel has already
+                // sent the exit, so the notice comes. Bounded all the same, like every wait here; past it the
+                // status is unknown and the command reads as stopped.
+                if exited.wait(timeout: .now() + 30) == .timedOut {
+                    return CommandResult(status: -1,
+                                         output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
+                                         error: String(decoding: errors.finish(waiting: 2), as: UTF8.self),
+                                         interrupted: true)
+                }
+            }
+        }
+        if timedOut {
             // Remembered, because once `pid` exits its children belong to launchd and can no longer be found
             // under it; whatever ignored SIGTERM gets SIGKILL with the parent.
             let children = terminateDescendants(of: pid)

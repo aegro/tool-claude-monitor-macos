@@ -469,10 +469,11 @@ final class Transcript: @unchecked Sendable {
 }
 
 extension AccountRouter {
-    /// Removes an account from the queue: its config entry and its folder. A folder that never got a login holds
-    /// only the router's links, so it goes; one with a login goes to the Trash instead, and its Keychain item stays
-    /// (the Monitor never writes the Keychain), so putting the folder back brings the account back. The account in
-    /// `~/.claude` is not removed, and the route never ends up empty (see `queue(removing:)`).
+    /// Removes an account from the queue: its config entry, and its folder goes to the Trash, as the confirmation
+    /// promises. Its Keychain item stays (the Monitor never writes the Keychain), so putting the folder back brings
+    /// the account back. The folder is never deleted outright, not even without a detected login: a login the
+    /// Monitor could not read is still a login. The account in `~/.claude` is not removed, and the route never ends
+    /// up empty (see `queue(removing:)`).
     static func discard(_ id: String) throws {
         guard let config = loadConfig(), let account = config.accounts.first(where: { $0.id == id }),
               !account.usesDefaultDirectory, id != config.principal
@@ -492,11 +493,7 @@ extension AccountRouter {
         }
         let fm = FileManager.default
         guard fm.fileExists(atPath: account.directory.path) else { return }
-        if identity(for: account) == nil {
-            try? fm.removeItem(at: account.directory)
-        } else {
-            try? fm.trashItem(at: account.directory, resultingItemURL: nil)
-        }
+        try? fm.trashItem(at: account.directory, resultingItemURL: nil)
     }
 
     /// The queue without `id`. The route never ends up empty: the first reserve account moves up, or the principal

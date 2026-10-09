@@ -156,6 +156,7 @@ struct IntegrationsTests {
     @Test func gravacaoSegueOLinkGuardaCopiaEMantemPermissoes() throws {
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("monitor-integracoes-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: dir) }
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let real = dir.appendingPathComponent("zshrc-real")
         let link = dir.appendingPathComponent(".zshrc")
@@ -196,6 +197,7 @@ struct AccessTests {
     @Test func registroMaisNovoVenceEntreAsPastas() throws {
         let fm = FileManager.default
         let base = fm.temporaryDirectory.appendingPathComponent("monitor-mcp-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: base) }
         let a = base.appendingPathComponent("a"), b = base.appendingPathComponent("b")
         for d in [a, b] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
         try Data(#"{"claude.ai Slack": {"timestamp": 1000}}"#.utf8).write(to: a.appendingPathComponent(MCPAuthCache.fileName))
@@ -245,6 +247,7 @@ struct AccessTests {
         // A transcript still being written today does not make a connector used weeks ago look recent.
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("monitor-transcripts-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         let old = #"{"name":"mcp__claude_ai_Figma__x","timestamp":"2026-09-01T10:00:00.000Z"}"#
         let recent = #"{"name":"mcp__claude_ai_Slack__x","timestamp":"\#(ISO8601DateFormatter().string(from: Date()))"}"#
@@ -255,6 +258,7 @@ struct AccessTests {
     @Test func varreduraLeSoOQueCresceuEIgnoraOAntigo() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("monitor-transcripts-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
         let project = root.appendingPathComponent("-Users-x-Code-y")
         try fm.createDirectory(at: project, withIntermediateDirectories: true)
         let file = project.appendingPathComponent("s1.jsonl")

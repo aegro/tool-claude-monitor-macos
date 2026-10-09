@@ -197,14 +197,18 @@ struct QueueAndAccountsTests {
 
     @Test func comandoNaoEsperaUmAjudanteQueFicouComOPipe() throws {
         let pidFile = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-ajudante-\(UUID().uuidString)")
+        // The background sleep goes away however the test ends.
+        defer {
+            if let pid = pid_t((try? String(contentsOf: pidFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") {
+                kill(pid, SIGKILL)
+            }
+            try? FileManager.default.removeItem(at: pidFile)
+        }
         let started = Date()
         let result = AccountRouter.run(URL(fileURLWithPath: "/bin/sh"),
                                        ["-c", "sleep 30 & echo $! > '\(pidFile.path)'; echo pronto"], timeout: 20)
         #expect(Date().timeIntervalSince(started) < 6)
         #expect(result.ok && result.output.contains("pronto"))
-        if let pid = pid_t((try? String(contentsOf: pidFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") {
-            kill(pid, SIGKILL)
-        }
     }
 
     @Test func comandoQuePassaDoPrazoEEncerrado() {

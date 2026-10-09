@@ -313,7 +313,7 @@ struct IntegrationsSettings: View {
         let q = monitor.accountQueue
         guard q.configured, !q.isSingle else { return "Com mais de uma conta, os agentes também trocam de conta." }
         let ready = q.entries.filter(\.agentsLogin).count
-        return "\(ready) de \(q.entries.count) contas prontas para os agentes. Falta autorizar? Use o botão na aba Contas."
+        return "\(ready) de \(q.entries.count) contas prontas para os agentes. Falta autorizar? Use o botão em Contas e logins."
     }
 
     private func row(_ title: String, symbol: String, detail: String) -> some View {

@@ -46,6 +46,10 @@ struct PreviewApp: App {
                 PanelView(monitor: monitor, initialTab: .accounts, initialAwakeOpen: true)
             case .settings(let tab):
                 SettingsWindow(monitor: monitor).onAppear { monitor.settingsTab = tab }
+            case .panelSettings(let tab):
+                PanelView(monitor: monitor, initialTab: .accounts, initialSettingsPage: tab)
+            case .menuBar:
+                MenuBarSamples()
             case .wizard(let step):
                 AddAccountSheet(flow: AddAccountFlow.preview(step: step, store: monitor.accounts)) {}
             }
@@ -63,6 +67,10 @@ enum PreviewTarget {
     /// The panel with the keep-awake card open.
     case awake
     case settings(SettingsTab)
+    /// The settings page inside the panel (`--preview=ajustes:<tab>`).
+    case panelSettings(SettingsTab)
+    /// The menu bar label's states on a light and a dark menu bar, next to the clock (`--render=menubar`).
+    case menuBar
     case wizard(AddAccountFlow.Step)
 
     init(arguments: [String]) {
@@ -72,6 +80,8 @@ enum PreviewTarget {
         let detail = parts.count > 1 ? parts[1] : ""
         switch kind {
         case "settings": self = .settings(SettingsTab(rawValue: detail) ?? .general)
+        case "ajustes": self = .panelSettings(SettingsTab(rawValue: detail) ?? .general)
+        case "menubar": self = .menuBar
         case "awake": self = .awake
         case "wizard":
             let steps: [String: AddAccountFlow.Step] = ["choose": .choose, "authorize": .authorize, "connected": .connected,

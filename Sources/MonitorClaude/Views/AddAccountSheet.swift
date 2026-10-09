@@ -195,7 +195,7 @@ struct AddAccountSheet: View {
                 Toggle("Ligar a troca automática", isOn: $flow.enableSwitching)
             }
             if !flow.agentsAuthorized {
-                Text("Os agentes ainda não passam para esta conta. Dá para autorizar depois, nos Ajustes.")
+                Text("Os agentes ainda não passam para esta conta. Dá para autorizar depois, em Contas e logins.")
                     .font(Type.caption).foregroundStyle(.tertiary)
             }
         }

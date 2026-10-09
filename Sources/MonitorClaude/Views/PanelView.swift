@@ -32,10 +32,11 @@ struct PanelView: View {
     static let maxHeight: CGFloat = 860
 
     /// The pane is as tall as what the tab shows, up to the room the screen has below the menu bar; only then
-    /// it scrolls. Switching tabs resizes the panel, the way a popover follows its content.
+    /// it scrolls. Switching tabs resizes the panel, the way a popover follows its content. It never takes more
+    /// than that room, so on a short screen (or with the keep-awake card open) the footer stays in sight.
     private var paneHeight: CGFloat {
-        let room = min(screenHeight - 12, Self.maxHeight) - topHeight - bottomHeight
-        return min(max(paneNatural, 60), max(180, room))
+        let room = max(min(screenHeight - 12, Self.maxHeight) - topHeight - bottomHeight, 0)
+        return min(max(paneNatural, 60), room)
     }
 
     var body: some View {

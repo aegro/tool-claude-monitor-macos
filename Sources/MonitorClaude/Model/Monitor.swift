@@ -200,7 +200,7 @@ final class Monitor: ObservableObject {
         }
         if force || (lastVersionCheck.map { Date().timeIntervalSince($0) >= 6 * 3600 } ?? true) {
             lastVersionCheck = Date()
-            outdatedCasks = await Task.detached(priority: .utility) { Versions.outdated() }.value
+            outdatedCasks = await Blocking.run { Versions.outdated() }
         }
         let marks = MCPAuthCache.read(directories: dirs.isEmpty ? [ClaudeSessionStore.root] : dirs)
         let readiness = Readiness.read()
@@ -255,9 +255,10 @@ final class Monitor: ObservableObject {
         lastAgentsWatch = Date()
         watchingAgents = true
         publishSlotBurnRate()
-        Task.detached(priority: .utility) { [weak self] in
+        // On a GCD thread, not the cooperative pool: the router's check can take a while.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             AccountRouter.watchAgents()
-            await self?.finishAgentsWatch()
+            Task { @MainActor in self?.finishAgentsWatch() }
         }
     }
 
@@ -363,9 +364,7 @@ final class Monitor: ObservableObject {
             let stored = identity.flatMap { accounts.records[$0.key]?.snapshot }
             let routerRead = cached[account.id]
 
-            let creds = await Task.detached(priority: .utility) {
-                AccountRouter.credentials(for: account)
-            }.value
+            let creds = await Blocking.run { AccountRouter.credentials(for: account) }
             guard let creds else { continue }
             available.insert(account.id)
 
@@ -805,7 +804,7 @@ final class Monitor: ObservableObject {
         savingRouter = true
         defer { savingRouter = false }
         do {
-            try await Task.detached(priority: .userInitiated) { try change() }.value
+            try await Blocking.runThrowing { try change() }
             actionError = nil
         } catch {
             actionError = error.localizedDescription
@@ -882,9 +881,9 @@ final class Monitor: ObservableObject {
     private func upgrade(_ cask: String) async {
         guard let brew = Versions.brew else { actionError = "Homebrew não encontrado"; return }
         runningAction = cask
-        let result = await Task.detached(priority: .userInitiated) {
+        let result = await Blocking.run {
             AccountRouter.run(brew, ["upgrade", "--cask", cask], extra: ["HOMEBREW_NO_ENV_HINTS": "1"], timeout: 900)
-        }.value
+        }
         runningAction = nil
         guard result.ok else {
             actionError = AddAccountFlow.firstLine(result.error) ?? "O Homebrew não conseguiu atualizar \(cask)."

@@ -257,9 +257,9 @@ enum Readiness {
         guard let entry = entryPoint else {
             return .init(status: 127, output: "", error: "o painel de prontidão não está instalado")
         }
-        return await Task.detached(priority: .userInitiated) {
+        return await Blocking.run {
             AccountRouter.run(URL(fileURLWithPath: "/usr/bin/python3"), [entry.path] + arguments, timeout: timeout)
-        }.value
+        }
     }
 }
 

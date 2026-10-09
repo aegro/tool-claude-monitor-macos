@@ -504,9 +504,7 @@ enum AccountRouter {
         guard let command = accountsCommand else {
             return CommandResult(status: 127, output: "", error: "claude-accounts não encontrado")
         }
-        return await Task.detached(priority: .userInitiated) {
-            run(command, arguments, extra: extra, timeout: timeout)
-        }.value
+        return await Blocking.run { run(command, arguments, extra: extra, timeout: timeout) }
     }
 
     static func run(_ command: URL, _ arguments: [String], extra: [String: String] = [:],
@@ -692,6 +690,25 @@ struct RouterState: Equatable {
     }
 
     func isRouted(_ key: String?) -> Bool { key != nil && key == pickKey }}
+
+/// Blocking work (a command waiting on a login in the browser, a brew upgrade, a config write) runs on a GCD queue,
+/// and the caller awaits it without holding a thread of Swift's cooperative pool. That pool has one thread per
+/// core, so a few commands blocked for minutes would stall every other task of the app.
+enum Blocking {
+    static func run<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { continuation.resume(returning: work()) }
+        }
+    }
+
+    static func runThrowing<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do { continuation.resume(returning: try work()) } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+}
 
 /// Collects what arrives on a pipe as it arrives. `finish(waiting:)` waits up to that long for the end of the
 /// output and returns what came, so a pipe someone else still holds open never blocks the caller for good.

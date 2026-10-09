@@ -1008,14 +1008,14 @@ final class Monitor: ObservableObject {
         return q.entry(inUse)?.monogram
     }
 
-    /// Takes an account out of the queue (see `AccountRouter.discard`): for an entry that should not be there, such
-    /// as a second login into the same account.
     /// New sessions open on `id` from now on, above the rule; nil goes back to the rule.
     func pinAccount(_ id: String?) async {
         await save { try AccountRouter.setPinned(id) }
         watchAgentsNow()
     }
 
+    /// Takes an account out of the queue (see `AccountRouter.discard`): for an entry that should not be there, such
+    /// as a second login into the same account.
     func removeAccount(_ id: String) async {
         await save { try AccountRouter.discard(id) }
         watchAgentsNow()

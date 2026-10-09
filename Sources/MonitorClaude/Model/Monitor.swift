@@ -107,6 +107,9 @@ final class Monitor: ObservableObject {
     private var probePausedUntil: [String: Date] = [:]
     /// A router edit is being written; the next one waits for it instead of racing it.
     @Published private(set) var savingRouter = false
+    /// The last router edit queued, which the next one waits on, and how many are still to finish.
+    private var routerSaveTail: Task<Void, Never>?
+    private var pendingRouterSaves = 0
     /// What the terminal feed last failed with, typed, so the access check does not read error text.
     private var terminalFailure: Error?
     private let ledgerInterval: TimeInterval = 20
@@ -800,16 +803,28 @@ final class Monitor: ObservableObject {
     /// One router edit at a time, then the config is read back into the panel right away. The usage stays as it
     /// was: an edit to the queue changes no number, and a fresh poll would only spend the endpoint.
     private func save(_ change: @escaping @Sendable () throws -> Void) async {
-        guard !savingRouter else { return }
+        // Edits run one after the other, in the order they were asked for: a second move made while the first is
+        // still writing is applied after it, never dropped.
+        pendingRouterSaves += 1
         savingRouter = true
-        defer { savingRouter = false }
-        do {
-            try await Blocking.runThrowing { try change() }
-            actionError = nil
-        } catch {
-            actionError = error.localizedDescription
+        let previous = routerSaveTail
+        let mine = Task { @MainActor in
+            await previous?.value
+            do {
+                try await Blocking.runThrowing { try change() }
+                actionError = nil
+            } catch {
+                actionError = error.localizedDescription
+            }
+            reloadRouterConfig()
         }
-        reloadRouterConfig()
+        routerSaveTail = mine
+        await mine.value
+        pendingRouterSaves -= 1
+        if pendingRouterSaves == 0 {
+            savingRouter = false
+            routerSaveTail = nil
+        }
     }
 
     private func reloadRouterConfig() {

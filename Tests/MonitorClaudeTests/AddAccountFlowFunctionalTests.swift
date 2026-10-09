@@ -30,6 +30,7 @@ struct AddAccountFlowFunctionalTests {
         setenv("FAKE_DIR", base.path, 1)
         unsetenv("FAKE_NO_BROWSER")
         unsetenv("FAKE_ADD_FAIL")
+        unsetenv("FAKE_ADD_DELAY")
         AddAccountFlow.manualAfter = 5
     }
 
@@ -184,6 +185,29 @@ struct AddAccountFlowFunctionalTests {
         #expect(flow.step == .authorize && flow.identity == nil)
     }
 
+    @Test func cancelarDuranteACriacaoApagaAContaQuandoElaTermina() async throws {
+        setenv("FAKE_ADD_DELAY", "0.5", 1)
+        let flow = newFlow(opened: Box([]))
+        let choosing = Task { await flow.choose(nil) }
+        #expect(await until { flow.phase == .working("Preparando a conta…") })
+        flow.cancel()
+        await choosing.value
+        #expect((try readConfig()["contas"] as? [String: Any])?["nova-conta"] == nil)
+        #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent("nova-conta").path))
+        #expect(flow.step == .choose)
+    }
+
+    @Test func segundoCliqueEmEscolherNaoRodaOutraCriacao() async throws {
+        setenv("FAKE_ADD_DELAY", "0.3", 1)
+        let flow = newFlow(opened: Box([]))
+        let first = Task { await flow.choose(nil) }
+        #expect(await until { flow.phase == .working("Preparando a conta…") })
+        await flow.choose(nil)
+        await first.value
+        #expect(flow.accountId == "nova-conta")
+        #expect(flow.step == .authorize && flow.phase == .idle)
+    }
+
     @Test func erroDoRoteadorApareceEmUmaLinha() async throws {
         setenv("FAKE_ADD_FAIL", "account nova-conta already exists", 1)
         let flow = newFlow(opened: Box([]))
@@ -205,6 +229,7 @@ struct AddAccountFlowFunctionalTests {
         id="$1"; shift
         name="$id"; [ "$1" = "--name" ] && name="$2"
         if [ -n "$FAKE_ADD_FAIL" ]; then echo "claude-accounts: $FAKE_ADD_FAIL" >&2; exit 1; fi
+        [ -n "$FAKE_ADD_DELAY" ] && sleep "$FAKE_ADD_DELAY"
         mkdir -p "$home/$id"
         /usr/bin/python3 -I - "$home/config.json" "$id" "$name" <<'EOF'
     import json, sys, os

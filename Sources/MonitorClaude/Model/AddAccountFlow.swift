@@ -43,6 +43,8 @@ final class AddAccountFlow: ObservableObject, Identifiable {
     let existing: Bool
     let agentsRunning: Int
     private var created = false
+    /// Set by `cancel()`; an `add` still running when the sheet closes removes its account when it returns.
+    private var cancelled = false
     private var login: Process?
     private var input: FileHandle?
     private var urlFile: URL?
@@ -104,6 +106,10 @@ final class AddAccountFlow: ObservableObject, Identifiable {
     // MARK: steps
 
     func choose(_ suggestion: Suggestion?) async {
+        // A double-click or a repeated Enter can call this again before the sheet disables its buttons; a second
+        // `add` with the same id would fail and overwrite the phase of the one that worked.
+        if case .working = phase { return }
+        guard accountId == nil, !cancelled else { return }
         let config = AccountRouter.loadConfig()
         let taken = config?.accounts.map(\.label) ?? []
         let base = suggestion.map { Self.defaultName(label: $0.label, plan: $0.plan, taken: taken) } ?? "Nova conta"
@@ -112,6 +118,11 @@ final class AddAccountFlow: ObservableObject, Identifiable {
         let id = AccountRouter.slug(for: base, taken: Set(config?.accounts.map(\.id) ?? []))
         phase = .working("Preparando a conta…")
         let result = await AccountRouter.runAccounts(["add", id, "--name", base])
+        if cancelled {
+            // The sheet closed while `add` ran: nobody will finish this account, so it does not stay behind.
+            if result.ok { try? AccountRouter.discard(id) }
+            return
+        }
         guard result.ok else {
             phase = .failed(Self.firstLine(result.error) ?? "Não deu para criar a conta.")
             return
@@ -180,6 +191,7 @@ final class AddAccountFlow: ObservableObject, Identifiable {
     /// Stops a login in flight and, for an account this assistant created and never finished, removes it again:
     /// logged in or not, it is not in the queue the person asked for (a duplicate organization, say).
     func cancel() {
+        cancelled = true
         stopLogin()
         if created, let id = accountId {
             try? AccountRouter.discard(id)

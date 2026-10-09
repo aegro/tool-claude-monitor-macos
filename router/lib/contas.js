@@ -633,6 +633,18 @@ function executavel(arquivo) {
   }
 }
 
+const INVOLUCRO_DO_CLAUDE_AUTO = /^#!\/bin\/bash\nexec \/bin\/bash '.*\/bin\/claude-auto' "\$@"\n$/s;
+
+function abreOClaudeAuto(arquivo, lancador) {
+  const real = fs.realpathSync(arquivo);
+  if (real === lancador) return true;
+  try {
+    return fs.statSync(real).size <= 4096 && INVOLUCRO_DO_CLAUDE_AUTO.test(fs.readFileSync(real, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
 function resolverClaude() {
   const cfg = carregarConfig();
   const lancador = path.resolve(__dirname, '..', 'bin', 'claude-auto');
@@ -644,7 +656,7 @@ function resolverClaude() {
   ].filter(Boolean);
   for (const candidato of candidatos) {
     if (!executavel(candidato)) continue;
-    if (fs.realpathSync(candidato) === lancador) continue;
+    if (abreOClaudeAuto(candidato, lancador)) continue;
     return candidato;
   }
   throw new Error('binário do claude não encontrado (defina CLAUDE_AUTO_CLAUDE_BIN)');

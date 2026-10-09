@@ -675,6 +675,32 @@ const testes = {
     assert.strictEqual(agentes.folgaParaVolta(renovada, saida, agora), renovada);
     assert.strictEqual(contas.preferidaDeVolta([renovada, segunda], 'segunda', cfg).id, 'principal');
   },
+  resolverClaudePulaOScriptQueOAppInstalaNoLugarDoLink() {
+    const dir = fs.mkdtempSync(path.join(raiz, 'bin-'));
+    const involucro = path.join(dir, 'claude-auto');
+    fs.writeFileSync(
+      involucro,
+      `#!/bin/bash\nexec /bin/bash '/Users/exemplo/Apps/Monitor '\\''Claude'\\''.app/Contents/Resources/router/bin/claude-auto' "$@"\n`,
+      { mode: 0o755 },
+    );
+    const apelido = path.join(dir, 'claude');
+    fs.symlinkSync(involucro, apelido);
+    const real = path.join(dir, 'claude-de-verdade');
+    fs.writeFileSync(real, '#!/bin/sh\n', { mode: 0o755 });
+    configurar({ claudeBin: real });
+    const antes = process.env.CLAUDE_AUTO_CLAUDE_BIN;
+    try {
+      process.env.CLAUDE_AUTO_CLAUDE_BIN = apelido;
+      assert.strictEqual(contas.resolverClaude(), real);
+      process.env.CLAUDE_AUTO_CLAUDE_BIN = involucro;
+      assert.strictEqual(contas.resolverClaude(), real);
+      process.env.CLAUDE_AUTO_CLAUDE_BIN = real;
+      assert.strictEqual(contas.resolverClaude(), real);
+    } finally {
+      if (antes === undefined) delete process.env.CLAUDE_AUTO_CLAUDE_BIN;
+      else process.env.CLAUDE_AUTO_CLAUDE_BIN = antes;
+    }
+  },
 };
 
 (async () => {

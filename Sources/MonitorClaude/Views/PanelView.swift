@@ -10,10 +10,14 @@ struct PanelView: View {
     @AppStorage("panelTab") private var tabRaw = PanelTab.accounts.rawValue
     @Environment(\.openSettings) private var openSettingsAction
 
+    /// Set only by `--preview` and `--render`. It stays in the view: a screenshot run does not change the tab the
+    /// menu bar app opens on.
     var initialTab: PanelTab?
+    @State private var previewTab: PanelTab?
 
     private var tab: Binding<PanelTab> {
-        Binding(get: { PanelTab(rawValue: tabRaw) ?? .accounts }, set: { tabRaw = $0.rawValue })
+        Binding(get: { previewTab ?? initialTab ?? PanelTab(rawValue: tabRaw) ?? .accounts },
+                set: { if initialTab != nil { previewTab = $0 } else { tabRaw = $0.rawValue } })
     }
 
     /// The panel keeps the height picked in the settings; the header and footer are fixed, the pane scrolls.
@@ -48,7 +52,6 @@ struct PanelView: View {
                 .accessibilityHidden(true)
         }
         .onAppear {
-            if let initialTab { tabRaw = initialTab.rawValue }
             monitor.panelOpen = true
             Task { await monitor.refreshAccessIfDue() }
         }

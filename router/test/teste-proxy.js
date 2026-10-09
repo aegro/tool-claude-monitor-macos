@@ -453,8 +453,26 @@ async function contaQueSaiuDoClaudeVoltaParaAPastaPropria() {
   assert.deepStrictEqual(trocas, [['principal', 'saiu-do-claude']]);
 }
 
+async function escolhaAMaoVemAntesDaVoltaParaAPastaPropria() {
+  const { contas, p } = proxyEmProcesso({
+    principal: 'segunda',
+    fixada: 'terceira',
+    contas: { principal: {}, segunda: {}, terceira: {} },
+    rota: ['principal', 'segunda', 'terceira'],
+  });
+  const trocas = [];
+  p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+  await comDubles(contas, {
+    log() {},
+    temLoginProprio: () => true,
+    escolher: async () => ({ escolhida: 'terceira', candidatos: [{ id: 'terceira', folga: 80 }] }),
+  }, () => p.checarPreventiva());
+  // "Usar esta agora" na terceira: a sessão vai direto para lá, sem antes reabrir na pasta da própria conta.
+  assert.deepStrictEqual(trocas, [['terceira', 'escolhida']]);
+}
+
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior, limiteNaContaQueEntrouNoClaudeMarcaEssaConta, contaQueSaiuDoClaudeVoltaParaAPastaPropria];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior, limiteNaContaQueEntrouNoClaudeMarcaEssaConta, contaQueSaiuDoClaudeVoltaParaAPastaPropria, escolhaAMaoVemAntesDaVoltaParaAPastaPropria];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {

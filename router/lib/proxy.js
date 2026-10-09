@@ -468,8 +468,10 @@ class Proxy {
     this.checandoPreventiva = true;
     try {
       const cfg = contas.carregarConfig();
-      if (await this.checarSlot(cfg)) return;
+      // A escolha à mão vem antes: ela já reabre a sessão na conta escolhida, e a volta para a pasta própria só
+      // reabriria a sessão na conta de que o usuário acabou de tirá-la.
       if (await this.checarEscolhida(cfg)) return;
+      if (await this.checarSlot(cfg)) return;
       const folga = contas.folgaDe(await contas.lerUso(this.conta));
       if (folga == null || folga >= cfg.limites.preventiva) {
         this.preventivaPendente = false;

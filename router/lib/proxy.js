@@ -490,7 +490,8 @@ class Proxy {
   // fim de um turno, sem tarefa em segundo plano: o mesmo momento em que a volta para a preferida acontece. Escolha
   // nova é conferida no primeiro fim de turno; a mesma, no máximo uma vez por minuto.
   async checarEscolhida(cfg) {
-    if (!cfg.fixada || cfg.fixada === this.conta || this.contaInicial || this.tarefas.size) {
+    if (cfg.ativo === false || this.contaInicial || this.tarefas.size) return false;
+    if (!cfg.fixada || cfg.fixada === this.conta) {
       this.escolhidaVista = cfg.fixada;
       return false;
     }
@@ -499,7 +500,10 @@ class Proxy {
     this.escolhidaVista = cfg.fixada;
     this.ultimaChecagemDaEscolhida = Date.now();
     const escolha = await contas.escolher();
-    if (escolha.escolhida !== cfg.fixada || escolha.escolhida === this.conta) return false;
+    // Com a escolhida quase sem folga, a preventiva a tiraria de novo no turno seguinte: ela só leva a sessão com
+    // a mesma folga que a preventiva exige para ficar.
+    const alvo = escolha.candidatos.find((c) => c.id === cfg.fixada);
+    if (escolha.escolhida !== cfg.fixada || !alvo || (alvo.folga != null && alvo.folga < cfg.limites.preventiva)) return false;
     if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
     await this.trocar({ para: cfg.fixada, motivo: 'escolhida', forcada: false, continuar: false });
     return true;

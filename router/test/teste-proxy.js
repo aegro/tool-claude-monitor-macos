@@ -8,6 +8,10 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 
+// O Proxy e as contas carregados neste processo leem e gravam aqui, nunca no ~/.claude-accounts de quem roda.
+const HOME_EM_PROCESSO = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-auto-proxy-'));
+process.env.CLAUDE_AUTO_HOME = HOME_EM_PROCESSO;
+
 const RAIZ = path.resolve(__dirname, '..');
 const FAKE = path.join(__dirname, 'fake-claude.js');
 
@@ -402,8 +406,170 @@ async function threadDoT3RetomaASessaoAnterior() {
   }
 }
 
+// Cenários sem processo: o Proxy direto, com a leitura e a escolha de contas trocadas por dublês.
+function proxyEmProcesso(config) {
+  const contas = require('../lib/contas');
+  const { Proxy } = require('../lib/proxy');
+  fs.writeFileSync(path.join(HOME_EM_PROCESSO, 'config.json'), JSON.stringify(config));
+  const p = new Proxy([]);
+  // Aberta no ~/.claude na conta "principal", que a troca dos agentes depois tirou de lá.
+  p.conta = 'principal';
+  p.contaDaAbertura = 'principal';
+  p.noClaudePadrao = true;
+  return { contas, p };
+}
+
+async function comDubles(obj, dubles, fn) {
+  const originais = Object.fromEntries(Object.keys(dubles).map((k) => [k, obj[k]]));
+  Object.assign(obj, dubles);
+  try {
+    await fn();
+  } finally {
+    Object.assign(obj, originais);
+  }
+}
+
+async function limiteNaContaQueEntrouNoClaudeMarcaEssaConta() {
+  const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+  const marcadas = [];
+  const excluidas = [];
+  await comDubles(contas, {
+    log() {},
+    marcarEsgotada: (id) => marcadas.push(id),
+    escolher: async ({ excluir = [] } = {}) => {
+      excluidas.push(...excluir);
+      return { escolhida: null, candidatos: [] };
+    },
+  }, () => p.avaliarTroca({ motivo: 'five_hour', ate: null, continuar: false }, p.geracao));
+  // A segunda entrou no ~/.claude no meio do turno: o limite é dela, e é dela que a sessão sai.
+  assert.deepStrictEqual(marcadas, ['segunda']);
+  assert.deepStrictEqual(excluidas, ['segunda']);
+}
+
+async function contaQueSaiuDoClaudeVoltaParaAPastaPropria() {
+  const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+  const trocas = [];
+  p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+  await comDubles(contas, { log() {}, temLoginProprio: () => true, lerUso: async () => ({ ok: true, uso: null }) }, () => p.checarPreventiva());
+  assert.deepStrictEqual(trocas, [['principal', 'saiu-do-claude']]);
+}
+
+async function donaEsgotadaOuSemFolgaNaoLevaASessaoDeVolta() {
+  const usoCom = (usado) => ({ ok: true, uso: { cinco: { usado }, sete: { usado: 10 } } });
+  for (const [caso, dubles] of [
+    ['esgotada', { lerEsgotadas: () => ({ principal: { ate: Date.now() + 3600 * 1000 } }), lerUso: async () => usoCom(10) }],
+    ['sem folga', { lerEsgotadas: () => ({}), lerUso: async () => usoCom(97) }],
+  ]) {
+    const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+    const trocas = [];
+    p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+    await comDubles(contas, { log() {}, temLoginProprio: () => true, ...dubles }, async () => {
+      // A troca dos agentes tirou a principal do ~/.claude por limite: a sessão segue contando como da segunda.
+      assert.strictEqual(await p.checarSlot(contas.carregarConfig()), false, caso);
+      assert.strictEqual(p.conta, 'segunda', caso);
+    });
+    assert.deepStrictEqual(trocas, [], caso);
+  }
+}
+
+async function escolhaAMaoVemAntesDaVoltaParaAPastaPropria() {
+  const { contas, p } = proxyEmProcesso({
+    principal: 'segunda',
+    fixada: 'terceira',
+    contas: { principal: {}, segunda: {}, terceira: {} },
+    rota: ['principal', 'segunda', 'terceira'],
+  });
+  const trocas = [];
+  p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+  await comDubles(contas, {
+    log() {},
+    temLoginProprio: () => true,
+    escolher: async () => ({ escolhida: 'terceira', candidatos: [{ id: 'terceira', folga: 80 }] }),
+  }, () => p.checarPreventiva());
+  // "Usar esta agora" na terceira: a sessão vai direto para lá, sem antes reabrir na pasta da própria conta.
+  assert.deepStrictEqual(trocas, [['terceira', 'escolhida']]);
+}
+
+async function loginRecusadoNaPastaPropriaVoltaParaOClaudeSemMarcarAConta() {
+  const { contas, p } = proxyEmProcesso({ principal: 'principal', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+  p.noClaudePadrao = false;
+  p.naPastaPropria = true;
+  const marcadas = [];
+  const trocas = [];
+  p.trocar = async (t) => {
+    trocas.push([t.para, t.motivo, t.forcada]);
+    p.naPastaPropria = false;
+    p.noClaudePadrao = true;
+  };
+  const dubles = {
+    log() {},
+    marcarEsgotada: (id) => marcadas.push(id),
+    escolher: async () => ({ escolhida: 'segunda', candidatos: [] }),
+    temLoginProprio: () => true,
+  };
+  await comDubles(contas, dubles, () => p.avaliarTroca({ motivo: 'auth', ate: null, continuar: true }, p.geracao));
+  // O login da pasta própria foi recusado: a sessão volta para o ~/.claude, na mesma conta, que não é marcada.
+  assert.deepStrictEqual(trocas, [['principal', 'login-da-pasta-propria', true]]);
+  assert.deepStrictEqual(marcadas, []);
+  // E os relançamentos desta sessão nessa conta não voltam para a pasta própria.
+  await comDubles(contas, { envDaSessao: () => ({ CLAUDE_CONFIG_DIR: '/propria' }), envDaConta: () => ({}) }, async () => {
+    assert.strictEqual(p.envDaAbertura().CLAUDE_CONFIG_DIR, undefined);
+  });
+  // Se o login do ~/.claude também for recusado, aí sim a conta é marcada.
+  await comDubles(contas, dubles, () => p.avaliarTroca({ motivo: 'auth', ate: null, continuar: true }, p.geracao));
+  assert.deepStrictEqual(marcadas, ['principal']);
+  assert.deepStrictEqual(trocas[1], ['segunda', 'auth', true]);
+}
+
+async function semLoginProprioASessaoVoltaAContarComoDaSuaSemReabrir() {
+  const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+  const trocas = [];
+  const consultadas = [];
+  p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+  await comDubles(contas, {
+    log() {},
+    // Só a segunda tem login na pasta própria; a principal, em que a sessão abriu, não.
+    temLoginProprio: (id) => (consultadas.push(id), id === 'segunda'),
+  }, async () => {
+    // A segunda entrou no ~/.claude: sem login próprio, a sessão passa a contar como dela.
+    assert.strictEqual(await p.checarSlot({ principal: 'segunda' }), false);
+    assert.strictEqual(p.conta, 'segunda');
+    // A principal voltou: a sessão volta a contar como dela, sem reabrir na pasta da segunda.
+    assert.strictEqual(await p.checarSlot({ principal: 'principal' }), false);
+    assert.strictEqual(p.conta, 'principal');
+  });
+  assert.deepStrictEqual(trocas, []);
+  assert.deepStrictEqual(consultadas, ['principal']);
+}
+
+async function loginFeitoDepoisLevaASessaoParaAPastaPropria() {
+  const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+  const trocas = [];
+  const consultas = [];
+  let temLogin = false;
+  p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+  await comDubles(contas, {
+    log() {},
+    temLoginProprio: (id, cfg, opcoes) => (consultas.push([id, Boolean(opcoes && opcoes.fresco)]), temLogin),
+    lerUso: async () => ({ ok: true, uso: null }),
+  }, async () => {
+    // Sem login próprio: a sessão passa a contar como da segunda.
+    assert.strictEqual(await p.checarSlot({ principal: 'segunda' }), false);
+    assert.strictEqual(p.conta, 'segunda');
+    // A pessoa faz o login na pasta da principal: antes de um minuto, a sessão não consulta de novo.
+    temLogin = true;
+    assert.strictEqual(await p.checarSlot({ principal: 'segunda' }), false);
+    assert.strictEqual(consultas.length, 1);
+    // Passado o minuto, consulta sem o guardado e volta para a pasta própria.
+    p.ultimaChecagemDoSlot -= 61 * 1000;
+    assert.strictEqual(await p.checarSlot({ principal: 'segunda' }), true);
+  });
+  assert.deepStrictEqual(consultas, [['principal', true], ['principal', true]]);
+  assert.deepStrictEqual(trocas, [['principal', 'saiu-do-claude']]);
+}
+
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior, limiteNaContaQueEntrouNoClaudeMarcaEssaConta, contaQueSaiuDoClaudeVoltaParaAPastaPropria, donaEsgotadaOuSemFolgaNaoLevaASessaoDeVolta, escolhaAMaoVemAntesDaVoltaParaAPastaPropria, loginRecusadoNaPastaPropriaVoltaParaOClaudeSemMarcarAConta, semLoginProprioASessaoVoltaAContarComoDaSuaSemReabrir, loginFeitoDepoisLevaASessaoParaAPastaPropria];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {
@@ -414,5 +580,6 @@ async function threadDoT3RetomaASessaoAnterior() {
       console.log(`FALHA ${cenario.name}\n${e.message}\n${e.stack.split("\n").slice(1, 3).join("\n")}`);
     }
   }
+  fs.rmSync(HOME_EM_PROCESSO, { recursive: true, force: true });
   process.exit(falhas ? 1 : 0);
 })();

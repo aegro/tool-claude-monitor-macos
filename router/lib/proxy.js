@@ -4,6 +4,9 @@ const { spawn } = require('child_process');
 const contas = require('./contas');
 const { valorDaFlag, argsDeRetomada } = require('./args');
 
+// A sessão da conta do ~/.claude que saiu da pasta própria porque o login de lá foi recusado: mesma conta.
+const MOTIVO_LOGIN_PROPRIO = 'login-da-pasta-propria';
+
 const AJUSTES_REPETIDOS = new Set([
   'set_permission_mode', 'set_model', 'set_max_thinking_tokens', 'apply_flag_settings', 'mcp_set_servers',
 ]);
@@ -78,6 +81,7 @@ class Proxy {
     this.preventivaPendente = false;
     this.ultimaChecagemDeVolta = 0;
     this.ultimaChecagemDaEscolhida = 0;
+    this.ultimaChecagemDoSlot = 0;
     this.escolhidaVista = undefined;
     this.filaDoHost = [];
     this.retido = null;
@@ -88,6 +92,10 @@ class Proxy {
     this.runIdsWorkflow = new Map();
     this.hostEncerrou = false;
     this.encerrando = false;
+    this.naPastaPropria = false;
+    this.contaDaAbertura = null;
+    // Contas cujo login na pasta própria foi recusado nesta sessão: ela volta a abrir no ~/.claude.
+    this.loginProprioRecusado = new Set();
   }
 
   async iniciar() {
@@ -119,13 +127,24 @@ class Proxy {
 
   lancar(args) {
     const geracao = this.geracao;
+    // Uma leitura da config para a abertura inteira: com duas, a troca dos agentes caindo entre elas deixaria o `env`
+    // de uma (a pasta própria) com o `naPastaPropria` da outra, e a recusa daquele login marcaria a conta inteira.
+    const cfg = contas.carregarConfig();
+    const env = this.envDaAbertura(cfg);
     try {
-      contas.prepararConta(this.conta);
+      contas.prepararSessao(this.conta, env, cfg);
     } catch (e) {
       contas.log(`stream: preparar conta ${this.conta} falhou: ${e.message}`);
     }
+    // Aberta no ~/.claude (a conta não tem login na pasta própria): a troca dos agentes pode mudar a conta por
+    // baixo dela, e `checarSlot` acompanha.
+    this.noClaudePadrao = !env.CLAUDE_CONFIG_DIR;
+    // A conta do ~/.claude aberta na pasta própria (envDaConta nunca põe CLAUDE_CONFIG_DIR para ela).
+    this.naPastaPropria = Boolean(env.CLAUDE_CONFIG_DIR) && contas.usaDirPadrao(this.conta, cfg);
+    // A conta em que esta abertura foi feita: `this.conta` segue a do ~/.claude quando a sessão não tem para onde ir.
+    this.contaDaAbertura = this.conta;
     const filho = spawn(contas.resolverClaude(), args, {
-      env: contas.envDaConta(this.conta),
+      env,
       stdio: ['pipe', 'pipe', 'inherit'],
     });
     this.filho = filho;
@@ -141,6 +160,13 @@ class Proxy {
     });
     filho.on('exit', (codigo, sinal) => this.filhoSaiu(geracao, codigo, sinal));
     return filho;
+  }
+
+  // Na pasta própria quando a conta tem login lá (envDaSessao), salvo se esse login já foi recusado nesta sessão.
+  envDaAbertura(cfg = contas.carregarConfig()) {
+    return this.loginProprioRecusado.has(this.conta)
+      ? contas.envDaConta(this.conta, process.env, cfg)
+      : contas.envDaSessao(this.conta, process.env, cfg);
   }
 
   paraFilho(linha) {
@@ -209,7 +235,7 @@ class Proxy {
 
     const emTurnoAntes = this.emTurno;
     this.rastrear(msg);
-    if (msg.type === 'rate_limit_event' && this.conta) contas.registrarLimiteAoVivo(this.conta, msg.rate_limit_info);
+    if (msg.type === 'rate_limit_event' && this.conta) contas.registrarLimiteAoVivo(this.contaQueGasta(), msg.rate_limit_info);
 
     if (this.retido) {
       this.retido.push(linha);
@@ -324,9 +350,12 @@ class Proxy {
 
   mensagemDeContinuacao(de, motivo, interrompidas) {
     let texto =
-      `[claude-auto] A conta "${contas.nomeDaConta(de)}" atingiu o limite (${motivo}) no meio do turno ` +
-      `e esta sessão foi retomada na conta "${contas.nomeDaConta(this.conta)}". ` +
-      'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
+      motivo === MOTIVO_LOGIN_PROPRIO
+        ? `[claude-auto] O login da conta "${contas.nomeDaConta(de)}" foi recusado no meio do turno e esta sessão ` +
+          'foi retomada na mesma conta, pelo login do ~/.claude. '
+        : `[claude-auto] A conta "${contas.nomeDaConta(de)}" atingiu o limite (${motivo}) no meio do turno ` +
+          `e esta sessão foi retomada na conta "${contas.nomeDaConta(this.conta)}". `;
+    texto += 'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
     if (interrompidas.length) {
       texto += '\n\nEstas tarefas estavam rodando e foram encerradas pela troca. Relance cada uma:';
       for (const t of interrompidas) {
@@ -352,6 +381,16 @@ class Proxy {
   async avaliarTroca(gatilho, geracao) {
     this.avaliando = true;
     try {
+      // O login da pasta própria pode estar revogado (ficou parado enquanto a conta estava no ~/.claude), e o do
+      // ~/.claude é desta mesma conta: a sessão volta para lá antes de a conta inteira ser dada como esgotada.
+      if (gatilho.motivo === 'auth' && this.naPastaPropria && contas.usaDirPadrao(this.conta)) {
+        contas.log(`stream: login de ${this.conta} recusado na pasta própria; a sessão volta para o ~/.claude`);
+        this.loginProprioRecusado.add(this.conta);
+        await this.trocar({ para: this.conta, motivo: MOTIVO_LOGIN_PROPRIO, forcada: true, continuar: gatilho.continuar });
+        return;
+      }
+      // Aberta no ~/.claude, a sessão gasta a conta que está lá agora: o limite é dela, e é dela que a sessão sai.
+      this.conta = this.contaQueGasta();
       contas.log(`stream: gatilho ${gatilho.motivo} na conta ${this.conta}`);
       contas.marcarEsgotada(this.conta, gatilho.ate, gatilho.motivo);
       const escolha = await contas.escolher({ excluir: [this.conta] });
@@ -462,7 +501,10 @@ class Proxy {
     this.checandoPreventiva = true;
     try {
       const cfg = contas.carregarConfig();
+      // A escolha à mão vem antes: ela já reabre a sessão na conta escolhida, e a volta para a pasta própria só
+      // reabriria a sessão na conta de que o usuário acabou de tirá-la.
       if (await this.checarEscolhida(cfg)) return;
+      if (await this.checarSlot(cfg)) return;
       const folga = contas.folgaDe(await contas.lerUso(this.conta));
       if (folga == null || folga >= cfg.limites.preventiva) {
         this.preventivaPendente = false;
@@ -484,6 +526,60 @@ class Proxy {
     } finally {
       this.checandoPreventiva = false;
     }
+  }
+
+  // A conta que esta sessão gasta de fato: aberta no ~/.claude, é a que está lá agora, que a troca dos agentes pode
+  // ter mudado depois da abertura.
+  contaQueGasta() {
+    if (!this.noClaudePadrao) return this.conta;
+    const principal = contas.carregarConfig().principal;
+    return principal || this.conta;
+  }
+
+  // A troca dos agentes tirou do ~/.claude a conta em que esta sessão abriu: o Claude Code aberto lá passa a gastar
+  // a que entrou. No fim de um turno, sem tarefa em segundo plano, a sessão volta para a própria conta, na pasta
+  // dela; sem login próprio, ela passa a contar como da conta que agora está no ~/.claude, que é a que ela gasta, e
+  // volta a contar como da sua quando ela voltar para o ~/.claude, sem reabrir. Já contando como da outra, ela tenta
+  // a volta de novo no máximo uma vez por minuto: é assim que um login feito depois na pasta própria é visto.
+  async checarSlot(cfg) {
+    if (!this.noClaudePadrao || !cfg.principal) return false;
+    const dona = this.contaDaAbertura || this.conta;
+    if (cfg.principal === dona) {
+      if (this.conta !== dona) contas.log(`stream: ${dona} voltou ao ~/.claude; a sessão volta a contar como dela`);
+      this.conta = dona;
+      return false;
+    }
+    const jaSegue = this.conta === cfg.principal;
+    if (jaSegue && Date.now() - this.ultimaChecagemDoSlot < INTERVALO_DE_VOLTA_MS) return false;
+    if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
+    this.ultimaChecagemDoSlot = Date.now();
+    const motivo = await this.motivoParaFicarNoClaude(dona);
+    if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
+    // A leitura do uso leva segundos: se a troca dos agentes mudou o ~/.claude nesse meio-tempo, o fim de turno
+    // seguinte decide.
+    if (contas.carregarConfig().principal !== cfg.principal) return false;
+    if (!motivo) {
+      await this.trocar({ para: dona, motivo: 'saiu-do-claude', forcada: false, continuar: false });
+      return true;
+    }
+    if (!jaSegue) contas.log(`stream: ${dona} saiu do ~/.claude ${motivo}; a sessão segue em ${cfg.principal}`);
+    this.conta = cfg.principal;
+    return false;
+  }
+
+  // Por que a sessão não volta agora para a pasta própria da dona, ou null quando volta. O login é consultado sem o
+  // guardado: a sessão vai ser morta e reaberta por causa desta resposta, e um logout na pasta própria a reabriria
+  // numa pasta sem credencial. E a dona precisa estar como a escolha à mão exige, não esgotada e com a folga que a
+  // preventiva pede para ficar: a troca dos agentes a tira do ~/.claude justamente quando a folga acaba, e reabrir
+  // nela levaria a sessão direto para o limite e para uma segunda troca, no meio do turno seguinte.
+  async motivoParaFicarNoClaude(dona) {
+    if (this.loginProprioRecusado.has(dona)) return 'com o login próprio recusado';
+    if (contas.lerEsgotadas()[dona]) return 'esgotada';
+    const cfg = contas.carregarConfig();
+    if (!contas.temLoginProprio(dona, cfg, { fresco: true })) return 'sem login próprio';
+    const folga = contas.folgaDe(await contas.lerUso(dona));
+    if (folga != null && folga < cfg.limites.preventiva) return `com folga de ${folga}%`;
+    return null;
   }
 
   // A conta escolhida à mão (`fixada`, o "Usar esta agora" do Monitor) leva também a sessão que já está aberta, no

@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFile, execFileSync, spawn } = require('child_process');
+const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 
 const HOME = os.homedir();
 const PRINCIPAL_PADRAO = 'principal';
@@ -233,12 +233,52 @@ function nomeDaConta(id, cfg = carregarConfig()) {
   return (cfg.contas[id] && cfg.contas[id].nome) || id;
 }
 
-function envDaConta(id, base = process.env) {
-  const cfg = carregarConfig();
+function envDaConta(id, base = process.env, cfg = carregarConfig()) {
   const env = { ...base, CLAUDE_AUTO_CONTA: id };
   if (usaDirPadrao(id, cfg)) delete env.CLAUDE_CONFIG_DIR;
   else env.CLAUDE_CONFIG_DIR = dirDaConta(id, cfg);
   return env;
+}
+
+// A pasta própria de uma conta (~/.claude-accounts/<id>), mesmo quando ela é a do ~/.claude agora.
+function dirPropria(id, cfg = carregarConfig()) {
+  const conta = cfg.contas[id] || {};
+  return conta.dir ? path.resolve(expandir(conta.dir)) : path.join(DIR_CONTAS, id);
+}
+
+// A resposta do Keychain por pasta própria, guardada por alguns minutos no processo (o proxy de uma sessão). O
+// `security` roda síncrono no event loop do proxy, que nesse tempo não encaminha nada entre o VS Code e o filho; sem
+// guardar, ele rodaria em toda abertura e em toda troca. O prazo curto vale para os dois valores: um logout (o `true`
+// guardado) e um login feito depois (o `false`) aparecem na consulta seguinte ao prazo.
+const PRAZO_DO_LOGIN_PROPRIO_MS = 5 * 60 * 1000;
+const loginProprioPorDir = new Map();
+
+// Se a conta tem login na pasta própria (o item do Keychain existe; o valor não é lido). Um Keychain que não
+// responde em 2 s conta como sem login (a sessão fica no ~/.claude, como antes) e não é guardado: a próxima
+// consulta tenta de novo. `fresco` ignora a resposta guardada, para quem vai reabrir a sessão por causa dela.
+function temLoginProprio(id, cfg = carregarConfig(), { fresco = false } = {}) {
+  const dir = dirPropria(id, cfg);
+  if (process.platform !== 'darwin') return fs.existsSync(path.join(dir, '.credentials.json'));
+  const guardado = loginProprioPorDir.get(dir);
+  if (!fresco && guardado && Date.now() - guardado.em < PRAZO_DO_LOGIN_PROPRIO_MS) return guardado.tem;
+  const hash = crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8);
+  const r = spawnSync('security', ['find-generic-password', '-s', `Claude Code-credentials-${hash}`], { stdio: 'ignore', timeout: 2000 });
+  if (r.error || r.signal) return false;
+  loginProprioPorDir.set(dir, { tem: r.status === 0, em: Date.now() });
+  return r.status === 0;
+}
+
+function esquecerLoginProprio() {
+  loginProprioPorDir.clear();
+}
+
+// O ambiente de uma sessão de stream (VS Code, T3). Ela abre na pasta própria da conta sempre que ali há login,
+// mesmo quando a conta é a do ~/.claude: a troca dos agentes troca o login do ~/.claude, e uma sessão aberta lá
+// relê o Keychain e passa a gastar a conta que entrou, com o nome da que saiu (09/10: sessões da Max gastando a
+// Squad Compare). Sem login próprio, fica no ~/.claude, como antes.
+function envDaSessao(id, base = process.env, cfg = carregarConfig()) {
+  if (!usaDirPadrao(id, cfg) || !temLoginProprio(id, cfg)) return envDaConta(id, base, cfg);
+  return { ...base, CLAUDE_AUTO_CONTA: id, CLAUDE_CONFIG_DIR: dirPropria(id, cfg) };
 }
 
 function log(mensagem) {
@@ -269,10 +309,22 @@ function garantirLink(origem, destino) {
   fs.symlinkSync(origem, destino);
 }
 
-function prepararConta(id) {
-  const cfg = carregarConfig();
+function prepararConta(id, cfg = carregarConfig()) {
   if (usaDirPadrao(id, cfg)) return;
-  const dir = dirDaConta(id, cfg);
+  prepararPasta(id, dirDaConta(id, cfg), arquivoConfigDaConta(id, cfg));
+}
+
+// Prepara a pasta em que uma sessão de stream vai abrir (o `env` de envDaSessao). Para a conta do ~/.claude aberta
+// na pasta própria, é o mesmo que uma conta extra recebe: os links, a config e os consentimentos da principal,
+// que ficaram parados desde a última vez que ela não estava no ~/.claude. O ~/.claude em si não é tocado.
+function prepararSessao(id, env = {}, cfg = carregarConfig()) {
+  if (!usaDirPadrao(id, cfg)) return prepararConta(id, cfg);
+  const dir = env.CLAUDE_CONFIG_DIR && path.resolve(env.CLAUDE_CONFIG_DIR);
+  if (!dir || dir === path.resolve(DIR_PRINCIPAL)) return;
+  prepararPasta(id, dir, path.join(dir, '.claude.json'));
+}
+
+function prepararPasta(id, dir, arquivoConfig) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   for (const nome of COMPARTILHADOS) {
     const origem = path.join(DIR_PRINCIPAL, nome);
@@ -286,7 +338,7 @@ function prepararConta(id) {
       log(`link: falhou para ${nome} em ${id}: ${e.message}`);
     }
   }
-  sincronizarConfig(id, cfg);
+  copiarConfigDaPrincipal(id, arquivoConfig);
   sincronizarConsentimentos(dir);
 }
 
@@ -309,9 +361,12 @@ function sincronizarConsentimentos(dir) {
 
 function sincronizarConfig(id, cfg = carregarConfig()) {
   if (usaDirPadrao(id, cfg)) return false;
+  return copiarConfigDaPrincipal(id, arquivoConfigDaConta(id, cfg));
+}
+
+function copiarConfigDaPrincipal(id, arquivo) {
   const origem = lerJson(ARQ_CONFIG_PRINCIPAL, null);
   if (!origem) return false;
-  const arquivo = arquivoConfigDaConta(id, cfg);
   try {
     return Boolean(
       atualizarJson(arquivo, (alvo) => {
@@ -708,6 +763,13 @@ function voltaConhecida(id, motivo, agora = Date.now()) {
 }
 
 function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
+  // A sessão que só mudou de pasta na mesma conta (voltou para a própria, ou para o ~/.claude) não trocou de conta:
+  // fica no log, fora da lista de trocas que o Monitor mostra, e sem aviso. A troca de teste com uma conta só
+  // (CLAUDE_AUTO_TESTE_MESMA_CONTA) é a exceção: ela existe para testar a lista e o aviso.
+  if (de === para && motivo !== 'teste') {
+    log(`sessão ${sessao || '-'} reaberta na mesma conta ${de} (${motivo})`);
+    return;
+  }
   const registro = { em: Date.now(), de, para, motivo, sessao: sessao || null, interrompidas, pid: process.pid };
   try {
     fs.mkdirSync(DIR_ESTADO, { recursive: true });
@@ -823,6 +885,10 @@ function registrarLimiteAoVivo(id, info, agora = Date.now()) {
 }
 
 module.exports = {
+  envDaSessao,
+  temLoginProprio,
+  esquecerLoginProprio,
+  dirPropria,
   contaDoDirPadrao,
   principal,
   python3,
@@ -843,6 +909,7 @@ module.exports = {
   nomeDaConta,
   envDaConta,
   prepararConta,
+  prepararSessao,
   sincronizarConfig,
   servicoKeychain,
   lerCredencial,

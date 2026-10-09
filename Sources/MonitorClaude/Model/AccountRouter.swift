@@ -33,6 +33,17 @@ enum AccountRouter {
         /// "A do topo primeiro" while a preferred account is set, "a de mais folga" otherwise: the queue in the
         /// panel writes the preferred account as the head of the route, so this is the only reading needed.
         var strategy: Strategy { preferred == nil ? .headroom : .order }
+
+        /// Where each account's sessions write their files. The account in `~/.claude` has two folders: the router
+        /// opens its stream sessions in its own folder (`<home>/<id>`) whenever there is a login there, so the
+        /// agents' switch does not carry them along, and its other sessions still write in `~/.claude`.
+        func sessionDirectories(home: URL = AccountRouter.home) -> [(id: String?, directory: URL)] {
+            accounts.flatMap { account -> [(id: String?, directory: URL)] in
+                let own: [(id: String?, directory: URL)] = account.usesDefaultDirectory
+                    ? [(id: account.id, directory: home.appendingPathComponent(account.id))] : []
+                return [(id: account.id, directory: account.directory)] + own
+            }
+        }
     }
 
     /// The router's own rule, named for what it does: with a preferred account (the head of the route) sessions

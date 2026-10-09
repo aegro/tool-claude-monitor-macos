@@ -414,6 +414,31 @@ struct QueueAndAccountsTests {
         #expect(ClaudeSessionStore.load(directory: a.appendingPathComponent("sessions"), accountId: "principal").first?.accountId == "principal")
     }
 
+    @Test func sessaoDaContaDoClaudeNaPastaPropriaFicaNaConta() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("monitor-sessions-\(UUID().uuidString)")
+        let home = base.appendingPathComponent("accounts"), padrao = base.appendingPathComponent("claude")
+        let config = try #require(AccountRouter.parseConfig(
+            Data(#"{ "principal": "max", "contas": { "max": {}, "aegro": {} }, "rota": ["max", "aegro"] }"#.utf8),
+            home: home, defaultDirectory: padrao))
+        let dirs = config.sessionDirectories(home: home)
+        // The account in `~/.claude` is read in both folders; the others only in their own.
+        #expect(dirs.map(\.directory) == [padrao, home.appendingPathComponent("max"), home.appendingPathComponent("aegro")])
+        #expect(dirs.map(\.id) == ["max", "max", "aegro"])
+
+        // The router opened a stream session of max in max's own folder: it shows up, and on max.
+        let propria = home.appendingPathComponent("max/sessions")
+        try fm.createDirectory(at: propria, withIntermediateDirectories: true)
+        try fm.createDirectory(at: padrao.appendingPathComponent("sessions"), withIntermediateDirectories: true)
+        let pid = Int(ProcessInfo.processInfo.processIdentifier)
+        try Data(#"{ "pid": \#(pid), "sessionId": "s", "cwd": "/tmp/x", "startedAt": 1000 }"#.utf8)
+            .write(to: propria.appendingPathComponent("1.json"))
+        let sessions = ClaudeSessionStore.load(accounts: dirs, defaultDirectory: padrao)
+        #expect(sessions.count == 1)
+        #expect(sessions.first?.accountId == "max")
+        #expect(sessions.first?.folderAccountId == "max")
+    }
+
     @Test func aMarcaDoRoteadorValeNoClaudePadraoParaQuemAbriuASessao() throws {
         let fm = FileManager.default
         let base = fm.temporaryDirectory.appendingPathComponent("monitor-sessions-\(UUID().uuidString)")

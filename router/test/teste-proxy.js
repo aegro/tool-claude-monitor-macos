@@ -450,8 +450,26 @@ async function contaQueSaiuDoClaudeVoltaParaAPastaPropria() {
   const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
   const trocas = [];
   p.trocar = async (t) => trocas.push([t.para, t.motivo]);
-  await comDubles(contas, { log() {}, temLoginProprio: () => true }, () => p.checarPreventiva());
+  await comDubles(contas, { log() {}, temLoginProprio: () => true, lerUso: async () => ({ ok: true, uso: null }) }, () => p.checarPreventiva());
   assert.deepStrictEqual(trocas, [['principal', 'saiu-do-claude']]);
+}
+
+async function donaEsgotadaOuSemFolgaNaoLevaASessaoDeVolta() {
+  const usoCom = (usado) => ({ ok: true, uso: { cinco: { usado }, sete: { usado: 10 } } });
+  for (const [caso, dubles] of [
+    ['esgotada', { lerEsgotadas: () => ({ principal: { ate: Date.now() + 3600 * 1000 } }), lerUso: async () => usoCom(10) }],
+    ['sem folga', { lerEsgotadas: () => ({}), lerUso: async () => usoCom(97) }],
+  ]) {
+    const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+    const trocas = [];
+    p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+    await comDubles(contas, { log() {}, temLoginProprio: () => true, ...dubles }, async () => {
+      // A troca dos agentes tirou a principal do ~/.claude por limite: a sessão segue contando como da segunda.
+      assert.strictEqual(await p.checarSlot(contas.carregarConfig()), false, caso);
+      assert.strictEqual(p.conta, 'segunda', caso);
+    });
+    assert.deepStrictEqual(trocas, [], caso);
+  }
 }
 
 async function escolhaAMaoVemAntesDaVoltaParaAPastaPropria() {
@@ -533,6 +551,7 @@ async function loginFeitoDepoisLevaASessaoParaAPastaPropria() {
   await comDubles(contas, {
     log() {},
     temLoginProprio: (id, cfg, opcoes) => (consultas.push([id, Boolean(opcoes && opcoes.fresco)]), temLogin),
+    lerUso: async () => ({ ok: true, uso: null }),
   }, async () => {
     // Sem login próprio: a sessão passa a contar como da segunda.
     assert.strictEqual(await p.checarSlot({ principal: 'segunda' }), false);
@@ -550,7 +569,7 @@ async function loginFeitoDepoisLevaASessaoParaAPastaPropria() {
 }
 
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior, limiteNaContaQueEntrouNoClaudeMarcaEssaConta, contaQueSaiuDoClaudeVoltaParaAPastaPropria, escolhaAMaoVemAntesDaVoltaParaAPastaPropria, loginRecusadoNaPastaPropriaVoltaParaOClaudeSemMarcarAConta, semLoginProprioASessaoVoltaAContarComoDaSuaSemReabrir, loginFeitoDepoisLevaASessaoParaAPastaPropria];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior, limiteNaContaQueEntrouNoClaudeMarcaEssaConta, contaQueSaiuDoClaudeVoltaParaAPastaPropria, donaEsgotadaOuSemFolgaNaoLevaASessaoDeVolta, escolhaAMaoVemAntesDaVoltaParaAPastaPropria, loginRecusadoNaPastaPropriaVoltaParaOClaudeSemMarcarAConta, semLoginProprioASessaoVoltaAContarComoDaSuaSemReabrir, loginFeitoDepoisLevaASessaoParaAPastaPropria];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {

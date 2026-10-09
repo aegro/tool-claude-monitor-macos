@@ -548,15 +548,33 @@ class Proxy {
     if (jaSegue && Date.now() - this.ultimaChecagemDoSlot < INTERVALO_DE_VOLTA_MS) return false;
     if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
     this.ultimaChecagemDoSlot = Date.now();
-    // Sem o guardado: a sessão vai ser morta e reaberta por causa desta resposta, e um logout na pasta própria a
-    // reabriria numa pasta sem credencial.
-    if (!this.loginProprioRecusado.has(dona) && contas.temLoginProprio(dona, cfg, { fresco: true })) {
+    const motivo = await this.motivoParaFicarNoClaude(dona);
+    if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
+    // A leitura do uso leva segundos: se a troca dos agentes mudou o ~/.claude nesse meio-tempo, o fim de turno
+    // seguinte decide.
+    if (contas.carregarConfig().principal !== cfg.principal) return false;
+    if (!motivo) {
       await this.trocar({ para: dona, motivo: 'saiu-do-claude', forcada: false, continuar: false });
       return true;
     }
-    if (!jaSegue) contas.log(`stream: ${dona} saiu do ~/.claude sem login próprio; a sessão segue em ${cfg.principal}`);
+    if (!jaSegue) contas.log(`stream: ${dona} saiu do ~/.claude ${motivo}; a sessão segue em ${cfg.principal}`);
     this.conta = cfg.principal;
     return false;
+  }
+
+  // Por que a sessão não volta agora para a pasta própria da dona, ou null quando volta. O login é consultado sem o
+  // guardado: a sessão vai ser morta e reaberta por causa desta resposta, e um logout na pasta própria a reabriria
+  // numa pasta sem credencial. E a dona precisa estar como a escolha à mão exige, não esgotada e com a folga que a
+  // preventiva pede para ficar: a troca dos agentes a tira do ~/.claude justamente quando a folga acaba, e reabrir
+  // nela levaria a sessão direto para o limite e para uma segunda troca, no meio do turno seguinte.
+  async motivoParaFicarNoClaude(dona) {
+    if (this.loginProprioRecusado.has(dona)) return 'com o login próprio recusado';
+    if (contas.lerEsgotadas()[dona]) return 'esgotada';
+    const cfg = contas.carregarConfig();
+    if (!contas.temLoginProprio(dona, cfg, { fresco: true })) return 'sem login próprio';
+    const folga = contas.folgaDe(await contas.lerUso(dona));
+    if (folga != null && folga < cfg.limites.preventiva) return `com folga de ${folga}%`;
+    return null;
   }
 
   // A conta escolhida à mão (`fixada`, o "Usar esta agora" do Monitor) leva também a sessão que já está aberta, no

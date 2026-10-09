@@ -66,6 +66,26 @@ struct AccountRouterTests {
         #expect(AccountRouter.headroom(snap, now: now) == 60)
     }
 
+    /// "Usar esta agora": the account chosen by hand takes new sessions above the rule while it has room.
+    @Test func contaEscolhidaAMaoVenceARegraEnquantoTemFolga() throws {
+        let cfg = try config("""
+        { "contas": { "principal": {}, "squad": {}, "extra": {} },
+          "rota": ["principal", "squad"], "reserva": ["extra"], "preferida": "principal", "fixada": "extra" }
+        """)
+        let all: Set<String> = ["principal", "squad", "extra"]
+        #expect(cfg.pinned == "extra")
+        // Against the rule: the preferred account has room, the reserve one is chosen anyway.
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 80, "squad": 50, "extra": 2],
+                                   available: all, exhausted: [:]) == "extra")
+        // Out of room or out of login, the rule decides again.
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 80, "extra": 0], available: all, exhausted: [:]) == "principal")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 80, "extra": 50], available: all,
+                                   exhausted: ["extra": Date().addingTimeInterval(600)]) == "principal")
+        #expect(AccountRouter.pick(cfg, headroom: ["principal": 80, "extra": 50], available: ["principal"], exhausted: [:]) == "principal")
+        // A pinned id that is no queue account is ignored.
+        #expect(try config(#"{ "contas": { "principal": {} }, "fixada": "sumiu" }"#).pinned == nil)
+    }
+
     @Test func escolheAMaiorFolgaDaRotaEUsaReservaSóAbaixoDoLimite() throws {
         let cfg = try config("""
         { "contas": { "principal": {}, "squad": {}, "extra": {} },

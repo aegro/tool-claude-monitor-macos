@@ -22,6 +22,7 @@ Config em `~/.claude-accounts/config.json`:
 | `rota` | `["principal"]` | contas usadas normalmente; vence a de maior folga |
 | `reserva` | `[]` | só entra quando todas da rota estão abaixo de `limites.reserva` |
 | `preferida` | nenhuma | conta usada primeiro sempre que tem folga; veja [Conta preferida](#conta-preferida). A fila do Monitor grava aqui a primeira da rota na regra “A do topo primeiro” e tira a chave na “A de mais folga” |
+| `fixada` | nenhuma | conta escolhida à mão (o **Usar esta agora** do Monitor): as sessões novas abrem nela acima da regra e da preferida enquanto ela tiver login e folga; esgotada, a regra decide de novo, e ninguém volta sozinho para a preferida enquanto a chave existir |
 | `contas.<id>.nome` | o id | nome da conta nas notificações, no `status` e no Monitor |
 | `contas.<id>.sigla` | iniciais do nome | duas letras que o Monitor mostra no avatar e na barra de menu; o roteador não usa |
 | `limites.reserva` | `3` | folga (%) abaixo da qual a reserva entra e a preferida deixa de ser escolhida |

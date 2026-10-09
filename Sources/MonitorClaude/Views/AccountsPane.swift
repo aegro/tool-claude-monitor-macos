@@ -69,11 +69,26 @@ struct AccountsPane: View {
     @ViewBuilder
     private func status(queue: AccountQueue, inUse: String?) -> some View {
         let entry = queue.entry(inUse)
-        StatusBlock(
-            caption: queue.isSingle || !queue.enabled ? "As sessões abrem na" : "Sessões novas abrem na",
-            headline: entry?.label ?? "nenhuma conta com folga",
-            line: AccountQueue.statusLine(queue: queue, inUse: inUse, outlook: monitor.outlook),
-            tone: entry == nil ? Ink.alarm : .primary)
+        let byHand = queue.enabled && queue.pinned != nil && queue.pinned == inUse
+        VStack(alignment: .leading, spacing: 6) {
+            StatusBlock(
+                caption: queue.isSingle || !queue.enabled ? "As sessões abrem na" : (byHand ? "Você escolheu: sessões novas abrem na" : "Sessões novas abrem na"),
+                headline: entry?.label ?? "nenhuma conta com folga",
+                line: AccountQueue.statusLine(queue: queue, inUse: inUse, outlook: monitor.outlook),
+                tone: entry == nil ? Ink.alarm : .primary)
+            if queue.enabled, let pinned = queue.pinned {
+                HStack(spacing: 6) {
+                    Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Ink.ember)
+                    Text(pinned == inUse ? "Fora da regra da fila, até você voltar."
+                                         : "\(queue.entry(pinned)?.label ?? pinned) está sem folga: a regra da fila decide até ela voltar.")
+                        .font(Type.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button("Voltar à regra") { Task { await monitor.pinAccount(nil) } }
+                        .controlSize(.small)
+                }
+            }
+        }
     }
 
     private func strategyMenu(_ queue: AccountQueue) -> some View {
@@ -104,6 +119,7 @@ struct AccountsPane: View {
     private func row(_ entry: AccountQueue.Entry, index: Int, inUse: String?, next: String?, queue: AccountQueue) -> some View {
         AccountRow(entry: entry, inUse: entry.id == inUse, next: entry.id == next && !queue.isSingle,
                    draggable: !queue.isSingle, expanded: expanded == entry.id,
+                   pinned: queue.enabled && queue.pinned == entry.id,
                    bgAgents: monitor.sessions.contains(where: \.isBackground),
                    monitor: monitor) {
             withAnimation(.easeOut(duration: 0.15)) { expanded = expanded == entry.id ? nil : entry.id }
@@ -121,8 +137,37 @@ struct AccountsPane: View {
                                                        dragging: $dragging, dropTarget: $dropTarget))
         .contextMenu { menu(entry, index: index, queue: queue) }
         .safeAreaInset(edge: .bottom, spacing: 4) {
-            if confirmingRemoval == entry.id { removalConfirmation(entry) }
+            if confirmingRemoval == entry.id {
+                removalConfirmation(entry)
+            } else if expanded == entry.id, queue.configured, !queue.isSingle {
+                actions(entry, queue: queue)
+            }
         }
+    }
+
+    /// What can be done with an account, under its open detail: where the click already led.
+    private func actions(_ entry: AccountQueue.Entry, queue: AccountQueue) -> some View {
+        HStack(spacing: 8) {
+            if queue.enabled {
+                if queue.pinned == entry.id {
+                    Button("Voltar à regra") { Task { await monitor.pinAccount(nil) } }
+                } else {
+                    Button("Usar esta agora") { Task { await monitor.pinAccount(entry.id) } }
+                        .buttonStyle(.borderedProminent).tint(Ink.ember)
+                        .disabled(!entry.hasLogin)
+                        .help("Sessões novas abrem nesta conta, fora da regra da fila, até você voltar ou ela ficar sem folga")
+                }
+            }
+            Spacer()
+            if entry.id != queue.principal {
+                Button("Remover da fila…") { withAnimation(.easeOut(duration: 0.15)) { confirmingRemoval = entry.id } }
+                    .buttonStyle(.plain).font(Type.caption).foregroundStyle(.secondary)
+            }
+        }
+        .controlSize(.small)
+        .padding(.leading, 47)
+        .padding(.trailing, 9)
+        .padding(.bottom, 6)
     }
 
     /// Asked under the row, not in a dialog, which would close the menu bar panel.
@@ -148,6 +193,14 @@ struct AccountsPane: View {
 
     @ViewBuilder
     private func menu(_ entry: AccountQueue.Entry, index: Int, queue: AccountQueue) -> some View {
+        if !queue.isSingle, queue.enabled {
+            if queue.pinned == entry.id {
+                Button("Voltar à regra da fila") { Task { await monitor.pinAccount(nil) } }
+            } else {
+                Button("Usar esta agora") { Task { await monitor.pinAccount(entry.id) } }.disabled(!entry.hasLogin)
+            }
+            Divider()
+        }
         if !queue.isSingle {
             Button("Subir") { Task { await monitor.moveAccount(entry.id, to: max(0, index - 1)) } }
                 .disabled(index == 0)
@@ -297,6 +350,7 @@ struct AccountRow: View {
     let next: Bool
     let draggable: Bool
     let expanded: Bool
+    let pinned: Bool
     let bgAgents: Bool
     let monitor: Monitor
     var toggle: () -> Void
@@ -321,6 +375,10 @@ struct AccountRow: View {
                     HStack(spacing: 6) {
                         Text(entry.label).font(Type.strong).lineLimit(1).truncationMode(.tail)
                         if let plan = entry.plan { PlanTag(plan: plan) }
+                        if pinned {
+                            Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Ink.ember)
+                                .help("Escolhida por você para as sessões novas")
+                        }
                         Spacer(minLength: 4)
                         chip
                         // Says the row opens: without it, the detail under a click was a secret.

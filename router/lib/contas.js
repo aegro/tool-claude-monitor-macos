@@ -201,6 +201,7 @@ function normalizarConfig(lido) {
   cfg.rota = (cfg.rota || []).filter((id) => cfg.contas[id]);
   if (!cfg.rota.length) cfg.rota = [principal];
   cfg.reserva = (cfg.reserva || []).filter((id) => cfg.contas[id] && !cfg.rota.includes(id));
+  if (cfg.fixada && !cfg.rota.includes(cfg.fixada) && !cfg.reserva.includes(cfg.fixada)) delete cfg.fixada;
   return cfg;
 }
 
@@ -577,6 +578,10 @@ function decidir(candidatos, { excluir = [] } = {}) {
   const ordem = candidatos.map((c) => c.id);
   const pontos = (c) => (c.folga == null ? 1 : c.folga);
   const elegivel = (c) => !excluir.includes(c.id) && !c.esgotada && c.logada && pontos(c) > 0;
+  // A conta que a pessoa escolheu à mão (`fixada`) vale acima da regra enquanto tiver como abrir sessão; esgotada,
+  // sem login ou deixada de fora por uma troca, a regra volta a decidir.
+  const fixada = cfg.fixada && candidatos.find((c) => c.id === cfg.fixada);
+  if (fixada && elegivel(fixada)) return fixada;
   const preferida = cfg.preferida && candidatos.find((c) => c.id === cfg.preferida);
   if (preferida && elegivel(preferida) && pontos(preferida) >= cfg.limites.reserva) return preferida;
   const melhor = (lista) =>
@@ -591,7 +596,7 @@ function decidir(candidatos, { excluir = [] } = {}) {
 }
 
 function preferidaDeVolta(candidatos, atual, cfg = carregarConfig()) {
-  if (!cfg.preferida || cfg.preferida === atual) return null;
+  if (cfg.fixada || !cfg.preferida || cfg.preferida === atual) return null;
   const c = candidatos.find((x) => x.id === cfg.preferida);
   if (!c || c.esgotada || !c.logada || c.folga == null || c.folga < cfg.limites.voltar) return null;
   return c;

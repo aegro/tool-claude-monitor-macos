@@ -998,7 +998,7 @@ final class Monitor: ObservableObject {
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
                             reserveBelow: router.config.reserveBelow, configured: true,
-                            principal: router.config.principal)
+                            principal: router.config.principal, pinned: router.config.pinned)
     }
 
     /// The monogram the menu bar shows: only when new sessions are not opening on the head of the queue.
@@ -1010,6 +1010,12 @@ final class Monitor: ObservableObject {
 
     /// Takes an account out of the queue (see `AccountRouter.discard`): for an entry that should not be there, such
     /// as a second login into the same account.
+    /// New sessions open on `id` from now on, above the rule; nil goes back to the rule.
+    func pinAccount(_ id: String?) async {
+        await save { try AccountRouter.setPinned(id) }
+        watchAgentsNow()
+    }
+
     func removeAccount(_ id: String) async {
         await save { try AccountRouter.discard(id) }
         watchAgentsNow()

@@ -37,6 +37,8 @@ struct AccountQueue: Equatable {
     /// The account in `~/.claude`: with switching off, the router hands everything to plain `claude`, which opens
     /// there whatever the order of the queue.
     var principal: String?
+    /// Chosen by hand to take new sessions, above the rule (see `AccountRouter.Config.pinned`).
+    var pinned: String?
 
     var route: [Entry] { entries.filter { $0.role == .route } }
     var reserve: [Entry] { entries.filter { $0.role == .reserve } }
@@ -51,7 +53,8 @@ struct AccountQueue: Equatable {
                                       usesDefaultDirectory: false, role: $0.role, monogram: $0.monogram)
             },
             reserveBelow: reserveBelow,
-            preferred: strategy == .order ? route.first?.id : nil)
+            preferred: strategy == .order ? route.first?.id : nil,
+            pinned: pinned)
     }
 
     private func pick(excluding: Set<String>, now: Date) -> String? {

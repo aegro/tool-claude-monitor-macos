@@ -19,6 +19,9 @@ enum AccountRouter {
         var accounts: [Account]
         var reserveBelow: Double
         var preferred: String?
+        /// The account the person chose by hand (`fixada`): new sessions open there whatever the rule, while it has
+        /// room; out of room, the rule decides again.
+        var pinned: String? = nil
 
         var hasExtraAccounts: Bool { accounts.contains { !$0.usesDefaultDirectory } }
         var route: [Account] { accounts.filter { $0.role == .route } }
@@ -159,13 +162,15 @@ enum AccountRouter {
         }
 
         let preferred = (root["preferida"] as? String).flatMap { route.contains($0) || reserve.contains($0) ? $0 : nil }
+        let pinned = (root["fixada"] as? String).flatMap { route.contains($0) || reserve.contains($0) ? $0 : nil }
 
         return Config(
             enabled: root["ativo"] as? Bool ?? true,
             principal: principal,
             accounts: route.map { account($0, .route) } + reserve.map { account($0, .reserve) },
             reserveBelow: reserveBelow,
-            preferred: preferred)
+            preferred: preferred,
+            pinned: pinned)
     }
 
     struct UnreadableConfig: LocalizedError {
@@ -191,6 +196,11 @@ enum AccountRouter {
             root["reserva"] = reserve
             root["preferida"] = strategy == .order ? route[0] : nil
         }
+    }
+
+    /// Chooses by hand where new sessions open (`fixada`), above the rule; nil goes back to the rule.
+    static func setPinned(_ id: String?, at url: URL = configURL) throws {
+        try updateConfig(at: url) { root in root["fixada"] = id }
     }
 
     static func setStrategy(_ strategy: Strategy, route: [String], at url: URL = configURL) throws {
@@ -781,6 +791,9 @@ enum AccountRouter {
                      exhausted: [String: Date]) -> String? {
         let order = config.accounts.map(\.id)
         func score(_ id: String) -> Double { headroom[id] ?? 1 }
+        if let pinned = config.pinned, available.contains(pinned), exhausted[pinned] == nil, score(pinned) > 0 {
+            return pinned
+        }
         if let preferred = config.preferred, available.contains(preferred), exhausted[preferred] == nil,
            score(preferred) > 0, score(preferred) >= config.reserveBelow {
             return preferred

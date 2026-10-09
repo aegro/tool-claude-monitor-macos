@@ -981,11 +981,12 @@ final class Monitor: ObservableObject {
         }
         let entries: [AccountQueue.Entry] = router.config.accounts.map { account in
             let identity = router.logins[account.id]
-            let live = identity != nil && identity?.key == activeAccount?.key
+            // The live feed belongs to this row only while it is this account's: carried by the desktop app it can be
+            // another organization's, and then the row, its detail and its forecast all use the account's own reading.
+            let live = identity != nil && identity?.key == activeAccount?.key && usageIsActiveAccount
             // The freshest reading wins: with the terminal token failing, the router may have just read this
-            // account with its own login while the live feed is still holding an old number. The live feed counts
-            // only while it is this account's: carried by the desktop app it can be another organization's.
-            let candidates = [live && usageIsActiveAccount ? usage : nil, router.usage[account.id],
+            // account with its own login while the live feed is still holding an old number.
+            let candidates = [live ? usage : nil, router.usage[account.id],
                               identity.flatMap { accounts.records[$0.key]?.snapshot }].compactMap { $0 }
             let snapshot = candidates.max { $0.fetchedAt < $1.fetchedAt }
             return AccountQueue.Entry(
@@ -1028,7 +1029,7 @@ final class Monitor: ObservableObject {
     var menuBarSession: MenuBarReading {
         let q = accountQueue
         guard q.configured, !q.isSingle, let id = q.newSessions(), let entry = q.entry(id),
-              !(entry.isLive && usageIsActiveAccount) else {
+              !entry.isLive else {
             return MenuBarReading(window: usage?.session, current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
         }
         let seen = entry.snapshot?.fetchedAt

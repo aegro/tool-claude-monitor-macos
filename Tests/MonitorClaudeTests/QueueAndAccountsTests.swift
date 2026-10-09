@@ -242,11 +242,13 @@ struct QueueAndAccountsTests {
 
     /// A command that exits in time, with Foundation's exit notice late (the 3-core CI runner delays it by over a
     /// second), is a zombie at the deadline: it has to read as exited, or its answer is thrown away as a timeout.
-    @Test func comandoQueSaiuMasNaoFoiColhidoContaComoEncerrado() {
+    @Test func comandoQueSaiuMasNaoFoiColhidoContaComoEncerrado() throws {
         var pid: pid_t = 0
         var argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sh"), strdup("-c"), strdup("exit 0"), nil]
         defer { argv.forEach { free($0) } }
-        #expect(posix_spawn(&pid, "/bin/sh", nil, nil, &argv, environ) == 0)
+        // Required before the cleanup: with a failed spawn the pid stays 0, and kill(0) and waitpid(0) would act on
+        // the whole process group, the test runner included.
+        try #require(posix_spawn(&pid, "/bin/sh", nil, nil, &argv, environ) == 0 && pid > 0)
         var status: Int32 = 0
         defer { waitpid(pid, &status, 0) }
         // Not reaped: still found by kill(pid, 0) once it has exited.
@@ -258,7 +260,7 @@ struct QueueAndAccountsTests {
         var running: pid_t = 0
         var sleepArgv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("30"), nil]
         defer { sleepArgv.forEach { free($0) } }
-        #expect(posix_spawn(&running, "/bin/sleep", nil, nil, &sleepArgv, environ) == 0)
+        try #require(posix_spawn(&running, "/bin/sleep", nil, nil, &sleepArgv, environ) == 0 && running > 0)
         defer { kill(running, SIGKILL); waitpid(running, &status, 0) }
         #expect(!AccountRouter.hasExited(running))
     }

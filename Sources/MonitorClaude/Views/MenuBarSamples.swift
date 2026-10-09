@@ -5,14 +5,13 @@ import AppKit
 /// `--render=menubar`: the place to check that the ring, the number and the badge sit on one line.
 struct MenuBarSamples: View {
     private let samples: [(String, MenuBarArt.Content)] = [
-        ("normal", .init(ring: .init(fraction: 0.24, pace: 0.4, hot: false, alert: false), percent: "24%")),
-        ("desperto + conta", .init(sun: "sun.max", ring: .init(fraction: 0.62, pace: 0.5, hot: false, alert: true),
-                                   percent: "62%", monogram: "SC")),
-        ("ritmo alto", .init(ring: .init(fraction: 0.71, pace: 0.5, hot: false, alert: false), percent: "71%",
-                             tint: NSColor(Ink.ember))),
-        ("parado", .init(ring: .init(fraction: 0.4, pace: 0, hot: false, alert: false), percent: "40%", muted: true)),
-        ("ambos", .init(ring: .init(fraction: 0.97, pace: 0.6, hot: false, alert: false), percent: "97%",
-                        cpu: "35%", tint: NSColor(Ink.alarm))),
+        ("normal", .init(ring: .init(fraction: 0.24, dot: false), number: "24")),
+        ("desperto + outra conta", .init(ring: .init(fraction: 0.62, dot: true), number: "62", monogram: "SC")),
+        ("ritmo alto", .init(ring: .init(fraction: 0.71, dot: false), number: "71", tint: NSColor(Ink.ember))),
+        ("parado", .init(ring: .init(fraction: 0.4, dot: false), number: "40", muted: true)),
+        ("perto do limite", .init(ring: .init(fraction: 0.97, dot: false), number: "97", tint: NSColor(Ink.alarm))),
+        ("esgotada", .init(ring: .init(fraction: 1, dot: false), number: "100", tint: NSColor(Ink.alarm))),
+        ("com CPU", .init(ring: .init(fraction: 0.24, dot: false), number: "24", cpu: "35%")),
     ]
 
     var body: some View {

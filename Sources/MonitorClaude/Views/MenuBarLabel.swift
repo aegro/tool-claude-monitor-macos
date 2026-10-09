@@ -38,26 +38,39 @@ struct MenuBarLabel: View {
         let reading = monitor.menuBarSession
         let current = reading.current
         let window = showLimit ? reading.window : nil
+        let hot = !showCPU && monitor.system.cpuPercent > 60
+        let attention = monitor.access.attention > 0
         let art = MenuBarArt.Content(
-            sun: keep.active ? (keep.lidClosed ? "sun.max.fill" : "sun.max") : nil,
             ring: window.map {
-                // No pace notch on a stale number: the notch advances with the clock while the percentage stands
-                // still, so it would keep drawing a verdict about a reading that stopped moving hours ago.
-                MenuBarArt.Ring(fraction: $0.utilization / 100, pace: current ? $0.paceTarget / 100 : 0,
-                                hot: showCPU ? false : monitor.system.cpuPercent > 60,
-                                alert: monitor.access.attention > 0)
+                MenuBarArt.Ring(fraction: $0.utilization / 100,
+                                // Something to look at in the panel: the Mac held awake, Acessos waiting, a hot CPU.
+                                dot: keep.active || attention || hot)
             },
             gauge: showLimit && window == nil,
-            percent: window.map { "\(Int($0.utilization.rounded()))%" },
+            number: window.map { "\(Int($0.utilization.rounded()))" },
             // Off the head of the queue, the menu bar says which account new sessions open on.
             monogram: showLimit ? monitor.menuBarMonogram : nil,
             cpu: showCPU ? "\(Int(monitor.system.cpuPercent.rounded()))%" : nil,
             tint: Self.tint(alarmed(reading), window: window),
             muted: window != nil && !current)
         Image(nsImage: MenuBarArt.make(art))
-            .modifier(StaleHint(text: window != nil && !current ? staleHelp(reading)
-                                                                  : (keep.active ? keep.stateText : nil)))
+            .help(helpText(reading, window: window, hot: hot, attention: attention))
             .accessibilityLabel(art.spoken)
+    }
+
+    /// The label is a number in a ring; the tooltip says in words what it is and what the dot stands for.
+    private func helpText(_ reading: Monitor.MenuBarReading, window: LimitWindow?, hot: Bool, attention: Bool) -> String {
+        var lines: [String] = []
+        if let window {
+            var line = "\(Int(window.utilization.rounded())) % da janela de 5h"
+            if let reset = window.resetsAt { line += ", renova às \(Fmt.clock(reset))" }
+            lines.append(line)
+            if !reading.current { lines.append(staleHelp(reading)) }
+        }
+        if keep.active { lines.append(keep.stateText) }
+        if attention { lines.append("Acessos precisa de você") }
+        if hot { lines.append("CPU acima de 60 %") }
+        return lines.joined(separator: "\n")
     }
 
     /// nil draws the label as a template, in the menu bar's own ink like the system items; a color only for the
@@ -77,36 +90,35 @@ struct MenuBarLabel: View {
 enum MenuBarArt {
     struct Ring: Equatable {
         var fraction: Double
-        var pace: Double
-        var hot: Bool
-        var alert: Bool
+        /// A small dot at the top right: the Mac held awake, Acessos waiting, or a hot CPU.
+        var dot: Bool
     }
 
     struct Content: Equatable {
-        var sun: String?
         var ring: Ring?
         var gauge = false
-        var percent: String?
+        /// The share of the 5h window, drawn inside the ring.
+        var number: String?
         var monogram: String?
         var cpu: String?
         var tint: NSColor?
         var muted = false
 
         var spoken: String {
-            [sun != nil ? "Mac desperto" : nil, percent.map { "limite de 5h em \($0)" }, monogram.map { "conta \($0)" },
+            [number.map { "limite de 5h em \($0) por cento" }, monogram.map { "conta \($0)" },
              cpu.map { "CPU \($0)" }].compactMap { $0 }.joined(separator: ", ")
         }
     }
 
-    static let height: CGFloat = 18
+    static let height: CGFloat = 20
     static let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
     static let badgeFont = NSFont.systemFont(ofSize: 9, weight: .bold)
+    static let ringSide: CGFloat = 20
 
     static func make(_ c: Content) -> NSImage {
         let ink = c.tint ?? .black
         let alpha: CGFloat = c.muted ? 0.5 : 1
         let gap: CGFloat = 4
-        let ringSide: CGFloat = 16
         let text: (String) -> NSAttributedString = {
             NSAttributedString(string: $0, attributes: [.font: font, .foregroundColor: ink.withAlphaComponent(alpha)])
         }
@@ -117,7 +129,6 @@ enum MenuBarArt {
             NSImage(systemSymbolName: name, accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: size, weight: .medium))
         }
-        let sun = c.sun.flatMap { symbol($0, size: 12) }
         let gauge = c.gauge ? symbol("gauge.with.dots.needle.33percent", size: 13) : nil
         let chip = c.cpu != nil ? symbol("cpu", size: 12) : nil
 
@@ -138,12 +149,10 @@ enum MenuBarArt {
                 string.draw(at: NSPoint(x: x, y: baseline + font.descender))
             }))
         }
-        glyph(sun)
         if let ring = c.ring {
-            parts.append((ring.hot ? ringSide + 5 : ringSide, { x in drawRing(ring, at: x, side: ringSide, ink: ink, alpha: alpha) }))
+            parts.append((ringSide, { x in drawRing(ring, number: c.number, at: x, ink: ink, alpha: alpha) }))
         }
         glyph(gauge)
-        if let percent = c.percent { label(text(percent)) }
         if let badge {
             let size = badge.size()
             let w = ceil(size.width) + 6
@@ -183,59 +192,46 @@ enum MenuBarArt {
         }
     }
 
-    /// A ring filled to the limit used, a notch at the sustainable pace, an ember dot when the machine is loaded
-    /// and a small dot at the top right when something in Acessos needs the person.
-    private static func drawRing(_ ring: Ring, at x: CGFloat, side: CGFloat, ink: NSColor, alpha: CGFloat) {
-        let rect = NSRect(x: x + 1.5, y: (height - side) / 2 + 1.5, width: side - 3, height: side - 3)
+    /// The share of the 5h window as a number inside a ring filled to it: the ring reads as the gauge of the number
+    /// it holds, which the ring alone, beside a separate percentage, did not. The pace shows as the colour (ember),
+    /// so there is no tick to compete with the digits.
+    private static func drawRing(_ ring: Ring, number: String?, at x: CGFloat, ink: NSColor, alpha: CGFloat) {
+        let line: CGFloat = 1.8
+        let rect = NSRect(x: x + line / 2 + 0.2, y: (height - ringSide) / 2 + line / 2 + 0.2,
+                          width: ringSide - line - 0.4, height: ringSide - line - 0.4)
         let center = NSPoint(x: rect.midX, y: rect.midY)
         let radius = rect.width / 2
         let track = NSBezierPath()
         track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
-        track.lineWidth = 2
-        ink.withAlphaComponent(0.35 * alpha).setStroke()
+        track.lineWidth = line
+        ink.withAlphaComponent(0.3 * alpha).setStroke()
         track.stroke()
         if ring.fraction > 0.005 {
             // Clockwise from 12 o'clock. AppKit angles run counter-clockwise from 3 o'clock.
             let arc = NSBezierPath()
             arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - 360 * min(1, ring.fraction),
                           clockwise: true)
-            arc.lineWidth = 2
+            arc.lineWidth = line
             arc.lineCapStyle = .round
             ink.withAlphaComponent(alpha).setStroke()
             arc.stroke()
         }
-        if ring.pace > 0.02, ring.pace < 0.99 {
-            let a = (90 - 360 * ring.pace) * .pi / 180
-            let notch = NSBezierPath()
-            // A short tick inside the ring, like a clock hand's tip: crossing the stroke outwards it read as a "Q".
-            notch.move(to: NSPoint(x: center.x + cos(a) * (radius - 4), y: center.y + sin(a) * (radius - 4)))
-            notch.line(to: NSPoint(x: center.x + cos(a) * (radius - 1), y: center.y + sin(a) * (radius - 1)))
-            notch.lineWidth = 1.5
-            notch.lineCapStyle = .round
-            ink.withAlphaComponent(0.9 * alpha).setStroke()
-            notch.stroke()
+        if let number {
+            // Two digits fit at 9 pt; "100" steps down so it stays inside the ring.
+            let size: CGFloat = number.count > 2 ? 7 : 9
+            let digits = NSFont.monospacedDigitSystemFont(ofSize: size, weight: .bold)
+            let text = NSAttributedString(string: number, attributes: [.font: digits, .foregroundColor: ink.withAlphaComponent(alpha)])
+            let w = text.size().width
+            text.draw(at: NSPoint(x: center.x - w / 2, y: center.y - digits.capHeight / 2 + digits.descender))
         }
-        if ring.hot {
+        if ring.dot {
+            // Cut out of the ring first, so the dot reads apart from the arc on either menu bar.
+            let spot = NSRect(x: x + ringSide - 6, y: (height + ringSide) / 2 - 6, width: 6, height: 6)
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: spot.insetBy(dx: -1, dy: -1)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
             ink.withAlphaComponent(alpha).setFill()
-            NSBezierPath(ovalIn: NSRect(x: x + side + 1, y: height / 2 - 1.75, width: 3.5, height: 3.5)).fill()
-        }
-        if ring.alert {
-            ink.withAlphaComponent(alpha).setFill()
-            NSBezierPath(ovalIn: NSRect(x: x + side - 5, y: (height + side) / 2 - 5, width: 5, height: 5)).fill()
-        }
-    }
-}
-
-/// Attaches a tooltip only when there is something to say — `.help("")` still arms a tooltip, and
-/// an empty one that appears on hover over a perfectly healthy number is its own small lie.
-private struct StaleHint: ViewModifier {
-    let text: String?
-
-    func body(content: Content) -> some View {
-        if let text {
-            content.help(text).accessibilityHint(text)
-        } else {
-            content
+            NSBezierPath(ovalIn: spot).fill()
         }
     }
 }

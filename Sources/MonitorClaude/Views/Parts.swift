@@ -363,17 +363,25 @@ enum PanelWindow {
     /// Puts the settings window under the menu bar, its top right corner on the panel's (the panel closes as the
     /// window takes the focus, so the window takes its place). Retries briefly: SwiftUI creates the window a moment
     /// after it is asked for.
-    static func placeSettings(attempt: Int = 0) {
-        guard let anchor = current?.frame else { return }
-        let settings = NSApp.windows.first {
-            $0.identifier?.rawValue.contains("Settings") == true && $0 !== current
-        }
-        guard let settings, settings.isVisible else {
-            if attempt < 20 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { placeSettings(attempt: attempt + 1) } }
+    static var settingsWindow: NSWindow? {
+        NSApp.windows.first { $0.identifier?.rawValue.contains("Settings") == true && $0 !== current }
+    }
+
+    /// Where the panel is right now (frame and visible part of its screen), read before anything opens: once the
+    /// window takes the focus the panel closes, and on two screens a late read lands on the wrong one.
+    static func anchor() -> (frame: NSRect, visible: NSRect)? {
+        guard let panel = current, panel.isVisible else { return nil }
+        return (panel.frame, (panel.screen ?? NSScreen.main)?.visibleFrame ?? .zero)
+    }
+
+    static func placeSettings(at anchor: (frame: NSRect, visible: NSRect), attempt: Int = 0) {
+        guard let settings = settingsWindow, settings.isVisible else {
+            if attempt < 20 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { placeSettings(at: anchor, attempt: attempt + 1) }
+            }
             return
         }
-        let visible = (current?.screen ?? NSScreen.main)?.visibleFrame ?? .zero
-        settings.setFrameOrigin(settingsOrigin(anchor: anchor, size: settings.frame.size, visible: visible))
+        settings.setFrameOrigin(settingsOrigin(anchor: anchor.frame, size: settings.frame.size, visible: anchor.visible))
     }
 
     /// The window's top right corner on the panel's, kept inside the visible part of the screen.

@@ -96,7 +96,7 @@ struct PanelView: View {
         })
         .background {
             // ⌘, opens the settings while the panel is up, like in any Mac app.
-            Button("Ajustes") { monitor.settingsTab = .general; openSettings() }
+            Button("Ajustes") { openSettingsPage() }
                 .keyboardShortcut(",", modifiers: .command)
                 .opacity(0)
                 .accessibilityHidden(true)
@@ -124,10 +124,19 @@ struct PanelView: View {
     }
 
     private func openAccountsWindow() {
+        let anchor = PanelWindow.anchor()
+        // A window already open stays where the person left it.
+        let alreadyOpen = PanelWindow.settingsWindow?.isVisible == true
         monitor.settingsTab = .accounts
         openSettingsAction()
         NSApp.activate(ignoringOtherApps: true)
-        PanelWindow.placeSettings()
+        if !alreadyOpen, let anchor { PanelWindow.placeSettings(at: anchor) }
+    }
+
+    /// The gear and ⌘,: the settings page of the panel, kept on the page it is on. It does not touch
+    /// `monitor.settingsTab`, which is the window's: an open accounts window keeps its tab.
+    private func openSettingsPage() {
+        withAnimation(.easeOut(duration: 0.15)) { settingsPage = settingsPage ?? .general }
     }
 
     // MARK: header
@@ -166,7 +175,7 @@ struct PanelView: View {
             Spacer(minLength: 6)
             keepAwakeButton
             Menu {
-                Button("Ajustes…") { monitor.settingsTab = .general; openSettings() }.keyboardShortcut(",", modifiers: .command)
+                Button("Ajustes…") { openSettingsPage() }.keyboardShortcut(",", modifiers: .command)
                 Button("Contas e logins…") { openAccountsWindow() }
                 Button("Monitor de Atividade") { monitor.revealInActivityMonitor() }
                 Divider()

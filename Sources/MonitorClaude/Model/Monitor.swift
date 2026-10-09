@@ -1009,13 +1009,25 @@ final class Monitor: ObservableObject {
     /// The 5h window the menu bar shows, and whether it is current: the account new sessions open on, which is the
     /// one its monogram names. Before, the number came from the account in `~/.claude` whatever the queue said, so
     /// after choosing another account the menu bar kept showing the old one's percentage.
-    var menuBarSession: (window: LimitWindow?, current: Bool) {
+    struct MenuBarReading {
+        var window: LimitWindow?
+        var current: Bool
+        var seenAt: Date?
+        /// The live account's own reading: only then does the outlook (its pace forecast) describe this number.
+        var isLive: Bool
+    }
+
+    /// A queue account's reading older than this is drawn muted in the menu bar, like a dead live feed.
+    static let menuBarFreshness: TimeInterval = 15 * 60
+
+    var menuBarSession: MenuBarReading {
         let q = accountQueue
         guard q.configured, !q.isSingle, let id = q.newSessions(), let entry = q.entry(id), !entry.isLive else {
-            return (usage?.session, liveIsCurrent)
+            return MenuBarReading(window: usage?.session, current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
         }
-        let fresh = entry.snapshot.map { Date().timeIntervalSince($0.fetchedAt) < 15 * 60 } ?? false
-        return (entry.snapshot?.session, fresh)
+        let seen = entry.snapshot?.fetchedAt
+        let fresh = seen.map { Date().timeIntervalSince($0) < Self.menuBarFreshness } ?? false
+        return MenuBarReading(window: entry.snapshot?.session, current: fresh, seenAt: seen, isLive: false)
     }
 
     /// The monogram the menu bar shows: only when new sessions are not opening on the head of the queue.

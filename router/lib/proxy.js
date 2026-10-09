@@ -207,6 +207,7 @@ class Proxy {
 
     const emTurnoAntes = this.emTurno;
     this.rastrear(msg);
+    if (msg.type === 'rate_limit_event' && this.conta) contas.registrarLimiteAoVivo(this.conta, msg.rate_limit_info);
 
     if (this.retido) {
       this.retido.push(linha);

@@ -24,6 +24,31 @@ function binarioFalso(nome, corpo) {
 }
 
 const testes = {
+  limiteAoVivoGravaAPorcentagemDeCadaJanelaPorConta() {
+    const agora = 1791500000000;
+    const r = contas.registrarLimiteAoVivo('principal', {
+      status: 'allowed',
+      rateLimitType: 'five_hour',
+      utilization: 0.4,
+      resetsAt: 1791514800,
+      unifiedWindows: {
+        five_hour: { utilization: 0.4123, resetsAt: 1791514800 },
+        seven_day: { utilization: 0.76, resetsAt: 1791630000 },
+      },
+    }, agora);
+    assert.deepStrictEqual(r, {
+      em: agora, status: 'allowed',
+      janelas: { five_hour: { usado: 41.2, renovaEm: 1791514800000 }, seven_day: { usado: 76, renovaEm: 1791630000000 } },
+    });
+    const gravado = JSON.parse(fs.readFileSync(path.join(contas.DIR_AO_VIVO, 'principal.json'), 'utf8'));
+    assert.deepStrictEqual(gravado, r);
+    // Só o tipo do evento, sem janelas unificadas, ainda conta; evento sem número nenhum não grava nada.
+    assert.deepStrictEqual(contas.registrarLimiteAoVivo('max', { status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.9 }, agora).janelas,
+      { seven_day: { usado: 90, renovaEm: null } });
+    assert.strictEqual(contas.registrarLimiteAoVivo('compare', { status: 'allowed' }, agora), null);
+    assert.ok(!fs.existsSync(path.join(contas.DIR_AO_VIVO, 'compare.json')));
+  },
+
   primeiroArgumentoComOCaminhoDoClaudeViraOBinario() {
     const r = binarioDoWrapper(['/ext/resources/native-binary/claude', '--output-format', 'stream-json'], ehExecutavel);
     assert.strictEqual(r.bin, '/ext/resources/native-binary/claude');

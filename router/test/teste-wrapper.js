@@ -86,19 +86,29 @@ const testes = {
     fs.writeFileSync(path.join(bin, 'security'), '#!/bin/sh\nexit "${FAKE_SECURITY_STATUS:-0}"\n', { mode: 0o755 });
     const antes = { PATH: process.env.PATH, status: process.env.FAKE_SECURITY_STATUS };
     process.env.PATH = `${bin}:${process.env.PATH}`;
+    // No macOS o login da pasta própria é um item do Keychain (o `security` falso responde); fora dele, o arquivo.
+    const credenciais = path.join(home, 'max', '.credentials.json');
+    const login = (tem) => {
+      if (process.platform === 'darwin') process.env.FAKE_SECURITY_STATUS = tem ? '0' : '44';
+      else if (tem) {
+        fs.mkdirSync(path.dirname(credenciais), { recursive: true });
+        fs.writeFileSync(credenciais, '{}');
+      } else fs.rmSync(credenciais, { force: true });
+    };
     try {
       // Com login na pasta própria, a conta do ~/.claude abre lá: a troca dos agentes não a leva junto.
-      process.env.FAKE_SECURITY_STATUS = '0';
+      login(true);
       assert.strictEqual(contas.envDaSessao('max', {}).CLAUDE_CONFIG_DIR, path.join(home, 'max'));
       assert.strictEqual(contas.envDaSessao('max', {}).CLAUDE_AUTO_CONTA, 'max');
       // Sem login próprio, fica no ~/.claude, como antes.
-      process.env.FAKE_SECURITY_STATUS = '44';
+      login(false);
       assert.strictEqual(contas.envDaSessao('max', {}).CLAUDE_CONFIG_DIR, undefined);
       // Conta que não é a do ~/.claude: a pasta dela, como sempre.
       assert.strictEqual(contas.envDaSessao('aegro', {}).CLAUDE_CONFIG_DIR, path.join(home, 'aegro'));
     } finally {
       process.env.PATH = antes.PATH;
       if (antes.status === undefined) delete process.env.FAKE_SECURITY_STATUS; else process.env.FAKE_SECURITY_STATUS = antes.status;
+      fs.rmSync(credenciais, { force: true });
       fs.writeFileSync(path.join(home, 'config.json'), '{}');
     }
   },

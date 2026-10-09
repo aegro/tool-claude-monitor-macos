@@ -4,7 +4,7 @@ import Security
 /// Reads (read-only) the OAuth token Claude Code stores in the login keychain. The Monitor
 /// never writes this item: Claude Code owns it and keeps it fresh, and a second writer here
 /// would race the CLI's refresh-token rotation, trip the server's reuse detection, and break
-/// login for both. macOS prompts once per signed binary; "Always Allow" persists the ACL.
+/// login for both. The read goes through `/usr/bin/security`, so it never prompts.
 enum Keychain {
     static let service = "Claude Code-credentials"
 
@@ -47,7 +47,7 @@ enum Keychain {
             case .expired:
                 return "O login do terminal venceu. Só o `claude` no terminal o renova — rode-o uma vez para o Monitor voltar a ler a API."
             case .denied:
-                return "Acesso ao Keychain negado — clique “Sempre Permitir” quando o macOS perguntar."
+                return "O Keychain está bloqueado. Desbloqueie a sessão do Mac e o Monitor lê de novo."
             case .malformed:
                 return "Credencial do Keychain em formato inesperado."
             case .other(let s):
@@ -60,42 +60,31 @@ enum Keychain {
         try parse(readItem())
     }
 
-    /// The decoded top-level object of the `Claude Code-credentials` item. Read-only: we ask
-    /// for the data, decode it, and never write it back.
+    /// The decoded top-level object of the `Claude Code-credentials` item. Read-only, and read through
+    /// `/usr/bin/security`, the same way Claude Code reads it. The item is written by `security` (Claude Code calls
+    /// `security add-generic-password -U` on every refresh), so `security` is always in its access list and the read
+    /// never raises a prompt. Reading it as the Monitor instead put the Monitor's own entry in that list, and a
+    /// refresh could drop it again: the "type your password" prompt that kept coming back.
     private static func readItem() throws -> [String: Any] {
-        // Dev builds and previews read through /usr/bin/security, the tool the item's ACL already trusts, so an
-        // unsigned binary never raises a Keychain prompt.
-        if ProcessInfo.processInfo.environment["MONITOR_CLAUDE_KEYCHAIN_VIA_SECURITY"] == "1" {
-            let result = AccountRouter.run(URL(fileURLWithPath: "/usr/bin/security"),
-                                           ["find-generic-password", "-s", service, "-w"], timeout: 8)
-            guard result.ok else { throw Failure.notFound }
-            guard let root = try? JSONSerialization.jsonObject(
-                with: Data(result.output.trimmingCharacters(in: .whitespacesAndNewlines).utf8)) as? [String: Any]
-            else { throw Failure.malformed }
-            return root
-        }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-
-        switch status {
-        case errSecSuccess: break
-        case errSecItemNotFound: throw Failure.notFound
-        case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed: throw Failure.denied
-        default: throw Failure.other(status)
-        }
-
-        guard let data = item as? Data,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let security = URL(fileURLWithPath: "/usr/bin/security")
+        // Claude Code files the item under the login name; an odd name falls back to an item without one.
+        var result = AccountRouter.run(security, ["find-generic-password", "-a", NSUserName(), "-s", service, "-w"], timeout: 8)
+        if result.status == 44 { result = AccountRouter.run(security, ["find-generic-password", "-s", service, "-w"], timeout: 8) }
+        guard result.ok else { throw failure(forSecurityExit: result.status) }
+        guard let root = try? JSONSerialization.jsonObject(
+            with: Data(result.output.trimmingCharacters(in: .whitespacesAndNewlines).utf8)) as? [String: Any]
         else { throw Failure.malformed }
-
         return root
+    }
+
+    /// `security` reports the Keychain status as its exit code: 44 is "not found" (errSecItemNotFound), 36 and 51 a
+    /// locked Keychain or a read it may not do without asking.
+    static func failure(forSecurityExit code: Int32) -> Failure {
+        switch code {
+        case 44: return .notFound
+        case 36, 51, 128: return .denied
+        default: return .other(OSStatus(code))
+        }
     }
 
     /// The item holds the account session under `claudeAiOauth` and, side by side with it, the

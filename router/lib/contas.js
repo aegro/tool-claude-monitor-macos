@@ -296,7 +296,21 @@ function garantirLink(origem, destino) {
 function prepararConta(id) {
   const cfg = carregarConfig();
   if (usaDirPadrao(id, cfg)) return;
-  const dir = dirDaConta(id, cfg);
+  prepararPasta(id, dirDaConta(id, cfg), arquivoConfigDaConta(id, cfg));
+}
+
+// Prepara a pasta em que uma sessão de stream vai abrir (o `env` de envDaSessao). Para a conta do ~/.claude aberta
+// na pasta própria, é o mesmo que uma conta extra recebe: os links, a config e os consentimentos da principal,
+// que ficaram parados desde a última vez que ela não estava no ~/.claude. O ~/.claude em si não é tocado.
+function prepararSessao(id, env = {}) {
+  const cfg = carregarConfig();
+  if (!usaDirPadrao(id, cfg)) return prepararConta(id);
+  const dir = env.CLAUDE_CONFIG_DIR && path.resolve(env.CLAUDE_CONFIG_DIR);
+  if (!dir || dir === path.resolve(DIR_PRINCIPAL)) return;
+  prepararPasta(id, dir, path.join(dir, '.claude.json'));
+}
+
+function prepararPasta(id, dir, arquivoConfig) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   for (const nome of COMPARTILHADOS) {
     const origem = path.join(DIR_PRINCIPAL, nome);
@@ -310,7 +324,7 @@ function prepararConta(id) {
       log(`link: falhou para ${nome} em ${id}: ${e.message}`);
     }
   }
-  sincronizarConfig(id, cfg);
+  copiarConfigDaPrincipal(id, arquivoConfig);
   sincronizarConsentimentos(dir);
 }
 
@@ -333,9 +347,12 @@ function sincronizarConsentimentos(dir) {
 
 function sincronizarConfig(id, cfg = carregarConfig()) {
   if (usaDirPadrao(id, cfg)) return false;
+  return copiarConfigDaPrincipal(id, arquivoConfigDaConta(id, cfg));
+}
+
+function copiarConfigDaPrincipal(id, arquivo) {
   const origem = lerJson(ARQ_CONFIG_PRINCIPAL, null);
   if (!origem) return false;
-  const arquivo = arquivoConfigDaConta(id, cfg);
   try {
     return Boolean(
       atualizarJson(arquivo, (alvo) => {
@@ -872,6 +889,7 @@ module.exports = {
   nomeDaConta,
   envDaConta,
   prepararConta,
+  prepararSessao,
   sincronizarConfig,
   servicoKeychain,
   lerCredencial,

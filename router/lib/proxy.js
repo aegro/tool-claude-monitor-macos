@@ -119,12 +119,12 @@ class Proxy {
 
   lancar(args) {
     const geracao = this.geracao;
+    const env = contas.envDaSessao(this.conta);
     try {
-      contas.prepararConta(this.conta);
+      contas.prepararSessao(this.conta, env);
     } catch (e) {
       contas.log(`stream: preparar conta ${this.conta} falhou: ${e.message}`);
     }
-    const env = contas.envDaSessao(this.conta);
     // Aberta no ~/.claude (a conta não tem login na pasta própria): a troca dos agentes pode mudar a conta por
     // baixo dela, e `checarSlot` acompanha.
     this.noClaudePadrao = !env.CLAUDE_CONFIG_DIR;

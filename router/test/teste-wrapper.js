@@ -113,6 +113,38 @@ const testes = {
     }
   },
 
+  pastaPropriaDaContaDoClaudeRecebeOQueUmaContaExtraRecebe() {
+    // Num processo à parte, com um HOME falso: o ~/.claude e o ~/.claude.json lidos aqui são de mentira.
+    const home = fs.mkdtempSync(path.join(raiz, 'home-'));
+    const accounts = path.join(home, '.claude-accounts');
+    fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+    fs.mkdirSync(accounts, { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'settings.json'), '{}');
+    const principal = JSON.stringify({ mcpServers: { x: { command: 'x' } }, projects: { '/p': { hasTrustDialogAccepted: true } } });
+    fs.writeFileSync(path.join(home, '.claude.json'), principal);
+    fs.writeFileSync(path.join(accounts, 'config.json'), JSON.stringify({ principal: 'max', contas: { max: {} }, rota: ['max'] }));
+    const propria = path.join(accounts, 'max');
+    const rodar = (env) => {
+      const r = spawnSync(process.execPath, ['-e', `require(${JSON.stringify(path.join(__dirname, '../lib/contas'))}).prepararSessao('max', ${JSON.stringify(env)})`], {
+        env: { ...process.env, HOME: home, CLAUDE_AUTO_HOME: accounts },
+        encoding: 'utf8',
+      });
+      assert.strictEqual(r.status, 0, r.stderr);
+    };
+    // Aberta no ~/.claude: nada a preparar.
+    rodar({});
+    assert.strictEqual(fs.existsSync(propria), false);
+    // Aberta na pasta própria: os links, a config da principal e o trust dos projetos chegam lá.
+    rodar({ CLAUDE_CONFIG_DIR: propria });
+    assert.strictEqual(fs.readlinkSync(path.join(propria, 'settings.json')), path.join(home, '.claude', 'settings.json'));
+    assert.strictEqual(fs.readlinkSync(path.join(propria, 'skills')), path.join(home, '.claude', 'skills'));
+    const copiada = JSON.parse(fs.readFileSync(path.join(propria, '.claude.json'), 'utf8'));
+    assert.deepStrictEqual(copiada.mcpServers, { x: { command: 'x' } });
+    assert.strictEqual(copiada.projects['/p'].hasTrustDialogAccepted, true);
+    // O ~/.claude.json da principal fica como estava.
+    assert.strictEqual(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'), principal);
+  },
+
   primeiroArgumentoComOCaminhoDoClaudeViraOBinario() {
     const r = binarioDoWrapper(['/ext/resources/native-binary/claude', '--output-format', 'stream-json'], ehExecutavel);
     assert.strictEqual(r.bin, '/ext/resources/native-binary/claude');

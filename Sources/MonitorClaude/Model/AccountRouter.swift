@@ -614,7 +614,16 @@ enum AccountRouter {
             }
             if exited.wait(timeout: .now() + 2) == .timedOut {
                 finish()
-                exited.wait()
+                // Not even SIGKILL ends a process stuck in uninterruptible I/O (a network volume), and its exit
+                // notice may never come: the wait is bounded too, so the caller is not held for good. Past it the
+                // command reads as stopped by the limit, without its status, which Foundation refuses to give
+                // (it throws) while it believes the process still runs.
+                if exited.wait(timeout: .now() + 5) == .timedOut {
+                    return CommandResult(status: -1,
+                                         output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
+                                         error: String(decoding: errors.finish(waiting: 2), as: UTF8.self),
+                                         interrupted: true)
+                }
             } else if !children.isEmpty {
                 reaper.asyncAfter(deadline: .now() + 2, execute: finish)
             }

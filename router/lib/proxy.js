@@ -505,6 +505,9 @@ class Proxy {
     const alvo = escolha.candidatos.find((c) => c.id === cfg.fixada);
     if (escolha.escolhida !== cfg.fixada || !alvo || (alvo.folga != null && alvo.folga < cfg.limites.preventiva)) return false;
     if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
+    // A leitura das contas leva segundos: quem desligou a troca ou mudou a escolha nesse meio-tempo é ouvido.
+    const agora = contas.carregarConfig();
+    if (agora.ativo === false || agora.fixada !== cfg.fixada) return false;
     await this.trocar({ para: cfg.fixada, motivo: 'escolhida', forcada: false, continuar: false });
     return true;
   }

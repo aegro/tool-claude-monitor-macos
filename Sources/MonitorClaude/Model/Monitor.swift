@@ -246,10 +246,15 @@ final class Monitor: ObservableObject {
         watchAgentsIfDue()
     }
 
-    /// A preview window shares the real accounts folder with the running app: it must not switch agents or
-    /// publish the burn rate, or two Monitors would drive the same router.
-    static let readOnly = CommandLine.arguments.contains { $0 == "--preview" || $0.hasPrefix("--preview=") }
-        || ProcessInfo.processInfo.environment["MONITOR_CLAUDE_READ_ONLY"] == "1"
+    /// A preview window (and a `--render` screenshot) shares the real accounts folder with the running app: it must
+    /// not switch agents or publish the burn rate, or two Monitors would drive the same router.
+    static let readOnly = isReadOnly(arguments: CommandLine.arguments,
+                                     environment: ProcessInfo.processInfo.environment)
+
+    nonisolated static func isReadOnly(arguments: [String], environment: [String: String]) -> Bool {
+        arguments.contains { $0 == "--preview" || $0.hasPrefix("--preview=") || $0.hasPrefix("--render=") }
+            || environment["MONITOR_CLAUDE_READ_ONLY"] == "1"
+    }
 
     private func watchAgentsIfDue() {
         guard !Self.readOnly, router?.config.enabled == true, !watchingAgents,

@@ -342,6 +342,13 @@ struct QueueAndAccountsTests {
         #expect(ClaudeSessionStore.load(directory: a.appendingPathComponent("sessions"), accountId: "principal").first?.accountId == "principal")
     }
 
+    @Test func renderTambemESoLeitura() {
+        #expect(Monitor.isReadOnly(arguments: ["app", "--render=panel:fila", "out.png"], environment: [:]))
+        #expect(Monitor.isReadOnly(arguments: ["app", "--preview=settings:contas"], environment: [:]))
+        #expect(Monitor.isReadOnly(arguments: ["app"], environment: ["MONITOR_CLAUDE_READ_ONLY": "1"]))
+        #expect(!Monitor.isReadOnly(arguments: ["app"], environment: [:]))
+    }
+
     // MARK: format
 
     @Test func listaEmPortugues() {

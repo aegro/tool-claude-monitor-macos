@@ -169,6 +169,8 @@ struct ReadinessReport: Equatable {
         var fixParams: [String: String] = [:]
         var fixLabel: String?
         var url: URL?
+        /// A command the person runs (`gh auth refresh …`), when the panel has no fix for it.
+        var command: String?
     }
     var generatedAt: Date?
     var items: [Item]
@@ -212,6 +214,7 @@ enum Readiness {
             let actions = r["actions"] as? [[String: Any]] ?? []
             let fix = actions.first { ($0["fix_id"] as? String)?.isEmpty == false }
             let link = actions.compactMap { ($0["url"] as? String).flatMap(URL.init(string:)) }.first
+            let command = actions.compactMap { $0["command"] as? String }.first { !$0.isEmpty }
             return ReadinessReport.Item(
                 id: id,
                 title: r["title"] as? String ?? id,
@@ -222,7 +225,8 @@ enum Readiness {
                     value is NSNull ? nil : (value as? String ?? "\(value)")
                 },
                 fixLabel: fix?["label"] as? String,
-                url: link)
+                url: link,
+                command: command)
         }
         let at = (root["generatedAt"] as? String).flatMap { ISO8601DateFormatter.flexible.date(from: $0) }
         return ReadinessReport(generatedAt: at, items: items)
@@ -439,11 +443,34 @@ enum AccessBuilder {
 
         if let readiness = inputs.readiness {
             report.readiness = .present(generatedAt: readiness.generatedAt)
+            var fixed: [(action: AccessAction, index: Int)] = []
             for item in readiness.items where Readiness.isAccess(item.id) && (item.status == "warn" || item.status == "fail") {
-                let action: AccessAction? = item.fixId.map { .readinessFix(id: $0, params: item.fixParams) } ?? item.url.map { .openURL($0) }
+                let action: AccessAction?
+                let label: String?
+                if let fix = item.fixId {
+                    action = .readinessFix(id: fix, params: item.fixParams)
+                    label = item.fixLabel.map(shortLabel) ?? "Resolver"
+                } else if let url = item.url {
+                    action = .openURL(url)
+                    label = "Abrir"
+                } else if let command = item.command {
+                    action = .copy(command)
+                    label = "Copiar comando"
+                } else {
+                    action = nil
+                    label = nil
+                }
+                // One fix that unlocks several checks (the AWS staging login and the ECR image behind it) shows
+                // once, saying what else it unlocks.
+                if let action, case .readinessFix = action, let first = fixed.first(where: { $0.action == action }) {
+                    let joined = items[first.index].detail.hasSuffix(".") ? "" : "."
+                    items[first.index].detail += "\(joined) Também libera: \(item.title)."
+                    continue
+                }
+                if let action, case .readinessFix = action { fixed.append((action, items.count)) }
                 items.append(AccessItem(id: "pronto.\(item.id)", badge: badge(forReadiness: item.id), title: item.title,
                                         detail: item.summary, kind: item.status == "fail" ? .notConnecting : .needsYou,
-                                        action: action, actionLabel: action == nil ? nil : (item.fixLabel.map(shortLabel) ?? "Resolver")))
+                                        action: action, actionLabel: label))
             }
         } else {
             report.readiness = .absent(installed: inputs.readinessInstalled)

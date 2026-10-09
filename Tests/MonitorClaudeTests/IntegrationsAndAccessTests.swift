@@ -367,6 +367,29 @@ struct AccessTests {
         #expect(out.items.first { $0.id == "agentes.compare" }?.action == .reauthorize(account: "compare", agents: true))
     }
 
+    @Test func umaCorrecaoQueLiberaDoisAcessosApareceUmaVez() throws {
+        let data = Data(#"""
+        { "schema": 1, "results": [
+          { "id": "cloud.aws.sso.staging", "title": "Login na AWS — staging", "status": "warn", "summary": "O login expirou",
+            "actions": [ { "label": "Renovar o login AWS (staging)", "fix_id": "aws.sso.login", "fix_params": { "profile": "staging" } } ] },
+          { "id": "cloud.aws.ecr.staging", "title": "Imagem do import de fazendas (ECR)", "status": "warn", "summary": "Depende do login",
+            "actions": [ { "label": "Renovar o login AWS (staging)", "fix_id": "aws.sso.login", "fix_params": { "profile": "staging" } } ] },
+          { "id": "cloud.aws.sso.dev", "title": "Login na AWS — dev", "status": "warn", "summary": "O login expirou.",
+            "actions": [ { "label": "Renovar o login AWS (dev)", "fix_id": "aws.sso.login", "fix_params": { "profile": "dev" } } ] },
+          { "id": "github.gh.auth", "title": "GitHub no terminal", "status": "warn", "summary": "Faltam permissões",
+            "actions": [ { "label": "Adicionar as permissões", "command": "gh auth refresh -h github.com -s read:org", "human": true } ] }
+        ] }
+        """#.utf8)
+        var inputs = AccessBuilder.Inputs()
+        inputs.readiness = Readiness.parse(data)
+        let items = AccessBuilder.build(inputs).items
+        #expect(items.map(\.id) == ["pronto.cloud.aws.sso.staging", "pronto.cloud.aws.sso.dev", "pronto.github.gh.auth"])
+        #expect(items[0].detail == "O login expirou. Também libera: Imagem do import de fazendas (ECR).")
+        #expect(items[1].detail == "O login expirou.")
+        #expect(items[2].action == .copy("gh auth refresh -h github.com -s read:org"))
+        #expect(items[2].actionLabel == "Copiar comando")
+    }
+
     @Test func configDoRoteadorIlegivelPedeVoce() {
         var inputs = AccessBuilder.Inputs()
         inputs.routerConfigProblem = "~/.claude-accounts/config.json não é um JSON válido"

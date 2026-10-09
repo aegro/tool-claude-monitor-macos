@@ -140,6 +140,7 @@ struct AccessRow: View {
     let item: AccessItem
     let monitor: Monitor
     var openSettings: () -> Void
+    @State private var copied = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -156,9 +157,14 @@ struct AccessRow: View {
             }
             Spacer(minLength: 6)
             if let action = item.action, let label = item.actionLabel {
-                Button(running ? "…" : label) {
+                Button(running ? "…" : copied ? "Copiado" : label) {
                     Task {
                         if await monitor.perform(action) { openSettings() }
+                        if case .copy = action {
+                            copied = true
+                            try? await Task.sleep(nanoseconds: 1_600_000_000)
+                            copied = false
+                        }
                     }
                 }
                 .controlSize(.small)

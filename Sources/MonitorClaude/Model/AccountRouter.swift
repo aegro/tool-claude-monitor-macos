@@ -616,8 +616,9 @@ enum AccountRouter {
                 finish()
                 // Not even SIGKILL ends a process stuck in uninterruptible I/O (a network volume), and its exit
                 // notice may never come: the wait is bounded too, so the caller is not held for good. Past it the
-                // command reads as stopped by the limit, without its status, which Foundation refuses to give
-                // (it throws) while it believes the process still runs.
+                // command reads as stopped by the limit, without its status: read while Foundation believes the
+                // process still runs, it raises an Objective-C exception, which Swift cannot catch and which
+                // crashes the app.
                 if exited.wait(timeout: .now() + 5) == .timedOut {
                     return CommandResult(status: -1,
                                          output: String(decoding: output.finish(waiting: 2), as: UTF8.self),

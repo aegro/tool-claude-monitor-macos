@@ -486,6 +486,9 @@ extension AccountRouter {
             root["rota"] = remaining.route
             root["reserva"] = remaining.reserve
             if root["preferida"] as? String == id { root["preferida"] = nil }
+            // A hand-picked account that leaves the queue stops being the choice: an account added later under the
+            // same id would otherwise come back already chosen.
+            if root["fixada"] as? String == id { root["fixada"] = nil }
         }
         let fm = FileManager.default
         guard fm.fileExists(atPath: account.directory.path) else { return }

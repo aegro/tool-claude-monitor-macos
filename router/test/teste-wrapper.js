@@ -48,6 +48,9 @@ const testes = {
     const r = binarioDoWrapper([atalho, '-p', 'oi'], (p) => p === atalho, (p) => p === atalho);
     assert.strictEqual(r.bin, null);
     assert.deepStrictEqual(r.args, ['-p', 'oi']);
+    const lancador = '/Users/exemplo/Code/router/bin/claude-auto';
+    const direto = binarioDoWrapper([lancador, '-p', 'oi'], () => true, (p) => p === lancador);
+    assert.deepStrictEqual(direto, { bin: null, args: ['-p', 'oi'] });
   },
 
   oClaudeAutoRodaOBinarioQueOWrapperRecebeu() {

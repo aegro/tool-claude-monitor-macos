@@ -43,9 +43,10 @@ const NOMES_DO_BINARIO = new Set(['claude', 'claude.exe']);
 function binarioDoWrapper(argv, ehExecutavel, ehOLancador = () => false) {
   const primeiro = argv[0];
   if (!primeiro || !primeiro.startsWith('/')) return { bin: null, args: argv };
+  // Antes do nome: o próprio bin/claude-auto (ou um atalho para ele) sai do argv, senão vira o 1º argumento do claude.
+  if (ehOLancador(primeiro)) return { bin: null, args: argv.slice(1) };
   if (!NOMES_DO_BINARIO.has(primeiro.slice(primeiro.lastIndexOf('/') + 1))) return { bin: null, args: argv };
   if (!ehExecutavel(primeiro)) return { bin: null, args: argv };
-  if (ehOLancador(primeiro)) return { bin: null, args: argv.slice(1) };
   return { bin: primeiro, args: argv.slice(1) };
 }
 

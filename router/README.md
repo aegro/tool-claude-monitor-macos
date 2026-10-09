@@ -45,7 +45,7 @@ Folga é 100% menos o maior uso entre as janelas de 5h e de 7 dias. Conta que ba
 - **`claude agents`.** Veja a seção abaixo.
 - **`-p`** só escolhe a conta ao abrir.
 
-Em stream-json, cada `rate_limit_event` que o `claude` emite (os números de limite lidos dos cabeçalhos da resposta) vai para `~/.claude-accounts/.estado/ao-vivo/<conta>.json`, com `usado` em porcentagem e `renovaEm` em ms por janela (`five_hour`, `seven_day`). O Monitor lê esses arquivos antes de consultar o `/usage`.
+Em stream-json, cada `rate_limit_event` que o `claude` emite (os números de limite lidos dos cabeçalhos da resposta) vai para `~/.claude-accounts/.estado/ao-vivo/<conta>.json`, com `usado` em porcentagem e `renovaEm` em ms por janela (`five_hour`, `seven_day`) e o login em `conta` (`accountUuid:organizationUuid`). Um evento que traz só uma janela mantém as outras do arquivo, desde que sejam do mesmo login e ainda não tenham renovado. O Monitor lê esses arquivos antes de consultar o `/usage`.
 
 Cada troca vai para `~/.claude-accounts/.estado/trocas.jsonl`, para o log `claude-auto.log` e vira notificação, com o nome das contas, o motivo e a hora em que a anterior volta: “Trocou para Thomas (Max)” e “Thomas (Aegro) bateu o limite de 5h. Volta às 18:59.” A volta para a preferida diz “Voltou para …”, e a troca dos agentes acrescenta “Os agentes seguiram junto.”
 

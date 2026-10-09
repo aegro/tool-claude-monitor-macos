@@ -752,10 +752,10 @@ function python3() {
  */
 function registrarLimiteAoVivo(id, info, agora = Date.now()) {
   if (!id || !info || typeof info !== 'object') return null;
-  const janelas = {};
+  const novas = {};
   const anotar = (chave, utilizacao, renova) => {
     if (typeof utilizacao !== 'number' || !Number.isFinite(utilizacao)) return;
-    janelas[chave] = {
+    novas[chave] = {
       usado: Math.round(Math.min(1, Math.max(0, utilizacao)) * 1000) / 10,
       renovaEm: typeof renova === 'number' ? renova * 1000 : null,
     };
@@ -763,12 +763,23 @@ function registrarLimiteAoVivo(id, info, agora = Date.now()) {
   for (const [chave, janela] of Object.entries(info.unifiedWindows || {})) {
     if (janela && typeof janela === 'object') anotar(chave, janela.utilization, janela.resetsAt);
   }
-  if (info.rateLimitType && !janelas[info.rateLimitType]) anotar(info.rateLimitType, info.utilization, info.resetsAt);
-  if (!Object.keys(janelas).length) return null;
-  const registro = { em: agora, status: info.status || null, janelas };
+  if (info.rateLimitType && !novas[info.rateLimitType]) anotar(info.rateLimitType, info.utilization, info.resetsAt);
+  if (!Object.keys(novas).length) return null;
+  const arquivo = path.join(DIR_AO_VIVO, `${id}.json`);
+  const conta = (() => { try { return identidade(id).chave; } catch { return null; } })();
+  // Um evento pode trazer só uma janela: as outras que o arquivo já tinha, do mesmo login e ainda sem renovar,
+  // ficam, para o Monitor não ler uma conta sem limite semanal.
+  const anterior = lerJson(arquivo, null);
+  const mantidas = {};
+  if (anterior && anterior.janelas && (!conta || anterior.conta === conta)) {
+    for (const [chave, janela] of Object.entries(anterior.janelas)) {
+      if (janela && !(janela.renovaEm && janela.renovaEm <= agora)) mantidas[chave] = janela;
+    }
+  }
+  const registro = { em: agora, conta, status: info.status || null, janelas: { ...mantidas, ...novas } };
   try {
     fs.mkdirSync(DIR_AO_VIVO, { recursive: true });
-    escreverJson(path.join(DIR_AO_VIVO, `${id}.json`), registro);
+    escreverJson(arquivo, registro);
   } catch {}
   return registro;
 }

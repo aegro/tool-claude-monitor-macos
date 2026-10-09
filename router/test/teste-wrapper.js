@@ -36,12 +36,16 @@ const testes = {
         seven_day: { utilization: 0.76, resetsAt: 1791630000 },
       },
     }, agora);
-    assert.deepStrictEqual(r, {
-      em: agora, status: 'allowed',
-      janelas: { five_hour: { usado: 41.2, renovaEm: 1791514800000 }, seven_day: { usado: 76, renovaEm: 1791630000000 } },
-    });
+    assert.deepStrictEqual(r.janelas, { five_hour: { usado: 41.2, renovaEm: 1791514800000 }, seven_day: { usado: 76, renovaEm: 1791630000000 } });
+    assert.strictEqual(r.em, agora);
     const gravado = JSON.parse(fs.readFileSync(path.join(contas.DIR_AO_VIVO, 'principal.json'), 'utf8'));
     assert.deepStrictEqual(gravado, r);
+    // O evento seguinte só fala da janela de 5h: a semanal que já estava fica.
+    const depois = contas.registrarLimiteAoVivo('principal', { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.45, resetsAt: 1791514800 }, agora + 60000);
+    assert.deepStrictEqual(depois.janelas, { five_hour: { usado: 45, renovaEm: 1791514800000 }, seven_day: { usado: 76, renovaEm: 1791630000000 } });
+    // Janela que já renovou sai.
+    const muitoDepois = contas.registrarLimiteAoVivo('principal', { status: 'allowed', rateLimitType: 'seven_day', utilization: 0.8, resetsAt: 1791630000 }, 1791520000000);
+    assert.deepStrictEqual(Object.keys(muitoDepois.janelas), ['seven_day']);
     // Só o tipo do evento, sem janelas unificadas, ainda conta; evento sem número nenhum não grava nada.
     assert.deepStrictEqual(contas.registrarLimiteAoVivo('max', { status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.9 }, agora).janelas,
       { seven_day: { usado: 90, renovaEm: null } });

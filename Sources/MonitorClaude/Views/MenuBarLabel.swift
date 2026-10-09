@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 
 /// The menu bar is not a dashboard, it is an ambient alarm. It shows the one number with
-/// consequences (how much of the 5h window is gone) plus a notch at the pace you could
-/// sustain, and marks the machine only when it is actually hot. Everything else waits
-/// for a click.
+/// consequences (how much of the 5h window is gone) inside a ring filled to it, coloured when the
+/// pace or the limit asks for attention, and a dot for what is worth a look in the panel. Everything
+/// else waits for a click.
 ///
 /// MenuBarExtra renders only Text and Image in its label, so the ring is drawn into an
 /// NSImage rather than a Canvas, which silently draws nothing up there.
@@ -16,8 +16,8 @@ struct MenuBarLabel: View {
     private var showLimit: Bool { settings.menuBarStyle != .cpu }
     private var showCPU: Bool { settings.menuBarStyle != .sessionLimit }
 
-    /// The panel can explain itself; the menu bar has about twelve points of width. So a number
-    /// that is no longer current is drawn muted and suffixed with "·" rather than pretending —
+    /// The panel can explain itself; the menu bar has about twenty points of width. So a number
+    /// that is no longer current is drawn muted rather than pretending —
     /// this is the surface that sat for twenty-one hours reporting a dead feed's percentage in
     /// exactly the same ink as a live one.
     private func staleHelp(_ reading: Monitor.MenuBarReading) -> String {
@@ -52,10 +52,22 @@ struct MenuBarLabel: View {
             monogram: showLimit ? monitor.menuBarMonogram : nil,
             cpu: showCPU ? "\(Int(monitor.system.cpuPercent.rounded()))%" : nil,
             tint: Self.tint(alarmed(reading), window: window),
-            muted: window != nil && !current)
-        Image(nsImage: MenuBarArt.make(art))
-            .help(helpText(reading, window: window, hot: hot, attention: attention))
-            .accessibilityLabel(art.spoken)
+            muted: window != nil && !current,
+            // No ring (the CPU-only style, or before the first reading): the same signals get a dot of their own.
+            loneDot: window == nil && (keep.active || attention),
+            dotMeaning: dotMeaning(hot: hot, attention: attention))
+        let help = helpText(reading, window: window, hot: hot, attention: attention)
+        Group {
+            // `.help("")` still arms an empty tooltip: none at all when there is nothing to say.
+            if help.isEmpty { Image(nsImage: MenuBarArt.make(art)) } else { Image(nsImage: MenuBarArt.make(art)).help(help) }
+        }
+        .accessibilityLabel(art.spoken)
+    }
+
+    private func dotMeaning(hot: Bool, attention: Bool) -> String? {
+        let parts = [keep.active ? "Mac desperto" : nil, attention ? "Acessos precisa de você" : nil,
+                     hot ? "CPU alta" : nil].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     /// The label is a number in a ring; the tooltip says in words what it is and what the dot stands for.
@@ -63,7 +75,9 @@ struct MenuBarLabel: View {
         var lines: [String] = []
         if let window {
             var line = "\(Int(window.utilization.rounded())) % da janela de 5h"
-            if let reset = window.resetsAt { line += ", renova às \(Fmt.clock(reset))" }
+            if let reset = window.resetsAt, !window.hasReset() {
+                line += ", renova às \(window.resetIsExact ? "" : "≈ ")\(Fmt.clock(reset))"
+            }
             lines.append(line)
             if !reading.current { lines.append(staleHelp(reading)) }
         }
@@ -103,10 +117,14 @@ enum MenuBarArt {
         var cpu: String?
         var tint: NSColor?
         var muted = false
+        /// The dot with no ring to sit on.
+        var loneDot = false
+        /// What the dot stands for, for VoiceOver.
+        var dotMeaning: String?
 
         var spoken: String {
             [number.map { "limite de 5h em \($0) por cento" }, monogram.map { "conta \($0)" },
-             cpu.map { "CPU \($0)" }].compactMap { $0 }.joined(separator: ", ")
+             cpu.map { "CPU \($0)" }, dotMeaning].compactMap { $0 }.joined(separator: ", ")
         }
     }
 
@@ -153,6 +171,12 @@ enum MenuBarArt {
             parts.append((ringSide, { x in drawRing(ring, number: c.number, at: x, ink: ink, alpha: alpha) }))
         }
         glyph(gauge)
+        if c.loneDot {
+            parts.append((6, { x in
+                ink.withAlphaComponent(alpha).setFill()
+                NSBezierPath(ovalIn: NSRect(x: x, y: height / 2 - 3, width: 6, height: 6)).fill()
+            }))
+        }
         if let badge {
             let size = badge.size()
             let w = ceil(size.width) + 6
@@ -227,9 +251,10 @@ enum MenuBarArt {
         if ring.dot {
             // Cut out of the ring first, so the dot reads apart from the arc on either menu bar.
             let spot = NSRect(x: x + ringSide - 6, y: (height + ringSide) / 2 - 6, width: 6, height: 6)
+            NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current?.compositingOperation = .clear
             NSBezierPath(ovalIn: spot.insetBy(dx: -1, dy: -1)).fill()
-            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            NSGraphicsContext.restoreGraphicsState()
             ink.withAlphaComponent(alpha).setFill()
             NSBezierPath(ovalIn: spot).fill()
         }

@@ -12,6 +12,7 @@ struct MenuBarSamples: View {
         ("perto do limite", .init(ring: .init(fraction: 0.97, dot: false), number: "97", tint: NSColor(Ink.alarm))),
         ("esgotada", .init(ring: .init(fraction: 1, dot: false), number: "100", tint: NSColor(Ink.alarm))),
         ("com CPU", .init(ring: .init(fraction: 0.24, dot: false), number: "24", cpu: "35%")),
+        ("só CPU, desperto", .init(cpu: "35%", loneDot: true)),
     ]
 
     var body: some View {

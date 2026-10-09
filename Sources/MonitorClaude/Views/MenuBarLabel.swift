@@ -13,7 +13,7 @@ struct MenuBarLabel: View {
     @ObservedObject private var settings = Settings.shared
     @ObservedObject private var keep = KeepAwake.shared
 
-    private var session: LimitWindow? { monitor.usage?.session }
+    private var session: LimitWindow? { monitor.menuBarSession.window }
     private var showLimit: Bool { settings.menuBarStyle != .cpu }
     private var showCPU: Bool { settings.menuBarStyle != .sessionLimit }
 
@@ -21,7 +21,7 @@ struct MenuBarLabel: View {
     /// that is no longer current is drawn muted and suffixed with "·" rather than pretending —
     /// this is the surface that sat for twenty-one hours reporting a dead feed's percentage in
     /// exactly the same ink as a live one.
-    private var current: Bool { monitor.liveIsCurrent }
+    private var current: Bool { monitor.menuBarSession.current }
 
     private var staleHelp: String {
         let age = monitor.liveSeenAt.map { " (\(Fmt.ago($0)))" } ?? ""

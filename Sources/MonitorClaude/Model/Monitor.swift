@@ -1006,6 +1006,18 @@ final class Monitor: ObservableObject {
                             principal: router.config.principal, pinned: router.config.pinned)
     }
 
+    /// The 5h window the menu bar shows, and whether it is current: the account new sessions open on, which is the
+    /// one its monogram names. Before, the number came from the account in `~/.claude` whatever the queue said, so
+    /// after choosing another account the menu bar kept showing the old one's percentage.
+    var menuBarSession: (window: LimitWindow?, current: Bool) {
+        let q = accountQueue
+        guard q.configured, !q.isSingle, let id = q.newSessions(), let entry = q.entry(id), !entry.isLive else {
+            return (usage?.session, liveIsCurrent)
+        }
+        let fresh = entry.snapshot.map { Date().timeIntervalSince($0.fetchedAt) < 15 * 60 } ?? false
+        return (entry.snapshot?.session, fresh)
+    }
+
     /// The monogram the menu bar shows: only when new sessions are not opening on the head of the queue.
     var menuBarMonogram: String? {
         let q = accountQueue

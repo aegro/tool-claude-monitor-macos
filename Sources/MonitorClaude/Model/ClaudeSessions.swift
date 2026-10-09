@@ -13,7 +13,9 @@ struct ClaudeSession: Identifiable, Equatable {
     var jobId: String?
     var startedAt: Date?
     var updatedAt: Date?
-    /// The router account whose config directory holds this session, nil for `~/.claude` when no router is set up.
+    /// The router account the session was opened on. In `~/.claude` that is the router's `CLAUDE_AUTO_CONTA` mark on
+    /// the process, when it names a queue account; otherwise, and without a mark, the account whose config directory
+    /// holds the session file. nil for `~/.claude` when no router is set up.
     var accountId: String?
 
     var id: pid_t { pid }
@@ -57,13 +59,19 @@ enum ClaudeSessionStore {
             dirs.insert((nil, defaultDirectory), at: 0)
         }
         for (id, dir) in dirs {
+            let isDefault = canonical(dir) == defaultCanonical
             for var session in load(directory: dir.appendingPathComponent("sessions"), accountId: id)
             where !seen.contains(session.pid) {
                 seen.insert(session.pid)
                 // The folder says where the session lives; the router's mark on the process says which account it
-                // was opened on. They differ in `~/.claude` after the agents' switch moves another account in: a
-                // session opened there before the switch still runs on the account that left.
-                if let marked = openedOn(session.pid)?.account, known.contains(marked) { session.accountId = marked }
+                // was opened on. They differ only in `~/.claude`, after the agents' switch moves another account
+                // in: a session opened there before the switch still runs on the account that left. Elsewhere the
+                // folder is the account. The mark counts only for the process that wrote the file: one that
+                // started after the session did is a reused pid behind a stale file.
+                if isDefault, let mark = openedOn(session.pid), known.contains(mark.account),
+                   let startedAt = session.startedAt, mark.started <= startedAt.addingTimeInterval(1) {
+                    session.accountId = mark.account
+                }
                 out.append(session)
             }
         }

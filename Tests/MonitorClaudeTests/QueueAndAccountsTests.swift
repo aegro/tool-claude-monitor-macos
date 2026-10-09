@@ -405,15 +405,36 @@ struct QueueAndAccountsTests {
                                                defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in nil })
         #expect(sessions.count == 1)
         #expect(sessions.first?.accountId == "max")
-        // The router's mark on the process wins over the folder: a session opened on the account that later left
-        // `~/.claude` in the agents' switch still runs on it. A mark that is no queue account is ignored.
+        // Outside `~/.claude` the folder is the account, whatever the process carries.
         let marked = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
-                                             defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in (account: "principal", started: .distantPast) })
-        #expect(marked.first?.accountId == "principal")
-        let stranger = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
-                                               defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in (account: "sumiu", started: .distantPast) })
-        #expect(stranger.first?.accountId == "max")
+                                             defaultDirectory: base.appendingPathComponent("vazia"),
+                                             openedOn: { _ in (account: "principal", started: .distantPast) })
+        #expect(marked.first?.accountId == "max")
         #expect(ClaudeSessionStore.load(directory: a.appendingPathComponent("sessions"), accountId: "principal").first?.accountId == "principal")
+    }
+
+    @Test func aMarcaDoRoteadorValeNoClaudePadraoParaQuemAbriuASessao() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("monitor-sessions-\(UUID().uuidString)")
+        let padrao = base.appendingPathComponent("claude"), max = base.appendingPathComponent("max")
+        for dir in [padrao, max] {
+            try fm.createDirectory(at: dir.appendingPathComponent("sessions"), withIntermediateDirectories: true)
+        }
+        let pid = Int(ProcessInfo.processInfo.processIdentifier)
+        try Data(#"{ "pid": \#(pid), "sessionId": "s", "cwd": "/tmp/x", "startedAt": 1000 }"#.utf8)
+            .write(to: padrao.appendingPathComponent("sessions/1.json"))
+        let antes = Date(timeIntervalSince1970: 0)
+        func load(_ mark: ClaudeSessionStore.ProcessMark?) -> ClaudeSession? {
+            ClaudeSessionStore.load(accounts: [(id: "principal", directory: padrao), (id: "max", directory: max)],
+                                    defaultDirectory: padrao, openedOn: { _ in mark }).first
+        }
+        #expect(load(nil)?.accountId == "principal")
+        // Opened on max before the agents' switch moved the principal into `~/.claude`: it still runs on max.
+        #expect(load((account: "max", started: antes))?.accountId == "max")
+        // A mark that is no queue account is ignored, and so is the mark of a process younger than the session:
+        // the pid was reused and the file is stale.
+        #expect(load((account: "sumiu", started: antes))?.accountId == "principal")
+        #expect(load((account: "max", started: Date()))?.accountId == "principal")
     }
 
     @Test func contaCujaPastaEUmAtalhoDoPadraoMantemAMarca() throws {

@@ -79,8 +79,7 @@ struct AccountsPane: View {
             if queue.enabled, let pinned = queue.pinned {
                 HStack(spacing: 6) {
                     Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Ink.ember)
-                    Text(pinned == inUse ? "Fora da regra da fila, até você voltar."
-                                         : "\(queue.entry(pinned)?.label ?? pinned) está sem folga: a regra da fila decide até ela voltar.")
+                    Text(pinnedNote(queue: queue, pinned: pinned, inUse: inUse))
                         .font(Type.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
@@ -89,6 +88,17 @@ struct AccountsPane: View {
                 }
             }
         }
+    }
+
+    /// Why the hand-picked account is not the one in use: a lost login asks for authorization, not for waiting.
+    private func pinnedNote(queue: AccountQueue, pinned: String, inUse: String?) -> String {
+        if pinned == inUse { return "Fora da regra da fila, até você voltar." }
+        let entry = queue.entry(pinned)
+        let name = entry?.label ?? pinned
+        if entry?.hasLogin == false {
+            return "\(name) está sem login: a regra da fila decide até você autorizá-la de novo."
+        }
+        return "\(name) está sem folga: a regra da fila decide até ela voltar."
     }
 
     private func strategyMenu(_ queue: AccountQueue) -> some View {

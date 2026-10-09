@@ -92,7 +92,9 @@ struct MenuBarLabel: View {
                 Image(systemName: "cpu").font(.system(size: 10))
                 Text("\(Int(monitor.system.cpuPercent.rounded()))%")
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(monitor.system.cpuPercent > 80 ? tone(reading) : .primary)
+                    // The machine's own heat, in the ember the ring uses for a loaded machine: the limit reading's
+                    // tone says nothing about the CPU, and muted it would hide the load at its peak.
+                    .foregroundStyle(monitor.system.cpuPercent > 80 ? Ink.ember : .primary)
             }
         }
     }

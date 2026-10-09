@@ -81,6 +81,7 @@ class Proxy {
     this.preventivaPendente = false;
     this.ultimaChecagemDeVolta = 0;
     this.ultimaChecagemDaEscolhida = 0;
+    this.ultimaChecagemDoSlot = 0;
     this.escolhidaVista = undefined;
     this.filaDoHost = [];
     this.retido = null;
@@ -533,21 +534,27 @@ class Proxy {
   // A troca dos agentes tirou do ~/.claude a conta em que esta sessão abriu: o Claude Code aberto lá passa a gastar
   // a que entrou. No fim de um turno, sem tarefa em segundo plano, a sessão volta para a própria conta, na pasta
   // dela; sem login próprio, ela passa a contar como da conta que agora está no ~/.claude, que é a que ela gasta, e
-  // volta a contar como da sua quando ela voltar para o ~/.claude, sem reabrir.
+  // volta a contar como da sua quando ela voltar para o ~/.claude, sem reabrir. Já contando como da outra, ela tenta
+  // a volta de novo no máximo uma vez por minuto: é assim que um login feito depois na pasta própria é visto.
   async checarSlot(cfg) {
     if (!this.noClaudePadrao || !cfg.principal) return false;
     const dona = this.contaDaAbertura || this.conta;
-    if (cfg.principal === dona || cfg.principal === this.conta) {
-      if (this.conta !== cfg.principal) contas.log(`stream: ${dona} voltou ao ~/.claude; a sessão volta a contar como dela`);
-      this.conta = cfg.principal;
+    if (cfg.principal === dona) {
+      if (this.conta !== dona) contas.log(`stream: ${dona} voltou ao ~/.claude; a sessão volta a contar como dela`);
+      this.conta = dona;
       return false;
     }
+    const jaSegue = this.conta === cfg.principal;
+    if (jaSegue && Date.now() - this.ultimaChecagemDoSlot < INTERVALO_DE_VOLTA_MS) return false;
     if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
-    if (!this.loginProprioRecusado.has(dona) && contas.temLoginProprio(dona, cfg)) {
+    this.ultimaChecagemDoSlot = Date.now();
+    // Sem o guardado: a sessão vai ser morta e reaberta por causa desta resposta, e um logout na pasta própria a
+    // reabriria numa pasta sem credencial.
+    if (!this.loginProprioRecusado.has(dona) && contas.temLoginProprio(dona, cfg, { fresco: true })) {
       await this.trocar({ para: dona, motivo: 'saiu-do-claude', forcada: false, continuar: false });
       return true;
     }
-    contas.log(`stream: ${dona} saiu do ~/.claude sem login próprio; a sessão segue em ${cfg.principal}`);
+    if (!jaSegue) contas.log(`stream: ${dona} saiu do ~/.claude sem login próprio; a sessão segue em ${cfg.principal}`);
     this.conta = cfg.principal;
     return false;
   }

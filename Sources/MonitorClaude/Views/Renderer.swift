@@ -18,7 +18,7 @@ enum Renderer {
             size = NSSize(width: 380, height: PanelView.maxHeight)
         case .menuBar:
             view = AnyView(MenuBarSamples())
-            size = NSSize(width: 520, height: 320)
+            size = NSSize(width: 520, height: 420)
         case .panelSettings(let tab):
             view = AnyView(PanelView(monitor: monitor, initialTab: .accounts, initialSettingsPage: tab))
             size = NSSize(width: 380, height: PanelView.maxHeight)

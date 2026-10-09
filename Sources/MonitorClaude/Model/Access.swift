@@ -338,6 +338,7 @@ enum AccessAction: Equatable {
     case upgrade(cask: String)
     case readinessFix(id: String, params: [String: String])
     case copy(String)
+    case readAgain
 }
 
 struct AccessItem: Identifiable, Equatable {
@@ -381,6 +382,8 @@ enum AccessBuilder {
 
     struct Inputs {
         var claudeLoginProblem: String?
+        /// The problem is a Keychain prompt that was refused: the way out is to read again, not to log in.
+        var claudeLoginRetry = false
         var routerConfigProblem: String?
         var routerConfigURL: URL = AccountRouter.configURL
         var accounts: [Account] = []
@@ -397,7 +400,9 @@ enum AccessBuilder {
 
         if let problem = inputs.claudeLoginProblem {
             items.append(AccessItem(id: "claude.login", badge: "CC", title: "Login do Claude Code",
-                                    detail: problem, kind: .needsYou, action: .copy("claude"), actionLabel: "Copiar comando"))
+                                    detail: problem, kind: .needsYou,
+                                    action: inputs.claudeLoginRetry ? .readAgain : .copy("claude"),
+                                    actionLabel: inputs.claudeLoginRetry ? "Ler de novo" : "Copiar comando"))
         }
         if let problem = inputs.routerConfigProblem {
             items.append(AccessItem(id: "roteador.config", badge: "CA", title: "Config da troca de conta",

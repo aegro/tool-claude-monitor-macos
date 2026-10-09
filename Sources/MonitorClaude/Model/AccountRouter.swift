@@ -378,23 +378,7 @@ enum AccountRouter {
     }
 
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", keychainService(for: account), "-w"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: stop)
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        stop.cancel()
-        process.waitUntilExit()
-        guard process.terminationReason == .exit, process.terminationStatus == 0,
-              let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let root = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
-        else { return nil }
-        return try? Keychain.parse(root)
+        try? Keychain.credentials(service: keychainService(for: account), timeout: timeout)
     }
 
     // MARK: state
@@ -447,20 +431,27 @@ enum AccountRouter {
 
     static var liveLimitsDirectory: URL { home.appendingPathComponent(".estado/ao-vivo") }
 
+    /// What a stream session last received for one account, and for which login (`conta`, the account and
+    /// organization pair), so numbers from a login that has since changed are never shown under the new one.
+    struct LiveLimits: Equatable {
+        var snapshot: UsageSnapshot
+        var key: String?
+    }
+
     /// The limits a stream session (the VS Code extension or T3 through the router) last received for each account,
     /// saved by the router as the response headers arrive: no `/usage` call spent, and seconds old while a session
     /// is working.
-    static func liveLimits(in dir: URL = liveLimitsDirectory) -> [String: UsageSnapshot] {
+    static func liveLimits(in dir: URL = liveLimitsDirectory) -> [String: LiveLimits] {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        var out: [String: UsageSnapshot] = [:]
+        var out: [String: LiveLimits] = [:]
         for file in files where file.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: file), let snap = parseLiveLimits(data) else { continue }
-            out[file.deletingPathExtension().lastPathComponent] = snap
+            guard let data = try? Data(contentsOf: file), let live = parseLiveLimits(data) else { continue }
+            out[file.deletingPathExtension().lastPathComponent] = live
         }
         return out
     }
 
-    static func parseLiveLimits(_ data: Data) -> UsageSnapshot? {
+    static func parseLiveLimits(_ data: Data) -> LiveLimits? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let at = (root["em"] as? NSNumber)?.doubleValue,
               let windows = root["janelas"] as? [String: Any]
@@ -475,19 +466,27 @@ enum AccountRouter {
         }
         guard !snap.windows.isEmpty else { return nil }
         UsageAPI.sortWindows(&snap)
-        return snap
+        return LiveLimits(snapshot: snap, key: root["conta"] as? String)
     }
 
-    /// `base` with the windows `live` carries replaced by its numbers, and its time: the per-model windows and the
-    /// extra credit only the `/usage` read has stay as they were.
-    static func merging(_ live: UsageSnapshot, into base: UsageSnapshot?) -> UsageSnapshot {
+    /// `base` with the session and weekly windows replaced by the live numbers, matched by what the window is (an
+    /// older stored snapshot names them `five_hour` and `seven_day`). The server's severity of an older read does
+    /// not carry over to new numbers, and a reset that already passed is dropped rather than kept. The per-model
+    /// windows and the extra credit stay as the last full read left them.
+    static func merging(_ live: UsageSnapshot, into base: UsageSnapshot?, now: Date = Date()) -> UsageSnapshot {
         var out = base ?? UsageSnapshot()
         for window in live.windows {
-            if let i = out.windows.firstIndex(where: { $0.key == window.key }) {
+            let same: (LimitWindow) -> Bool = window.isSession
+                ? { $0.isSession }
+                : { LimitWindow.weeklyAllKeys.contains($0.key) }
+            if let i = out.windows.firstIndex(where: same) {
                 out.windows[i].utilization = window.utilization
+                out.windows[i].severity = window.severity
                 if let resets = window.resetsAt {
                     out.windows[i].resetsAt = resets
                     out.windows[i].resetIsExact = true
+                } else if let old = out.windows[i].resetsAt, old <= now {
+                    out.windows[i].resetsAt = nil
                 }
             } else {
                 out.windows.append(window)
@@ -497,6 +496,12 @@ enum AccountRouter {
         out.source = .api
         UsageAPI.sortWindows(&out)
         return out
+    }
+
+    /// The freshest whole reading, with live numbers merged in when they are newer still.
+    static func combined(full: UsageSnapshot?, live: UsageSnapshot?) -> UsageSnapshot? {
+        guard let live, live.fetchedAt > (full?.fetchedAt ?? .distantPast) else { return full }
+        return merging(live, into: full)
     }
 
     static func exhausted(now: Date = Date()) -> [String: Date] {
@@ -552,7 +557,9 @@ enum AccountRouter {
         var status: Int32
         var output: String
         var error: String
-        var ok: Bool { status == 0 }
+        /// Ended by a signal (the time limit, typically) rather than exiting on its own.
+        var interrupted = false
+        var ok: Bool { status == 0 && !interrupted }
     }
 
     /// Runs `claude-accounts` with `arguments` and waits, off the main actor. The environment is the app's plus
@@ -603,7 +610,8 @@ enum AccountRouter {
         // end, and then it is whatever arrived.
         return CommandResult(status: process.terminationStatus,
                              output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
-                             error: String(decoding: errors.finish(waiting: 2), as: UTF8.self))
+                             error: String(decoding: errors.finish(waiting: 2), as: UTF8.self),
+                             interrupted: process.terminationReason == .uncaughtSignal)
     }
 
     /// Sends `signal` (SIGTERM by default) to everything under `pid`, deepest first, and leaves `pid` itself

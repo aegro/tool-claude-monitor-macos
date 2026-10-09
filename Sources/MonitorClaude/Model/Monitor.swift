@@ -111,6 +111,23 @@ final class Monitor: ObservableObject {
     private var liveBackoff: TimeInterval = 0
     /// Until when the live read waits, whoever asked (this Monitor's 429 or the router's), for the panel to say.
     @Published private(set) var livePauseShown: Date?
+    /// The whole `/usage` read on its own, for the settings: the panel's health (`feeds.terminal`) turns live with the
+    /// stream's numbers, while this says when the whole read last answered, or why it does not.
+    @Published private(set) var fullReadHealth: FeedState.Health = .missing
+    @Published private(set) var fullReadProblem: String?
+    /// When `/usage` last answered for the login in `~/.claude`, and for each extra account. The live numbers carry
+    /// only the session and the weekly window, so a whole read still runs every `fullReadInterval` for the
+    /// per-model windows and the extra credit.
+    private var lastFullRead: Date?
+    private var lastProbe: [String: Date] = [:]
+    private var fullReadInterval: TimeInterval { TerminalPlan.fullReadInterval(usageInterval) }
+    /// After a Keychain read failed in a way a retry would not fix soon, that item waits until then; after the
+    /// person refused the prompt or left it unanswered, until they click "Ler de novo". Asking on every poll is what
+    /// turned one dialog into one every two minutes. Keyed by the item's service name.
+    private var keychainRetryAt: [String: Date] = [:]
+    private var keychainRefusal: [String: Keychain.Failure] = [:]
+    /// The last login read for each extra account, standing in while its Keychain read waits.
+    private var routerCreds: [String: Keychain.Credentials] = [:]
     /// A router edit is being written; the next one waits for it instead of racing it.
     @Published private(set) var savingRouter = false
     /// The last router edit queued, which the next one waits on, and how many are still to finish.
@@ -227,6 +244,7 @@ final class Monitor: ObservableObject {
         }
         access = AccessBuilder.build(.init(
             claudeLoginProblem: claudeLoginProblem,
+            claudeLoginRetry: keychainRefusal[Keychain.service]?.waitsForPerson == true,
             routerConfigProblem: routerConfigProblem,
             accounts: accountInputs,
             marks: marks,
@@ -237,8 +255,10 @@ final class Monitor: ObservableObject {
         integrations = IntegrationsState.read()
     }
 
-    /// The terminal login problem in words: the Keychain has no usable login, or the server refused the token.
+    /// The terminal login problem in words: the Keychain has no usable login, or the server refused the token. A
+    /// prompt the person refused shows even while live numbers arrive, since only "Ler de novo" asks again.
     private var claudeLoginProblem: String? {
+        if let refusal = keychainRefusal[Keychain.service], refusal.waitsForPerson { return refusal.errorDescription }
         guard case .broken = feeds.terminal, let error = terminalFailure else { return nil }
         switch error {
         case let failure as Keychain.Failure: return failure.errorDescription
@@ -313,6 +333,16 @@ final class Monitor: ObservableObject {
         ledger = snap
     }
 
+    /// "Ler de novo" and the refresh button: asks the Keychain again even after a refused prompt, then reads.
+    func readAgain() async {
+        let refused = !keychainRefusal.isEmpty
+        keychainRetryAt = [:]
+        keychainRefusal = [:]
+        await refreshUsage(force: true)
+        // The refusal was on the Acesso list; it leaves now instead of at the next check.
+        if refused { await refreshAccessIfDue(force: true) }
+    }
+
     func refreshUsage(force: Bool) async {
         if !force, let last = lastUsageFetch, Date().timeIntervalSince(last) < 30 { return }
         guard !loadingUsage else { return }
@@ -349,13 +379,17 @@ final class Monitor: ObservableObject {
             apiSnapshotOrg = id.organizationUuid
         }
 
-        await pollTerminalFeed(identity: identity)
+        // One read of each router file per refresh, shared by both polls, so they never disagree on the numbers.
+        let live = AccountRouter.liveLimits()
+        let readings = AccountRouter.routerReadings()
+        await pollTerminalFeed(identity: identity, live: live, readings: readings)
         applyFeeds(desktopSeries)
-        await pollRouterAccounts(active: identity)
+        await pollRouterAccounts(active: identity, live: live, readings: readings)
         sessionDirectories = (router?.config.accounts ?? []).map { (id: Optional($0.id), directory: $0.directory) }
     }
 
-    private func pollRouterAccounts(active: AccountIdentity?) async {
+    private func pollRouterAccounts(active: AccountIdentity?, live: [String: AccountRouter.LiveLimits],
+                                    readings: [String: AccountRouter.RouterReading]) async {
         guard let config = AccountRouter.loadConfig(), config.hasExtraAccounts else {
             routerConfigProblem = AccountRouter.configProblem
             router = nil
@@ -367,42 +401,48 @@ final class Monitor: ObservableObject {
         var logins: [String: AccountIdentity] = [:]
         var read: Set<String> = []
         var idle: Set<String> = []
-        let cached = AccountRouter.routerReadings()
-        let liveByAccount = AccountRouter.liveLimits()
         let now = Date()
         func freshest(_ candidates: UsageSnapshot?...) -> UsageSnapshot? {
             candidates.compactMap { $0 }.max { $0.fetchedAt < $1.fetchedAt }
+        }
+        func recent(_ date: Date?, within interval: TimeInterval) -> Bool {
+            date.map { now.timeIntervalSince($0) < interval } ?? false
         }
 
         for account in config.accounts {
             let identity = AccountRouter.identity(for: account)
             logins[account.id] = identity
             let stored = identity.flatMap { accounts.records[$0.key]?.snapshot }
-            let routerRead = cached[account.id]
-            let liveRead = liveByAccount[account.id]
+            let routerRead = readings[account.id]
+            let liveRead = Self.liveSnapshot(live[account.id], for: identity)
 
-            let creds = await Blocking.run { AccountRouter.credentials(for: account) }
-            guard let creds else { continue }
+            guard let creds = await routerCredentials(for: account) else { continue }
             available.insert(account.id)
 
             if let identity, identity.key == active?.key {
-                usage[account.id] = freshest(apiSnapshot ?? stored, routerRead?.snapshot, liveRead)
+                // The terminal poll already merged the live numbers into its own read.
+                usage[account.id] = AccountRouter.combined(full: freshest(apiSnapshot ?? stored, routerRead?.snapshot),
+                                                           live: liveRead)
                 continue
             }
 
-            // The router read this account a moment ago, or the server asked it (or us) to wait: those numbers
-            // stand, and asking again would only spend this account's share of the endpoint.
+            // A whole reading (the router's or our own) a moment ago, live numbers over one from the last ten
+            // minutes, or a pause the server asked for: those numbers stand, and asking again would only spend this
+            // account's share of the endpoint.
+            let fullAt = [routerRead?.snapshot.fetchedAt, lastProbe[account.id]].compactMap { $0 }.max()
             let waiting = [routerRead?.waitUntil, probePausedUntil[account.id]].compactMap { $0 }.contains { $0 > now }
-            let recent = [routerRead?.snapshot, liveRead].compactMap { $0 }
-                .contains { now.timeIntervalSince($0.fetchedAt) < usageInterval }
+            let current = recent(fullAt, within: usageInterval)
+                || (recent(liveRead?.fetchedAt, within: usageInterval) && recent(fullAt, within: fullReadInterval))
             if creds.isExpired { idle.insert(account.id) }
-            if waiting || recent || creds.isExpired {
-                usage[account.id] = freshest(routerRead?.snapshot, liveRead, stored)
+            let standing = AccountRouter.combined(full: freshest(routerRead?.snapshot, stored), live: liveRead)
+            if waiting || current || creds.isExpired {
+                usage[account.id] = standing
                 continue
             }
             do {
                 let (snap, _) = try await UsageAPI.fetch(token: creds.accessToken)
                 probePausedUntil[account.id] = nil
+                lastProbe[account.id] = snap.fetchedAt
                 if let identity {
                     accounts.record(uuid: identity.key, label: identity.label,
                                     plan: creds.subscriptionType ?? identity.planFallback,
@@ -414,7 +454,7 @@ final class Monitor: ObservableObject {
                 if case UsageError.rateLimited(let retryAfter) = error {
                     probePausedUntil[account.id] = now.addingTimeInterval(min(3600, max(300, retryAfter ?? 300)))
                 }
-                usage[account.id] = freshest(routerRead?.snapshot, liveRead, stored)
+                usage[account.id] = standing
             }
         }
 
@@ -436,30 +476,93 @@ final class Monitor: ObservableObject {
             idleLogins: idle)
     }
 
-    /// The preferred feed: our own read of the API, with the terminal's token.
+    /// The live numbers of one account, unless the router saved them under another login: the slot was logged into
+    /// a different account since, and those numbers are not this one's.
+    nonisolated static func liveSnapshot(_ live: AccountRouter.LiveLimits?, for identity: AccountIdentity?) -> UsageSnapshot? {
+        guard let live else { return nil }
+        if let key = live.key, let identity, key != identity.key { return nil }
+        return live.snapshot
+    }
+
+    /// An extra account's login, read like the terminal's and with the same restraint after a refusal: the last
+    /// login read stands in meanwhile, so the account does not drop out of the queue over a dialog.
+    private func routerCredentials(for account: AccountRouter.Account) async -> Keychain.Credentials? {
+        do {
+            let creds = try await readKeychain(service: AccountRouter.keychainService(for: account))
+            routerCreds[account.id] = creds
+            return creds
+        } catch let failure as Keychain.Failure where Self.keychainWait(after: failure) != nil {
+            return routerCreds[account.id]
+        } catch {
+            routerCreds[account.id] = nil
+            return nil
+        }
+    }
+
+    /// One Keychain item, off the main actor (a read waiting on a dialog must not freeze the panel), and left alone
+    /// for a while after a refusal instead of bringing the dialog back on every poll.
+    private func readKeychain(service: String) async throws -> Keychain.Credentials {
+        if let at = keychainRetryAt[service], at > Date(), let refusal = keychainRefusal[service] { throw refusal }
+        do {
+            let creds = try await Blocking.runThrowing { try Keychain.credentials(service: service) }
+            keychainRetryAt[service] = nil
+            keychainRefusal[service] = nil
+            return creds
+        } catch let failure as Keychain.Failure {
+            if let wait = Self.keychainWait(after: failure) {
+                keychainRetryAt[service] = wait
+                keychainRefusal[service] = failure
+            }
+            throw failure
+        }
+    }
+
+    /// How long the Keychain is left alone after `failure`: until "Ler de novo" after a refused or unanswered prompt,
+    /// five minutes after a locked Keychain or an odd error, and not at all when the item is simply missing, since
+    /// asking about that raises no dialog and a new login should show up on the next poll.
+    nonisolated static func keychainWait(after failure: Keychain.Failure, now: Date = Date()) -> Date? {
+        switch failure {
+        case .denied, .unanswered: return .distantFuture
+        case .locked, .other: return now.addingTimeInterval(300)
+        case .notFound, .noAccountToken, .expired, .malformed: return nil
+        }
+    }
+
     /// The router account whose login is in `~/.claude`, the one the live read is about.
     private var liveRouterId: String { router?.config.principal ?? AccountRouter.loadConfig()?.principal ?? "principal" }
 
-    private func pollTerminalFeed(identity: AccountIdentity?) async {
+    /// The preferred feed: the live numbers a stream session received, then our own read of the API with the
+    /// terminal's token. `TerminalPlan` decides which.
+    private func pollTerminalFeed(identity: AccountIdentity?, live: [String: AccountRouter.LiveLimits],
+                                  readings: [String: AccountRouter.RouterReading]) async {
         let now = Date()
-        // A stream session (VS Code, T3) just got the numbers in its response headers: they are fresher than any
-        // read, and taking them spends nothing of the endpoint's tight limit.
-        if let live = AccountRouter.liveLimits()[liveRouterId], identity != nil,
-           live.fetchedAt > (apiSnapshot?.fetchedAt ?? .distantPast),
-           now.timeIntervalSince(live.fetchedAt) < max(60, usageInterval) {
-            useLive(live, identity: identity)
-            return
+        let liveRead = identity == nil ? nil : Self.liveSnapshot(live[liveRouterId], for: identity)
+        feeds.stream = liveRead.map { now.timeIntervalSince($0.fetchedAt) < 600 ? .live(at: $0.fetchedAt) : .stale(at: $0.fetchedAt) }
+            ?? .missing
+        let pause = [livePausedUntil, readings[liveRouterId]?.waitUntil].compactMap { $0 }.max().flatMap { $0 > now ? $0 : nil }
+        let plan = TerminalPlan.plan(live: liveRead?.fetchedAt, held: apiSnapshot?.fetchedAt, lastFullRead: lastFullRead,
+                                     pause: pause, now: now, interval: usageInterval)
+        if let pause {
+            fullReadHealth = .broken("pausa pedida")
+            fullReadProblem = Self.fullReadPauseText(pause)
         }
-        let routerWait = AccountRouter.routerReadings()[liveRouterId]?.waitUntil
-        if let until = [livePausedUntil, routerWait].compactMap({ $0 }).max(), until > now {
-            usageError = "O servidor pediu uma pausa até \(Fmt.clock(until)). Os números voltam depois disso."
+        let otherwise: TerminalPlan.Live
+        switch plan {
+        case .takeLive:
+            if let liveRead { useLive(liveRead, identity: identity) }
+            return
+        case .wait(let until, let liveState):
+            if liveState != .none, let liveRead { absorbLive(liveRead, identity: identity) }
+            usageError = Self.pauseText(until)
             feeds.terminal = .broken("pausa pedida")
             livePauseShown = until
             return
+        case .read(let liveState):
+            otherwise = liveState
         }
         livePauseShown = nil
         do {
-            let creds = try credentials()
+            let creds = try await credentials()
             // Fail on the expiry we can read rather than on the 401 it is about to earn. Same
             // outcome, but it names the problem — and this is the exact state the Monitor sat in
             // for twenty-one hours reporting nothing: the CLI owns the refresh, and if you have
@@ -467,6 +570,9 @@ final class Monitor: ObservableObject {
             guard !creds.isExpired else { throw Keychain.Failure.expired }
 
             let snap = try await fetchUsage(creds: creds)
+            lastFullRead = snap.fetchedAt
+            fullReadHealth = .live(at: snap.fetchedAt)
+            fullReadProblem = nil
             livePausedUntil = nil
             liveBackoff = 0
             apiSnapshot = snap
@@ -481,27 +587,56 @@ final class Monitor: ObservableObject {
                                 snapshot: snap, at: snap.fetchedAt)
             }
         } catch {
+            var pausedUntil: Date?
+            if case UsageError.rateLimited(let retryAfter) = error {
+                liveBackoff = min(3600, max(usageInterval, liveBackoff * 2))
+                let until = now.addingTimeInterval(min(3600, max(60, retryAfter ?? liveBackoff)))
+                livePausedUntil = until
+                pausedUntil = until
+            }
+            fullReadHealth = .broken(FeedState.shortReason(for: error))
+            fullReadProblem = pausedUntil.map(Self.fullReadPauseText) ?? (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            // The whole read failed, but live numbers keep arriving: they stand, and only the per-model windows wait
+            // for the next whole read.
+            if otherwise == .current, let liveRead {
+                useLive(liveRead, identity: identity)
+                return
+            }
+            if otherwise == .older, let liveRead { absorbLive(liveRead, identity: identity) }
             terminalFailure = error
             usageError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             feeds.terminal = .broken(FeedState.shortReason(for: error))
-            if case UsageError.rateLimited(let retryAfter) = error {
-                liveBackoff = min(3600, max(usageInterval, liveBackoff * 2))
-                let wait = min(3600, max(60, retryAfter ?? liveBackoff))
-                livePausedUntil = now.addingTimeInterval(wait)
-                livePauseShown = livePausedUntil
-                usageError = "O servidor pediu uma pausa até \(Fmt.clock(now.addingTimeInterval(wait))). Os números voltam depois disso."
+            if let pausedUntil {
+                livePauseShown = pausedUntil
+                usageError = Self.pauseText(pausedUntil)
             }
         }
     }
 
+    private static func pauseText(_ until: Date) -> String {
+        "O servidor pediu uma pausa até \(Fmt.clock(until)). Os números voltam depois disso."
+    }
+
+    /// The same pause, said of the whole read alone: live numbers may well be arriving meanwhile.
+    private static func fullReadPauseText(_ until: Date) -> String {
+        "O servidor pediu uma pausa até \(Fmt.clock(until)); a consulta completa volta depois disso."
+    }
+
+    /// Live numbers as the current reading: the feed is live again.
     private func useLive(_ live: UsageSnapshot, identity: AccountIdentity?) {
+        absorbLive(live, identity: identity)
         livePauseShown = nil
+        usageError = nil
+        terminalFailure = nil
+        feeds.terminal = .live(at: live.fetchedAt)
+    }
+
+    /// Live numbers merged into the last reading, without saying anything about the feed: older ones still beat
+    /// what was read before them, and show with their age.
+    private func absorbLive(_ live: UsageSnapshot, identity: AccountIdentity?) {
         let merged = AccountRouter.merging(live, into: apiSnapshot)
         apiSnapshot = merged
         apiSnapshotOrg = identity?.organizationUuid
-        usageError = nil
-        terminalFailure = nil
-        feeds.terminal = .live(at: merged.fetchedAt)
         if let id = identity {
             accounts.record(uuid: id.key, label: id.label, plan: accounts.records[id.key]?.plan ?? id.planFallback,
                             snapshot: merged, at: merged.fetchedAt)
@@ -664,12 +799,11 @@ final class Monitor: ObservableObject {
         return desktopOrgs.filter { !covered.contains($0.organizationUuid) }
     }
 
-    /// Cached keychain read. Every SecItemCopyMatching is a potential user-facing prompt (one
-    /// per poll adds up fast), so the item is only touched when nothing is cached yet or the
-    /// cached token is about to expire.
-    private func credentials(bypassingCache: Bool = false) throws -> Keychain.Credentials {
+    /// Cached keychain read: the item is only touched when nothing is cached yet or the cached token is about to
+    /// expire.
+    private func credentials(bypassingCache: Bool = false) async throws -> Keychain.Credentials {
         if !bypassingCache, let cached = cachedCreds, !cached.expiresSoon { return cached }
-        let fresh = try Keychain.claudeCredentials()
+        let fresh = try await readKeychain(service: Keychain.service)
         cachedCreds = fresh
         return fresh
     }
@@ -685,7 +819,7 @@ final class Monitor: ObservableObject {
         do {
             return try await UsageAPI.fetch(token: creds.accessToken).0
         } catch UsageError.unauthorized {
-            let fresh = try credentials(bypassingCache: true)
+            let fresh = try await credentials(bypassingCache: true)
             guard fresh.accessToken != creds.accessToken else { throw UsageError.unauthorized }
             return try await UsageAPI.fetch(token: fresh.accessToken).0
         }
@@ -952,6 +1086,8 @@ final class Monitor: ObservableObject {
             await refreshAccessIfDue(force: true)
         case .upgrade(let cask):
             await upgrade(cask)
+        case .readAgain:
+            await readAgain()
         }
         return false
     }

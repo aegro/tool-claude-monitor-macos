@@ -4,7 +4,7 @@ import Security
 /// Reads (read-only) the OAuth token Claude Code stores in the login keychain. The Monitor
 /// never writes this item: Claude Code owns it and keeps it fresh, and a second writer here
 /// would race the CLI's refresh-token rotation, trip the server's reuse detection, and break
-/// login for both. The read goes through `/usr/bin/security`, so it never prompts.
+/// login for both. The read goes through `/usr/bin/security`, so it does not prompt.
 enum Keychain {
     static let service = "Claude Code-credentials"
 
@@ -34,9 +34,18 @@ enum Keychain {
         case notFound
         case noAccountToken
         case expired
+        /// The Keychain is locked and could not ask (no prompt was shown).
+        case locked
+        /// macOS asked to let the read through and the person said no.
         case denied
+        /// macOS asked and nobody answered before the read gave up.
+        case unanswered
         case malformed
         case other(OSStatus)
+
+        /// The person was asked and the answer was no, or none: asking again by itself would only bring the dialog
+        /// back, so the next try waits for "Ler de novo".
+        var waitsForPerson: Bool { self == .denied || self == .unanswered }
 
         var errorDescription: String? {
             switch self {
@@ -46,8 +55,12 @@ enum Keychain {
                 return "O Keychain só tem tokens de MCP, sem sessão de conta — rode `claude /login` no terminal."
             case .expired:
                 return "O login do terminal venceu. Só o `claude` no terminal o renova — rode-o uma vez para o Monitor voltar a ler a API."
-            case .denied:
+            case .locked:
                 return "O Keychain está bloqueado. Desbloqueie a sessão do Mac e o Monitor lê de novo."
+            case .denied:
+                return "O macOS pediu para liberar o login do Claude Code e o pedido foi recusado. Clique em Ler de novo e autorize (Sempre Permitir, quando ele oferecer): ele não volta a perguntar."
+            case .unanswered:
+                return "O macOS pediu para liberar o login do Claude Code e ficou sem resposta. Clique em Ler de novo e autorize (Sempre Permitir, quando ele oferecer): ele não volta a perguntar."
             case .malformed:
                 return "Credencial do Keychain em formato inesperado."
             case .other(let s):
@@ -57,19 +70,30 @@ enum Keychain {
     }
 
     static func claudeCredentials() throws -> Credentials {
-        try parse(readItem())
+        try credentials(service: service)
     }
 
-    /// The decoded top-level object of the `Claude Code-credentials` item. Read-only, and read through
-    /// `/usr/bin/security`, the same way Claude Code reads it. The item is written by `security` (Claude Code calls
-    /// `security add-generic-password -U` on every refresh), so `security` is always in its access list and the read
-    /// never raises a prompt. Reading it as the Monitor instead put the Monitor's own entry in that list, and a
-    /// refresh could drop it again: the "type your password" prompt that kept coming back.
-    private static func readItem() throws -> [String: Any] {
+    /// The login filed under `service`, decoded. Read-only, and read through `/usr/bin/security`, the same way Claude
+    /// Code reads it. The item is written by `security` (Claude Code calls `security add-generic-password -U` on every
+    /// refresh), so `security` is always in its access list and the read never raises a prompt. Reading it as the
+    /// Monitor instead put the Monitor's own entry in that list, and a refresh could drop it again: the "type your
+    /// password" prompt that kept coming back.
+    ///
+    /// A minute to answer, not seconds: if the item ever lacks `security` in its access list, macOS asks once, and
+    /// the person needs time to choose "Always Allow" instead of having the read killed under the dialog.
+    static func credentials(service: String, timeout: TimeInterval = 60) throws -> Credentials {
+        try parse(readItem(service: service, timeout: timeout))
+    }
+
+    private static func readItem(service: String, timeout: TimeInterval) throws -> [String: Any] {
         let security = URL(fileURLWithPath: "/usr/bin/security")
         // Claude Code files the item under the login name; an odd name falls back to an item without one.
-        var result = AccountRouter.run(security, ["find-generic-password", "-a", NSUserName(), "-s", service, "-w"], timeout: 8)
-        if result.status == 44 { result = AccountRouter.run(security, ["find-generic-password", "-s", service, "-w"], timeout: 8) }
+        var result = AccountRouter.run(security, ["find-generic-password", "-a", NSUserName(), "-s", service, "-w"], timeout: timeout)
+        if result.status == 44, !result.interrupted {
+            result = AccountRouter.run(security, ["find-generic-password", "-s", service, "-w"], timeout: timeout)
+        }
+        // Killed at the time limit: a dialog was up and nobody answered it.
+        guard !result.interrupted else { throw Failure.unanswered }
         guard result.ok else { throw failure(forSecurityExit: result.status) }
         guard let root = try? JSONSerialization.jsonObject(
             with: Data(result.output.trimmingCharacters(in: .whitespacesAndNewlines).utf8)) as? [String: Any]
@@ -77,12 +101,14 @@ enum Keychain {
         return root
     }
 
-    /// `security` reports the Keychain status as its exit code: 44 is "not found" (errSecItemNotFound), 36 and 51 a
-    /// locked Keychain or a read it may not do without asking.
+    /// `security` reports the Keychain status as its exit code, the low byte of the `OSStatus`: 44 is "not found"
+    /// (errSecItemNotFound), 36 a locked Keychain that could not ask (errSecInteractionNotAllowed), 51 and 128 a
+    /// prompt the person refused or cancelled (errSecAuthFailed, errSecUserCanceled).
     static func failure(forSecurityExit code: Int32) -> Failure {
         switch code {
         case 44: return .notFound
-        case 36, 51, 128: return .denied
+        case 36: return .locked
+        case 51, 128: return .denied
         default: return .other(OSStatus(code))
         }
     }

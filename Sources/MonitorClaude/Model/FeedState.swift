@@ -21,6 +21,10 @@ struct FeedState: Equatable {
 
     var terminal: Health = .missing
     var desktop: Health = .missing
+    /// The numbers stream sessions (VS Code, T3) received for the terminal's login: live while a session works,
+    /// stale once it stops, missing when none ever ran through the router. Shown in the settings only; the panel's
+    /// choice goes through `terminal`.
+    var stream: Health = .missing
 
     /// The one or two words the provenance bar shows next to a failing feed. Deliberately terse:
     /// the bar is one line, and the sentence explaining what to do is stated in full below it.
@@ -44,7 +48,9 @@ extension Keychain.Failure: ShortFailure {
         switch self {
         case .expired: return "vencido"
         case .notFound, .noAccountToken: return "sem login"
+        case .locked: return "bloqueado"
         case .denied: return "sem acesso"
+        case .unanswered: return "sem resposta"
         case .malformed: return "ilegível"
         case .other(let status): return "erro \(status)"
         }

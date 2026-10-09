@@ -198,7 +198,7 @@ struct PanelView: View {
                     .help(monitor.usageError.map { "Última tentativa: \($0)" } ?? "Lido do servidor do Claude")
             }
             Button {
-                Task { await monitor.refreshUsage(force: true) }
+                Task { await monitor.readAgain() }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 10, weight: .semibold))

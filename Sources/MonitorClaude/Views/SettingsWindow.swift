@@ -348,19 +348,22 @@ struct AdvancedSettings: View {
                         Text(Fmt.duration(settings.usageIntervalSeconds)).monospacedDigit().foregroundStyle(.secondary)
                     }
                     Slider(value: $settings.usageIntervalSeconds, in: 60...600, step: 30)
-                    Text("O servidor limita as consultas, e cada terminal aberto também consulta. Abaixo de 60 s há risco de ele pedir uma pausa.")
+                    Text("Vale quando nenhuma sessão manda números ao vivo; com uma sessão no VS Code ou no T3, a consulta completa roda a cada 10 min. O servidor limita as consultas, e o Claude Code e o roteador consultam com o mesmo login: quanto menor o intervalo, mais cedo ele pede uma pausa.")
                         .font(Type.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             Section("De onde vêm os números") {
-                source("Login do terminal", health: monitor.feeds.terminal,
-                       note: monitor.usageError ?? "A fonte preferida: traz as janelas por modelo e o crédito extra.")
+                source("Sessões no VS Code e no T3", health: monitor.feeds.stream,
+                       note: "Chegam a cada resposta do servidor, sem gastar consulta: a sessão de 5h e a semana. Vêm com a integração ligada em Integrações.")
+                source("Login do terminal", health: monitor.fullReadHealth,
+                       note: monitor.fullReadProblem ?? "A consulta completa: traz também as janelas por modelo e o crédito extra.")
                 source("App do Claude", health: monitor.feeds.desktop,
                        note: "Entra quando o login do terminal não responde. Grava a cada 5 min.")
                 HStack {
                     Spacer()
-                    Button("Ler de novo") { Task { await monitor.refreshUsage(force: true) } }
+                    Button("Ler de novo") { Task { await monitor.readAgain() } }
                 }
             }
 

@@ -29,6 +29,8 @@ Baixe o `.zip` mais recente em [Releases](https://github.com/aegro/tool-claude-m
 
 O app lê o login do Claude Code pelo `/usr/bin/security`, do mesmo jeito que o próprio Claude Code lê: quem grava a entrada `Claude Code-credentials` é o `security`, então ele sempre tem acesso e o macOS não pede a senha. Antes, o app lia como ele mesmo e precisava do **Sempre Permitir**; a cada renovação do login a permissão podia cair e o pedido de senha voltava.
 
+Se algum dia o macOS pedir, ele pede uma vez. Recusou, ou deixou o pedido sem resposta por um minuto: o app não pergunta de novo sozinho e mostra em **Acessos** o botão **Ler de novo** (o mesmo do ↻ no rodapé). Com o Keychain bloqueado, ele tenta outra vez em 5 minutos. A leitura roda fora da tela, então um pedido aberto não trava o painel.
+
 ### Compilar do fonte (desenvolvimento)
 
 O pré-requisito único são as ferramentas de linha de comando do Xcode, que trazem o Swift:
@@ -111,9 +113,10 @@ O app relê o Keychain quando o token está perto de vencer, momento em que o CL
 
 O endpoint `/api/oauth/usage` tem limite apertado e responde 429 com facilidade: o Claude Code, o roteador e o Monitor consultam com o mesmo login. Por isso o Monitor usa, primeiro, o que já chegou de graça:
 
-- **Sessões no VS Code e no T3**, com a integração ligada: o `claude-auto` recebe, a cada resposta do servidor, os números de limite da sessão (o `rate_limit_event` do stream) e grava em `~/.claude-accounts/.estado/ao-vivo/<conta>.json`. O Monitor lê dali, com segundos de atraso enquanto uma sessão trabalha, e nem consulta o endpoint.
+- **Sessões no VS Code e no T3**, com a integração ligada: o `claude-auto` recebe, a cada resposta do servidor, os números de limite da sessão (o `rate_limit_event` do stream) e grava em `~/.claude-accounts/.estado/ao-vivo/<conta>.json`, junto com o login a que eles pertencem. O Monitor lê dali, com segundos de atraso enquanto uma sessão trabalha, e nem consulta o endpoint. Números gravados com outro login (a conta foi trocada desde então) ficam de fora.
+- **Uma leitura completa a cada 10 minutos**, mesmo com os números ao vivo chegando: o evento traz só a sessão de 5h e a semana, e é essa leitura que traz as janelas por modelo e o crédito extra. Se ela falhar, os números ao vivo continuam valendo.
 - **A leitura do roteador** (`.estado/uso.json`), quando é mais nova que a do Monitor.
-- Depois de um 429, o Monitor espera o `Retry-After` que o servidor mandou (ou um tempo que dobra a cada 429 seguido) e respeita a pausa que o roteador já recebeu, em vez de consultar de novo e esticar a pausa. O rodapé diz até quando.
+- Depois de um 429, o Monitor espera o `Retry-After` que o servidor mandou (ou um tempo que dobra a cada 429 seguido) e respeita a pausa que o roteador já recebeu, em vez de consultar de novo e esticar a pausa. O rodapé diz até quando. Durante a pausa, números ao vivo mais novos que a última leitura entram mesmo assim, com a idade deles no rodapé.
 
 Conta extra que ficou horas sem sessão fica com o login vencido. Só uma sessão renova o login (o Monitor nunca renova), então os números dela esperam a próxima sessão, e o painel diz isso na linha da conta.
 

@@ -79,6 +79,30 @@ const testes = {
     assert.strictEqual(contas.contaDoDirPadrao('max', { ...cfg, rota: ['max'] }, aegro), aegro);
   },
 
+  sessaoDaContaDoClaudeAbreNaPastaPropriaQuandoTemLoginLa() {
+    const home = process.env.CLAUDE_AUTO_HOME;
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ principal: 'max', contas: { max: {}, aegro: {} }, rota: ['max', 'aegro'] }));
+    const bin = fs.mkdtempSync(path.join(raiz, 'sec-'));
+    fs.writeFileSync(path.join(bin, 'security'), '#!/bin/sh\nexit "${FAKE_SECURITY_STATUS:-0}"\n', { mode: 0o755 });
+    const antes = { PATH: process.env.PATH, status: process.env.FAKE_SECURITY_STATUS };
+    process.env.PATH = `${bin}:${process.env.PATH}`;
+    try {
+      // Com login na pasta própria, a conta do ~/.claude abre lá: a troca dos agentes não a leva junto.
+      process.env.FAKE_SECURITY_STATUS = '0';
+      assert.strictEqual(contas.envDaSessao('max', {}).CLAUDE_CONFIG_DIR, path.join(home, 'max'));
+      assert.strictEqual(contas.envDaSessao('max', {}).CLAUDE_AUTO_CONTA, 'max');
+      // Sem login próprio, fica no ~/.claude, como antes.
+      process.env.FAKE_SECURITY_STATUS = '44';
+      assert.strictEqual(contas.envDaSessao('max', {}).CLAUDE_CONFIG_DIR, undefined);
+      // Conta que não é a do ~/.claude: a pasta dela, como sempre.
+      assert.strictEqual(contas.envDaSessao('aegro', {}).CLAUDE_CONFIG_DIR, path.join(home, 'aegro'));
+    } finally {
+      process.env.PATH = antes.PATH;
+      if (antes.status === undefined) delete process.env.FAKE_SECURITY_STATUS; else process.env.FAKE_SECURITY_STATUS = antes.status;
+      fs.writeFileSync(path.join(home, 'config.json'), '{}');
+    }
+  },
+
   primeiroArgumentoComOCaminhoDoClaudeViraOBinario() {
     const r = binarioDoWrapper(['/ext/resources/native-binary/claude', '--output-format', 'stream-json'], ehExecutavel);
     assert.strictEqual(r.bin, '/ext/resources/native-binary/claude');

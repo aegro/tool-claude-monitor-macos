@@ -124,8 +124,12 @@ class Proxy {
     } catch (e) {
       contas.log(`stream: preparar conta ${this.conta} falhou: ${e.message}`);
     }
+    const env = contas.envDaSessao(this.conta);
+    // Aberta no ~/.claude (a conta não tem login na pasta própria): a troca dos agentes pode mudar a conta por
+    // baixo dela, e `checarSlot` acompanha.
+    this.noClaudePadrao = !env.CLAUDE_CONFIG_DIR;
     const filho = spawn(contas.resolverClaude(), args, {
-      env: contas.envDaConta(this.conta),
+      env,
       stdio: ['pipe', 'pipe', 'inherit'],
     });
     this.filho = filho;
@@ -209,7 +213,7 @@ class Proxy {
 
     const emTurnoAntes = this.emTurno;
     this.rastrear(msg);
-    if (msg.type === 'rate_limit_event' && this.conta) contas.registrarLimiteAoVivo(this.conta, msg.rate_limit_info);
+    if (msg.type === 'rate_limit_event' && this.conta) contas.registrarLimiteAoVivo(this.contaQueGasta(), msg.rate_limit_info);
 
     if (this.retido) {
       this.retido.push(linha);
@@ -462,6 +466,7 @@ class Proxy {
     this.checandoPreventiva = true;
     try {
       const cfg = contas.carregarConfig();
+      if (await this.checarSlot(cfg)) return;
       if (await this.checarEscolhida(cfg)) return;
       const folga = contas.folgaDe(await contas.lerUso(this.conta));
       if (folga == null || folga >= cfg.limites.preventiva) {
@@ -484,6 +489,29 @@ class Proxy {
     } finally {
       this.checandoPreventiva = false;
     }
+  }
+
+  // A conta que esta sessão gasta de fato: aberta no ~/.claude, é a que está lá agora, que a troca dos agentes pode
+  // ter mudado depois da abertura.
+  contaQueGasta() {
+    if (!this.noClaudePadrao) return this.conta;
+    const principal = contas.carregarConfig().principal;
+    return principal || this.conta;
+  }
+
+  // A troca dos agentes tirou do ~/.claude a conta desta sessão: o Claude Code aberto lá passa a gastar a que
+  // entrou. No fim de um turno, sem tarefa em segundo plano, a sessão volta para a própria conta, na pasta dela;
+  // sem login próprio, ela passa a contar como da conta que agora está no ~/.claude, que é a que ela gasta.
+  async checarSlot(cfg) {
+    if (!this.noClaudePadrao || !cfg.principal || cfg.principal === this.conta) return false;
+    if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
+    if (contas.temLoginProprio(this.conta, cfg)) {
+      await this.trocar({ para: this.conta, motivo: 'saiu-do-claude', forcada: false, continuar: false });
+      return true;
+    }
+    contas.log(`stream: ${this.conta} saiu do ~/.claude sem login próprio; a sessão segue em ${cfg.principal}`);
+    this.conta = cfg.principal;
+    return false;
   }
 
   // A conta escolhida à mão (`fixada`, o "Usar esta agora" do Monitor) leva também a sessão que já está aberta, no

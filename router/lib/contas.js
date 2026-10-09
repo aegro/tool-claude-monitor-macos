@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFile, execFileSync, spawn } = require('child_process');
+const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 
 const HOME = os.homedir();
 const PRINCIPAL_PADRAO = 'principal';
@@ -239,6 +239,30 @@ function envDaConta(id, base = process.env) {
   if (usaDirPadrao(id, cfg)) delete env.CLAUDE_CONFIG_DIR;
   else env.CLAUDE_CONFIG_DIR = dirDaConta(id, cfg);
   return env;
+}
+
+// A pasta própria de uma conta (~/.claude-accounts/<id>), mesmo quando ela é a do ~/.claude agora.
+function dirPropria(id, cfg = carregarConfig()) {
+  const conta = cfg.contas[id] || {};
+  return conta.dir ? path.resolve(expandir(conta.dir)) : path.join(DIR_CONTAS, id);
+}
+
+// Se a conta tem login na pasta própria (o item do Keychain existe; o valor não é lido).
+function temLoginProprio(id, cfg = carregarConfig()) {
+  if (process.platform !== 'darwin') return fs.existsSync(path.join(dirPropria(id, cfg), '.credentials.json'));
+  const hash = crypto.createHash('sha256').update(dirPropria(id, cfg)).digest('hex').slice(0, 8);
+  const r = spawnSync('security', ['find-generic-password', '-s', `Claude Code-credentials-${hash}`], { stdio: 'ignore', timeout: 8000 });
+  return r.status === 0;
+}
+
+// O ambiente de uma sessão de stream (VS Code, T3). Ela abre na pasta própria da conta sempre que ali há login,
+// mesmo quando a conta é a do ~/.claude: a troca dos agentes troca o login do ~/.claude, e uma sessão aberta lá
+// relê o Keychain e passa a gastar a conta que entrou, com o nome da que saiu (09/10: sessões da Max gastando a
+// Squad Compare). Sem login próprio, fica no ~/.claude, como antes.
+function envDaSessao(id, base = process.env) {
+  const cfg = carregarConfig();
+  if (!usaDirPadrao(id, cfg) || !temLoginProprio(id, cfg)) return envDaConta(id, base);
+  return { ...base, CLAUDE_AUTO_CONTA: id, CLAUDE_CONFIG_DIR: dirPropria(id, cfg) };
 }
 
 function log(mensagem) {
@@ -715,6 +739,8 @@ function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
     fs.appendFileSync(ARQ_TROCAS, JSON.stringify(registro) + '\n');
   } catch {}
   log(`troca ${de} -> ${para} (${motivo}) sessão ${sessao || '-'}`);
+  // A sessão que só voltou para a pasta da própria conta não trocou de conta: nada a avisar.
+  if (de === para) return;
   const cfg = carregarConfig();
   const aviso = textoDaTroca({ de, para, motivo }, (id) => nomeDaConta(id, cfg), voltaConhecida(de, motivo));
   notificar(aviso.titulo, aviso.texto);
@@ -823,6 +849,9 @@ function registrarLimiteAoVivo(id, info, agora = Date.now()) {
 }
 
 module.exports = {
+  envDaSessao,
+  temLoginProprio,
+  dirPropria,
   contaDoDirPadrao,
   principal,
   python3,

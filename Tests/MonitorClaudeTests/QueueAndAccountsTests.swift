@@ -55,6 +55,17 @@ struct QueueAndAccountsTests {
         #expect(cfg.accounts.map(\.id) == ["max", "principal", "extra"])
     }
 
+    @Test func principalComPastaPropriaNaoMoraNoClaudePadrao() throws {
+        let padrao = try #require(AccountRouter.parseConfig(Data(#"{ "contas": { "principal": {} } }"#.utf8),
+                                                            home: home, defaultDirectory: defaultDirectory))
+        #expect(padrao.principalUsesDefaultDirectory)
+        let propria = try #require(AccountRouter.parseConfig(Data(#"""
+        { "contas": { "principal": { "dir": "~/outra" }, "max": {} }, "rota": ["principal", "max"] }
+        """#.utf8), home: home, defaultDirectory: defaultDirectory))
+        #expect(!propria.principalUsesDefaultDirectory)
+        #expect(!propria.accounts.contains { $0.usesDefaultDirectory })
+    }
+
     @Test func tirarDaFilaNuncaDeixaARotaVazia() {
         let semReserva = AccountRouter.queue(removing: "max", route: ["max"], reserve: [], principal: "principal")
         #expect(semReserva.route == ["principal"] && semReserva.reserve.isEmpty)

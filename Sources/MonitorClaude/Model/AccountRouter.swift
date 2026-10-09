@@ -22,6 +22,9 @@ enum AccountRouter {
         /// The account the person chose by hand (`fixada`): new sessions open there whatever the rule, while it has
         /// room; out of room, the rule decides again.
         var pinned: String? = nil
+        /// Whether the principal lives in `~/.claude` (no `dir` of its own). Only then is `~/.claude` the router's
+        /// slot, and only then does `slotIdentity` apply its rule.
+        var principalUsesDefaultDirectory: Bool = true
 
         var hasExtraAccounts: Bool { accounts.contains { !$0.usesDefaultDirectory } }
         var route: [Account] { accounts.filter { $0.role == .route } }
@@ -170,7 +173,8 @@ enum AccountRouter {
             accounts: route.map { account($0, .route) } + reserve.map { account($0, .reserve) },
             reserveBelow: reserveBelow,
             preferred: preferred,
-            pinned: pinned)
+            pinned: pinned,
+            principalUsesDefaultDirectory: ((entries[principal] as? [String: Any])?["dir"] as? String) == nil)
     }
 
     struct UnreadableConfig: LocalizedError {
@@ -408,7 +412,9 @@ enum AccountRouter {
     /// the login it started with. The file then names an account that lives elsewhere in the queue, and the slot
     /// account showed up as a copy of it: "Thomas (Max)" read as "Thomas (Aegro)". When the file names another
     /// queue account and the router saved this slot account's own login, that saved login wins.
+    /// With the principal in a folder of its own, `~/.claude` is nobody's slot and the file is taken as it is.
     static func slotIdentity(config: Config) -> AccountIdentity? {
+        guard config.principalUsesDefaultDirectory else { return ClaudeConfig.activeAccount() }
         let others = config.accounts.filter { $0.id != config.principal }
         var otherKeys = Set(others.compactMap { folderIdentity($0)?.key })
         otherKeys.formUnion(others.compactMap { savedLogin($0.id)?.key })

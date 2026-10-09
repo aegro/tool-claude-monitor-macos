@@ -587,25 +587,32 @@ enum AccountRouter {
         // Both pipes drain as the command writes, so one that fills stderr never blocks on it.
         let output = PipeCollector(out.fileHandleForReading)
         let errors = PipeCollector(err.fileHandleForReading)
+        // The time limit is kept by this thread, waiting for the exit with a deadline, not by a timer on a global
+        // queue: on a busy machine (the 3-core CI runner) that timer fired seconds late and the command outlived
+        // its limit.
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch {
             return CommandResult(status: 127, output: "", error: error.localizedDescription)
         }
         let pid = process.processIdentifier
-        let stop = DispatchWorkItem {
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
             // Remembered, because once `pid` exits its children belong to launchd and can no longer be found
             // under it; whatever ignored SIGTERM gets SIGKILL with the parent.
             let children = terminateDescendants(of: pid)
-            guard process.isRunning || !children.isEmpty else { return }
             if process.isRunning { process.terminate() }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+            let finish = {
                 let late = process.isRunning ? terminateDescendants(of: pid, signal: SIGKILL) : []
                 for child in children where !late.contains(child) && kill(child, 0) == 0 { kill(child, SIGKILL) }
                 if process.isRunning { kill(pid, SIGKILL) }
             }
+            if exited.wait(timeout: .now() + 2) == .timedOut {
+                finish()
+                exited.wait()
+            } else if !children.isEmpty {
+                reaper.asyncAfter(deadline: .now() + 2, execute: finish)
+            }
         }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: stop)
-        process.waitUntilExit()
-        stop.cancel()
         // A helper the command left behind can keep the pipes open after it exits: the output gets a moment to
         // end, and then it is whatever arrived.
         return CommandResult(status: process.terminationStatus,
@@ -613,6 +620,10 @@ enum AccountRouter {
                              error: String(decoding: errors.finish(waiting: 2), as: UTF8.self),
                              interrupted: process.terminationReason == .uncaughtSignal)
     }
+
+    /// Kills, two seconds on, the children of a timed-out command that ignored SIGTERM after the command itself
+    /// exited. A serial queue of its own, which gets a thread even while the global queues are busy.
+    private static let reaper = DispatchQueue(label: "monitor-claude.reaper", qos: .userInitiated)
 
     /// Sends `signal` (SIGTERM by default) to everything under `pid`, deepest first, and leaves `pid` itself
     /// alone. Returns the processes it signalled.

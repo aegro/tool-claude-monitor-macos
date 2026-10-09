@@ -216,11 +216,14 @@ struct LiveDataTests {
     }
 
     /// A read killed at its time limit (a dialog nobody answered) is told apart from one that failed on its own.
-    @Test func comandoMortoPeloLimiteDeTempoFicaMarcado() {
-        let slow = AccountRouter.run(URL(fileURLWithPath: "/bin/sleep"), ["5"], timeout: 0.3)
+    /// Off the cooperative pool, like the app runs it, so a busy runner does not hold the test up.
+    @Test func comandoMortoPeloLimiteDeTempoFicaMarcado() async {
+        let started = Date()
+        let slow = await Blocking.run { AccountRouter.run(URL(fileURLWithPath: "/bin/sleep"), ["30"], timeout: 0.3) }
         #expect(slow.interrupted)
         #expect(!slow.ok)
-        let quick = AccountRouter.run(URL(fileURLWithPath: "/usr/bin/false"), [], timeout: 5)
+        #expect(Date().timeIntervalSince(started) < 10)
+        let quick = await Blocking.run { AccountRouter.run(URL(fileURLWithPath: "/usr/bin/false"), [], timeout: 5) }
         #expect(!quick.interrupted)
         #expect(quick.status == 1)
     }

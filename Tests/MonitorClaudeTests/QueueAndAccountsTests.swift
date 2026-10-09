@@ -55,6 +55,15 @@ struct QueueAndAccountsTests {
         #expect(cfg.accounts.map(\.id) == ["max", "principal", "extra"])
     }
 
+    @Test func tirarDaFilaNuncaDeixaARotaVazia() {
+        let semReserva = AccountRouter.queue(removing: "max", route: ["max"], reserve: [], principal: "principal")
+        #expect(semReserva.route == ["principal"] && semReserva.reserve.isEmpty)
+        let comReserva = AccountRouter.queue(removing: "max", route: ["max"], reserve: ["extra", "outra"], principal: "principal")
+        #expect(comReserva.route == ["extra"] && comReserva.reserve == ["outra"])
+        let daReserva = AccountRouter.queue(removing: "extra", route: ["principal"], reserve: ["extra"], principal: "principal")
+        #expect(daReserva.route == ["principal"] && daReserva.reserve.isEmpty)
+    }
+
     // MARK: config writes
 
     @Test func salvarAFilaEscreveRotaReservaEPreferida() throws {

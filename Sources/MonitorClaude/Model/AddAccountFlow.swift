@@ -472,7 +472,7 @@ extension AccountRouter {
     /// Removes an account from the queue: its config entry and its folder. A folder that never got a login holds
     /// only the router's links, so it goes; one with a login goes to the Trash instead, and its Keychain item stays
     /// (the Monitor never writes the Keychain), so putting the folder back brings the account back. The account in
-    /// `~/.claude` is not removed, and the route never ends up empty: the first reserve account moves up.
+    /// `~/.claude` is not removed, and the route never ends up empty (see `queue(removing:)`).
     static func discard(_ id: String) throws {
         guard let config = loadConfig(), let account = config.accounts.first(where: { $0.id == id }),
               !account.usesDefaultDirectory, id != config.principal
@@ -481,11 +481,10 @@ extension AccountRouter {
             var contas = root["contas"] as? [String: Any] ?? [:]
             contas.removeValue(forKey: id)
             root["contas"] = contas
-            var route = (root["rota"] as? [String] ?? []).filter { $0 != id }
-            var reserve = (root["reserva"] as? [String] ?? []).filter { $0 != id }
-            if route.isEmpty, !reserve.isEmpty { route = [reserve.removeFirst()] }
-            root["rota"] = route
-            root["reserva"] = reserve
+            let remaining = queue(removing: id, route: root["rota"] as? [String] ?? [],
+                                  reserve: root["reserva"] as? [String] ?? [], principal: config.principal)
+            root["rota"] = remaining.route
+            root["reserva"] = remaining.reserve
             if root["preferida"] as? String == id { root["preferida"] = nil }
         }
         let fm = FileManager.default
@@ -495,6 +494,16 @@ extension AccountRouter {
         } else {
             try? fm.trashItem(at: account.directory, resultingItemURL: nil)
         }
+    }
+
+    /// The queue without `id`. The route never ends up empty: the first reserve account moves up, or the principal
+    /// when the reserve is empty too.
+    static func queue(removing id: String, route: [String], reserve: [String],
+                      principal: String) -> (route: [String], reserve: [String]) {
+        var route = route.filter { $0 != id }
+        var reserve = reserve.filter { $0 != id }
+        if route.isEmpty { route = reserve.isEmpty ? [principal] : [reserve.removeFirst()] }
+        return (route, reserve)
     }
 }
 

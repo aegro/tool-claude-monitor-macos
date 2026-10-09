@@ -233,8 +233,7 @@ function nomeDaConta(id, cfg = carregarConfig()) {
   return (cfg.contas[id] && cfg.contas[id].nome) || id;
 }
 
-function envDaConta(id, base = process.env) {
-  const cfg = carregarConfig();
+function envDaConta(id, base = process.env, cfg = carregarConfig()) {
   const env = { ...base, CLAUDE_AUTO_CONTA: id };
   if (usaDirPadrao(id, cfg)) delete env.CLAUDE_CONFIG_DIR;
   else env.CLAUDE_CONFIG_DIR = dirDaConta(id, cfg);
@@ -277,9 +276,8 @@ function esquecerLoginProprio() {
 // mesmo quando a conta é a do ~/.claude: a troca dos agentes troca o login do ~/.claude, e uma sessão aberta lá
 // relê o Keychain e passa a gastar a conta que entrou, com o nome da que saiu (09/10: sessões da Max gastando a
 // Squad Compare). Sem login próprio, fica no ~/.claude, como antes.
-function envDaSessao(id, base = process.env) {
-  const cfg = carregarConfig();
-  if (!usaDirPadrao(id, cfg) || !temLoginProprio(id, cfg)) return envDaConta(id, base);
+function envDaSessao(id, base = process.env, cfg = carregarConfig()) {
+  if (!usaDirPadrao(id, cfg) || !temLoginProprio(id, cfg)) return envDaConta(id, base, cfg);
   return { ...base, CLAUDE_AUTO_CONTA: id, CLAUDE_CONFIG_DIR: dirPropria(id, cfg) };
 }
 
@@ -311,8 +309,7 @@ function garantirLink(origem, destino) {
   fs.symlinkSync(origem, destino);
 }
 
-function prepararConta(id) {
-  const cfg = carregarConfig();
+function prepararConta(id, cfg = carregarConfig()) {
   if (usaDirPadrao(id, cfg)) return;
   prepararPasta(id, dirDaConta(id, cfg), arquivoConfigDaConta(id, cfg));
 }
@@ -320,9 +317,8 @@ function prepararConta(id) {
 // Prepara a pasta em que uma sessão de stream vai abrir (o `env` de envDaSessao). Para a conta do ~/.claude aberta
 // na pasta própria, é o mesmo que uma conta extra recebe: os links, a config e os consentimentos da principal,
 // que ficaram parados desde a última vez que ela não estava no ~/.claude. O ~/.claude em si não é tocado.
-function prepararSessao(id, env = {}) {
-  const cfg = carregarConfig();
-  if (!usaDirPadrao(id, cfg)) return prepararConta(id);
+function prepararSessao(id, env = {}, cfg = carregarConfig()) {
+  if (!usaDirPadrao(id, cfg)) return prepararConta(id, cfg);
   const dir = env.CLAUDE_CONFIG_DIR && path.resolve(env.CLAUDE_CONFIG_DIR);
   if (!dir || dir === path.resolve(DIR_PRINCIPAL)) return;
   prepararPasta(id, dir, path.join(dir, '.claude.json'));

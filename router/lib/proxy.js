@@ -127,9 +127,12 @@ class Proxy {
 
   lancar(args) {
     const geracao = this.geracao;
-    const env = this.envDaAbertura();
+    // Uma leitura da config para a abertura inteira: com duas, a troca dos agentes caindo entre elas deixaria o `env`
+    // de uma (a pasta própria) com o `naPastaPropria` da outra, e a recusa daquele login marcaria a conta inteira.
+    const cfg = contas.carregarConfig();
+    const env = this.envDaAbertura(cfg);
     try {
-      contas.prepararSessao(this.conta, env);
+      contas.prepararSessao(this.conta, env, cfg);
     } catch (e) {
       contas.log(`stream: preparar conta ${this.conta} falhou: ${e.message}`);
     }
@@ -137,7 +140,7 @@ class Proxy {
     // baixo dela, e `checarSlot` acompanha.
     this.noClaudePadrao = !env.CLAUDE_CONFIG_DIR;
     // A conta do ~/.claude aberta na pasta própria (envDaConta nunca põe CLAUDE_CONFIG_DIR para ela).
-    this.naPastaPropria = Boolean(env.CLAUDE_CONFIG_DIR) && contas.usaDirPadrao(this.conta);
+    this.naPastaPropria = Boolean(env.CLAUDE_CONFIG_DIR) && contas.usaDirPadrao(this.conta, cfg);
     // A conta em que esta abertura foi feita: `this.conta` segue a do ~/.claude quando a sessão não tem para onde ir.
     this.contaDaAbertura = this.conta;
     const filho = spawn(contas.resolverClaude(), args, {
@@ -160,8 +163,10 @@ class Proxy {
   }
 
   // Na pasta própria quando a conta tem login lá (envDaSessao), salvo se esse login já foi recusado nesta sessão.
-  envDaAbertura() {
-    return this.loginProprioRecusado.has(this.conta) ? contas.envDaConta(this.conta) : contas.envDaSessao(this.conta);
+  envDaAbertura(cfg = contas.carregarConfig()) {
+    return this.loginProprioRecusado.has(this.conta)
+      ? contas.envDaConta(this.conta, process.env, cfg)
+      : contas.envDaSessao(this.conta, process.env, cfg);
   }
 
   paraFilho(linha) {

@@ -342,6 +342,20 @@ struct QueueAndAccountsTests {
         #expect(ClaudeSessionStore.load(directory: a.appendingPathComponent("sessions"), accountId: "principal").first?.accountId == "principal")
     }
 
+    @Test func contaCujaPastaEUmAtalhoDoPadraoMantemAMarca() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("monitor-sessions-\(UUID().uuidString)")
+        let real = base.appendingPathComponent("claude"), atalho = base.appendingPathComponent("atalho")
+        try fm.createDirectory(at: real.appendingPathComponent("sessions"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: atalho, withDestinationURL: real)
+        let pid = Int(ProcessInfo.processInfo.processIdentifier)
+        try Data(#"{ "pid": \#(pid), "sessionId": "s", "cwd": "/tmp/x", "startedAt": 1000 }"#.utf8)
+            .write(to: real.appendingPathComponent("sessions/1.json"))
+        let sessions = ClaudeSessionStore.load(accounts: [(id: "principal", directory: atalho)], defaultDirectory: real)
+        #expect(sessions.count == 1)
+        #expect(sessions.first?.accountId == "principal")
+    }
+
     @Test func renderTambemESoLeitura() {
         #expect(Monitor.isReadOnly(arguments: ["app", "--render=panel:fila", "out.png"], environment: [:]))
         #expect(Monitor.isReadOnly(arguments: ["app", "--preview=settings:contas"], environment: [:]))

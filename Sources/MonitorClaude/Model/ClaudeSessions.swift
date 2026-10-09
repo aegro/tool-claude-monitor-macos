@@ -42,7 +42,11 @@ enum ClaudeSessionStore {
         var seen = Set<pid_t>()
         var out: [ClaudeSession] = []
         var dirs: [(String?, URL)] = accounts.map { ($0.id, $0.directory) }
-        if !dirs.contains(where: { $0.1.standardizedFileURL == defaultDirectory.standardizedFileURL }) {
+        // Resolve symlinks first: an account `dir` that aliases `~/.claude` is the same folder, and scanning it
+        // as the nil account first would win the pid dedup and drop the account marker.
+        func canonical(_ url: URL) -> URL { url.resolvingSymlinksInPath().standardizedFileURL }
+        let defaultCanonical = canonical(defaultDirectory)
+        if !dirs.contains(where: { canonical($0.1) == defaultCanonical }) {
             dirs.insert((nil, defaultDirectory), at: 0)
         }
         for (id, dir) in dirs {

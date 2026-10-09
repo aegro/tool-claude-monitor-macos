@@ -292,3 +292,77 @@ enum Clipboard {
         NSPasteboard.general.setString(text, forType: .string)
     }
 }
+
+/// A cursor for a region: the grab hand over a drag handle. A tracking area that is active always, because the
+/// menu bar panel is often not the key window and AppKit's cursor rects only work in the key window. It takes no
+/// clicks or drags, so the SwiftUI gestures under it keep working.
+struct CursorRegion: NSViewRepresentable {
+    var cursor: NSCursor
+
+    func makeNSView(context: Context) -> CursorView { CursorView(cursor: cursor) }
+
+    func updateNSView(_ view: CursorView, context: Context) { view.cursor = cursor }
+
+    final class CursorView: NSView {
+        var cursor: NSCursor
+        private var inside = false
+
+        init(cursor: NSCursor) {
+            self.cursor = cursor
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { nil }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero,
+                                           options: [.cursorUpdate, .mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+                                           owner: self))
+        }
+
+        override func cursorUpdate(with event: NSEvent) { cursor.set() }
+        override func mouseEntered(with event: NSEvent) { inside = true; cursor.set() }
+        override func mouseMoved(with event: NSEvent) { if inside { cursor.set() } }
+        override func mouseExited(with event: NSEvent) { inside = false; NSCursor.arrow.set() }
+        override func resetCursorRects() { addCursorRect(bounds, cursor: cursor) }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+
+/// Holds the window to `height`, its top edge fixed, and reports how tall the screen it is on is. The menu bar
+/// window follows its content when it grows but not when it shrinks: a shorter panel then floats in the middle of
+/// a taller, transparent window, a hole under the menu bar.
+struct WindowSizer: NSViewRepresentable {
+    var height: CGFloat
+    var screenHeight: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let target = height.rounded()
+        let report = screenHeight
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            if let visible = window.screen?.visibleFrame.height { report(visible) }
+            let content = window.contentRect(forFrameRect: window.frame)
+            guard target > 0, abs(content.height - target) > 0.5 else { return }
+            let resized = NSRect(x: content.minX, y: content.maxY - target, width: content.width, height: target)
+            window.setFrame(window.frameRect(forContentRect: resized), display: true)
+        }
+    }
+}
+
+/// A view's measured height, for layouts that size one part from another.
+struct MeasuredHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+extension View {
+    /// Reports this view's height to `update` whenever it changes.
+    func measuringHeight(_ update: @escaping (CGFloat) -> Void) -> some View {
+        background(GeometryReader { Color.clear.preference(key: MeasuredHeight.self, value: $0.size.height) })
+            .onPreferenceChange(MeasuredHeight.self, perform: update)
+    }
+}

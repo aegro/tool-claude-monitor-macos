@@ -44,16 +44,15 @@ struct GeneralSettings: View {
                     ForEach(Settings.MenuBarStyle.allCases) { Text($0.label).tag($0.rawValue) }
                 }
                 .pickerStyle(.segmented)
-                Picker("Altura do painel", selection: $settings.panelSizeRaw) {
-                    ForEach(Settings.PanelSize.allCases) { Text($0.label).tag($0.rawValue) }
-                }
-                .pickerStyle(.segmented)
+            } footer: {
+                Text("O painel fica da altura do que cada aba mostra, até o espaço que a tela tem abaixo da barra de menu.")
+                    .font(Type.caption).foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Avisar quando o ritmo passar do sustentável", isOn: $settings.warnAtPace)
                 Toggle("Mostrar processos que não são do Claude", isOn: $settings.showOtherProcesses)
             } footer: {
-                Text("Manter desperto e a tampa fechada ficam no sol, no topo do painel.")
+                Text("Manter o Mac desperto, inclusive com a tampa fechada, fica no ícone da lua no topo do painel (vira um sol enquanto está ligado).")
                     .font(Type.caption).foregroundStyle(.secondary)
             }
         }

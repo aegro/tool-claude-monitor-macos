@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import IOKit.pwr_mgt
+import IOKit.ps
 
 /// Copia as duas funções do Vorssaint (estilo Amphetamine), exatamente:
 ///
@@ -33,6 +34,16 @@ final class KeepAwake: ObservableObject {
             case .h4: return "4 horas"
             case .h8: return "8 horas"
             case .indefinite: return "Indefinido"
+            }
+        }
+        /// The label on the panel's row of choices.
+        var short: String {
+            switch self {
+            case .h1: return "1 h"
+            case .h2: return "2 h"
+            case .h4: return "4 h"
+            case .h8: return "8 h"
+            case .indefinite: return "Sempre"
             }
         }
     }
@@ -93,6 +104,31 @@ final class KeepAwake: ObservableObject {
         return "Sono normal"
     }
     var active: Bool { awake || lidClosed }
+
+    /// "até 14:30", "até você desligar"; nil while the Mac sleeps normally.
+    var untilText: String? {
+        guard active else { return nil }
+        if let e = expiresAt { return "até \(Fmt.clock(e))" }
+        return "até você desligar"
+    }
+
+    /// One choice from the panel: nil lets the Mac sleep, a duration keeps it awake that long from now.
+    func choose(_ choice: Duration?) {
+        guard let choice else {
+            setAwake(false)
+            return
+        }
+        duration = choice   // re-arms the timer from now when it is already on
+        if !awake { setAwake(true) }
+    }
+
+    /// Running on the battery: the lid-closed mode then deserves a warning.
+    static var onBattery: Bool {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() as String?
+        else { return false }
+        return type == "Battery Power"
+    }
 
     // MARK: manter desperto (IOKit)
 

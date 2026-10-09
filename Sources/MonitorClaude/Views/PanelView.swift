@@ -13,6 +13,8 @@ struct PanelView: View {
     /// Set only by `--preview` and `--render`. It stays in the view: a screenshot run does not change the tab the
     /// menu bar app opens on.
     var initialTab: PanelTab?
+    /// Opens with the keep-awake card unfolded, for `--preview=awake` and `--render=awake`.
+    var initialAwakeOpen = false
     @State private var previewTab: PanelTab?
 
     private var tab: Binding<PanelTab> {
@@ -20,13 +22,37 @@ struct PanelView: View {
                 set: { if initialTab != nil { previewTab = $0 } else { tabRaw = $0.rawValue } })
     }
 
-    /// The panel keeps the height picked in the settings; the header and footer are fixed, the pane scrolls.
-    private var scrollHeight: CGFloat { settings.panelSize.height - 92 }
+    @State private var showAwake = false
+    @State private var paneNatural: CGFloat = 0
+    @State private var topHeight: CGFloat = 45
+    @State private var bottomHeight: CGFloat = 37
+    @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
+
+    /// The tallest the panel gets on a big screen, where a full-height column would only be harder to read.
+    static let maxHeight: CGFloat = 860
+
+    /// The pane is as tall as what the tab shows, up to the room the screen has below the menu bar; only then
+    /// it scrolls. Switching tabs resizes the panel, the way a popover follows its content.
+    private var paneHeight: CGFloat {
+        let room = min(screenHeight - 12, Self.maxHeight) - topHeight - bottomHeight
+        return min(max(paneNatural, 60), max(180, room))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Hairline()
+            VStack(spacing: 0) {
+                header
+                if showAwake {
+                    KeepAwakeCard(keep: keep) { withAnimation(.easeOut(duration: 0.15)) { showAwake = false } }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 10)
+                        .transition(.opacity)
+                } else if keep.active {
+                    KeepAwakeStrip(keep: keep) { withAnimation(.easeOut(duration: 0.15)) { showAwake = true } }
+                }
+                Hairline()
+            }
+            .measuringHeight { if abs(topHeight - $0) > 0.5 { topHeight = $0 } }
             ScrollView {
                 Group {
                     switch tab.wrappedValue {
@@ -37,13 +63,20 @@ struct PanelView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
+                .measuringHeight { if abs(paneNatural - $0) > 0.5 { paneNatural = $0 } }
             }
             .scrollIndicators(.automatic)
-            .frame(height: scrollHeight)
-            Hairline()
-            footer
+            .frame(height: paneHeight)
+            VStack(spacing: 0) {
+                Hairline()
+                footer
+            }
+            .measuringHeight { if abs(bottomHeight - $0) > 0.5 { bottomHeight = $0 } }
         }
         .frame(width: 380)
+        .background(WindowSizer(height: topHeight + paneHeight + bottomHeight) { visible in
+            if abs(screenHeight - visible) > 1 { screenHeight = visible }
+        })
         .background {
             // ⌘, opens the settings while the panel is up, like in any Mac app.
             Button("Ajustes") { openSettings() }
@@ -52,6 +85,7 @@ struct PanelView: View {
                 .accessibilityHidden(true)
         }
         .onAppear {
+            if initialAwakeOpen { showAwake = true }
             monitor.panelOpen = true
             Task { await monitor.refreshAccessIfDue() }
         }
@@ -69,7 +103,7 @@ struct PanelView: View {
         HStack(spacing: 4) {
             PanelTabs(selection: tab, dot: monitor.access.attention > 0 ? [.access] : [])
             Spacer(minLength: 6)
-            keepAwakeMenu
+            keepAwakeButton
             Menu {
                 Button("Ajustes…") { openSettings() }.keyboardShortcut(",", modifiers: .command)
                 Button("Monitor de Atividade") { monitor.revealInActivityMonitor() }
@@ -89,31 +123,20 @@ struct PanelView: View {
         .padding(.vertical, 8)
     }
 
-    private var keepAwakeMenu: some View {
-        Menu {
-            Toggle("Manter o Mac desperto", isOn: Binding(get: { keep.awake }, set: { keep.setAwake($0) }))
-            Menu("Duração") {
-                ForEach(KeepAwake.Duration.allCases) { d in
-                    Button {
-                        keep.duration = d
-                    } label: {
-                        if keep.duration == d { Label(d.label, systemImage: "checkmark") } else { Text(d.label) }
-                    }
-                }
-            }
-            .disabled(!keep.awake)
-            Toggle("Continuar com a tampa fechada", isOn: Binding(get: { keep.lidClosed }, set: { keep.setLidClosed($0) }))
-                .disabled(keep.busy)
+    /// The moon (or the sun, while the Mac is held awake) opens the keep-awake card under the header.
+    private var keepAwakeButton: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { showAwake.toggle() }
         } label: {
-            Image(systemName: keep.active ? "sun.max.fill" : "moon.zzz")
-                .font(.system(size: 12.5))
-                .foregroundStyle(keep.active ? Ink.ember : .secondary)
+            HeaderIcon {
+                Image(systemName: keep.active ? "sun.max.fill" : "moon.zzz")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(keep.active ? Ink.ember : .secondary)
+            }
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .frame(width: 26, height: 24)
-        .help(keep.active ? "Mantendo o Mac desperto · \(keep.stateText)" : "Manter o Mac desperto")
+        .buttonStyle(.plain)
+        .help(keep.active ? "Mac desperto \(keep.untilText ?? "")" : "Manter o Mac desperto")
+        .accessibilityLabel(keep.active ? "Mac desperto \(keep.untilText ?? "")" : "Manter o Mac desperto")
     }
 
     // MARK: footer
@@ -156,18 +179,22 @@ struct PanelView: View {
         .padding(.vertical, 8)
     }
 
-    /// When the numbers of the account in use were read, and a quiet retry. A failure only turns red when those
-    /// numbers are no longer current; a passing 429 stays grey.
+    /// When the numbers of the account in use were read, and a quiet retry. Grey while they are recent or the
+    /// server only asked for a pause; red once they are half an hour old.
     private var freshness: some View {
         let queue = monitor.accountQueue
         let seen = queue.entry(queue.newSessions())?.snapshot?.fetchedAt
             ?? queue.entries.compactMap { $0.snapshot?.fetchedAt }.max() ?? monitor.liveSeenAt
-        let current = seen.map { Date().timeIntervalSince($0) <= max(300, settings.usageIntervalSeconds * 2.5) } ?? false
+        let age = seen.map { Date().timeIntervalSince($0) } ?? 0
+        let current = age <= max(300, settings.usageIntervalSeconds * 2.5)
+        let pause = monitor.livePauseShown.flatMap { $0 > Date() ? $0 : nil }
         return HStack(spacing: 6) {
             if let seen {
-                Text(current ? "atualizado \(Fmt.ago(seen))" : "números de \(Fmt.stamp(seen))")
+                Text(current ? "atualizado \(Fmt.ago(seen))"
+                             : ["lido \(Fmt.ago(seen))", pause.map { "pausa até \(Fmt.clock($0))" }].compactMap { $0 }.joined(separator: " · "))
                     .font(Type.caption)
-                    .foregroundStyle(current ? Color.secondary.opacity(0.8) : Ink.alarm)
+                    // A pause the server asked for is expected, not an alarm; old numbers without one are.
+                    .foregroundStyle(age > 30 * 60 && pause == nil ? Ink.alarm : Color.secondary.opacity(0.8))
                     .help(monitor.usageError.map { "Última tentativa: \($0)" } ?? "Lido do servidor do Claude")
             }
             Button {

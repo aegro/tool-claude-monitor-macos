@@ -1052,13 +1052,12 @@ final class Monitor: ObservableObject {
     /// Takes an account out of the queue (see `AccountRouter.discard`): for an entry that should not be there, such
     /// as a second login into the same account.
     func removeAccount(_ id: String) async {
-        // The account's folder goes to the Trash: never under a session still running with it as its config directory.
-        let running = sessions.filter { $0.folderAccountId == id }.count
-        guard running == 0 else {
-            actionError = AccountQueue.removalBlocked(sessions: running)
-            return
-        }
-        await save { try AccountRouter.discard(id) }
+        // The account's folder goes to the Trash: never under a session still running with it as its config
+        // directory. Checked when the removal's turn comes, after the edits queued before it, not when the button
+        // was pressed: a session opened in between counts.
+        await save(unless: { [weak self] in
+            AccountQueue.removalBlocked(sessions: self?.sessions.filter { $0.folderAccountId == id }.count ?? 0)
+        }) { try AccountRouter.discard(id) }
         watchAgentsNow()
     }
 
@@ -1099,7 +1098,9 @@ final class Monitor: ObservableObject {
 
     /// One router edit at a time, then the config is read back into the panel right away. The usage stays as it
     /// was: an edit to the queue changes no number, and a fresh poll would only spend the endpoint.
-    private func save(_ change: @escaping @Sendable () throws -> Void) async {
+    /// `unless`, when it returns a reason, cancels the edit at its turn and shows the reason instead.
+    private func save(unless blocked: (@MainActor () -> String?)? = nil,
+                      _ change: @escaping @Sendable () throws -> Void) async {
         // Edits run one after the other, in the order they were asked for: a second move made while the first is
         // still writing is applied after it, never dropped.
         pendingRouterSaves += 1
@@ -1107,6 +1108,10 @@ final class Monitor: ObservableObject {
         let previous = routerSaveTail
         let mine = Task { @MainActor in
             await previous?.value
+            if let reason = blocked?() {
+                actionError = reason
+                return
+            }
             do {
                 try await Blocking.runThrowing { try change() }
                 actionError = nil

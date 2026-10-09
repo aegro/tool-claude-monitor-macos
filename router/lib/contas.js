@@ -17,6 +17,7 @@ const ARQ_USO = path.join(DIR_ESTADO, 'uso.json');
 const ARQ_ESGOTADAS = path.join(DIR_ESTADO, 'esgotadas.json');
 const ARQ_TROCAS = path.join(DIR_ESTADO, 'trocas.jsonl');
 const ARQ_LOG = path.join(DIR_ESTADO, 'claude-auto.log');
+const DIR_AO_VIVO = path.join(DIR_ESTADO, 'ao-vivo');
 const URL_USO = 'https://api.anthropic.com/api/oauth/usage';
 const ARQ_CONSENTIMENTO = 'remote-settings-consent.json';
 
@@ -744,6 +745,48 @@ function python3() {
   return candidatos.find((c) => fs.existsSync(c) && !(stubDoMac(c) && !ferramentasDoXcode())) || null;
 }
 
+/**
+ * Os números de limite que uma sessão em stream-json acabou de receber do servidor (`rate_limit_event`, lido dos
+ * cabeçalhos da resposta), um arquivo por conta: o Monitor lê daqui sem gastar consulta ao `/usage`, que tem limite
+ * apertado. `usado` em porcentagem (o evento traz fração), `renovaEm` em ms.
+ */
+// O login de cada conta, relido no máximo uma vez por minuto: o evento chega a cada resposta e o login quase nunca
+// muda. Se mudar, por um minuto os números saem com o login anterior, e o Monitor os deixa de fora.
+const loginsLidos = new Map();
+function loginDaConta(id) {
+  const lido = loginsLidos.get(id);
+  if (lido && Date.now() - lido.em < 60000) return lido.chave;
+  let chave = null;
+  try { chave = identidade(id).chave; } catch {}
+  loginsLidos.set(id, { chave, em: Date.now() });
+  return chave;
+}
+
+function registrarLimiteAoVivo(id, info, agora = Date.now()) {
+  if (!id || !info || typeof info !== 'object') return null;
+  const janelas = {};
+  const anotar = (chave, utilizacao, renova) => {
+    if (typeof utilizacao !== 'number' || !Number.isFinite(utilizacao)) return;
+    janelas[chave] = {
+      usado: Math.round(Math.min(1, Math.max(0, utilizacao)) * 1000) / 10,
+      renovaEm: typeof renova === 'number' ? renova * 1000 : null,
+    };
+  };
+  for (const [chave, janela] of Object.entries(info.unifiedWindows || {})) {
+    if (janela && typeof janela === 'object') anotar(chave, janela.utilization, janela.resetsAt);
+  }
+  if (info.rateLimitType && !janelas[info.rateLimitType]) anotar(info.rateLimitType, info.utilization, info.resetsAt);
+  if (!Object.keys(janelas).length) return null;
+  // Só as janelas deste evento, todas com a hora dele: o Monitor junta cada uma à última leitura completa, que
+  // guarda as outras. Repetir aqui uma janela de um evento antigo a faria parecer nova.
+  const registro = { em: agora, conta: loginDaConta(id), status: info.status || null, janelas };
+  try {
+    fs.mkdirSync(DIR_AO_VIVO, { recursive: true });
+    escreverJson(path.join(DIR_AO_VIVO, `${id}.json`), registro);
+  } catch {}
+  return registro;
+}
+
 module.exports = {
   principal,
   python3,
@@ -782,6 +825,8 @@ module.exports = {
   lerEsgotadas,
   liberar,
   registrarTroca,
+  registrarLimiteAoVivo,
+  DIR_AO_VIVO,
   textoDaTroca,
   voltaConhecida,
   lerTrocas,

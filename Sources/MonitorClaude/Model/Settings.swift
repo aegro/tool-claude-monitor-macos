@@ -4,36 +4,11 @@ import AppKit
 import ServiceManagement
 
 /// User-tunable behaviour. Small on purpose: a monitor with a sprawling settings screen has
-/// lost the plot. Persisted in UserDefaults; the panel height and what the menu bar shows are
-/// the two things people actually want to change.
+/// lost the plot. Persisted in UserDefaults. The panel height is not one of them any more: it follows
+/// what each tab shows.
 @MainActor
 final class Settings: ObservableObject {
     static let shared = Settings()
-
-    enum PanelSize: String, CaseIterable, Identifiable {
-        case compact, tall, huge
-        var id: String { rawValue }
-        var preferred: CGFloat {
-            switch self {
-            case .compact: return 480
-            case .tall: return 660
-            case .huge: return 840
-            }
-        }
-
-        /// Never taller than the screen can show below the menu bar.
-        var height: CGFloat {
-            let ceiling = (NSScreen.main?.visibleFrame.height ?? 900) - 24
-            return min(preferred, max(360, ceiling))
-        }
-        var label: String {
-            switch self {
-            case .compact: return "Compacta"
-            case .tall: return "Alta"
-            case .huge: return "Máxima"
-            }
-        }
-    }
 
     enum MenuBarStyle: String, CaseIterable, Identifiable {
         case sessionLimit, cpu, both
@@ -47,14 +22,12 @@ final class Settings: ObservableObject {
         }
     }
 
-    @AppStorage("panelSize") var panelSizeRaw = PanelSize.tall.rawValue
     @AppStorage("menuBarStyle") var menuBarStyleRaw = MenuBarStyle.sessionLimit.rawValue
     @AppStorage("showOtherProcesses") var showOtherProcesses = true
     @AppStorage("warnAtPace") var warnAtPace = true
     @AppStorage("usageIntervalSeconds") var usageIntervalSeconds = 120.0
     @AppStorage("launchAtLogin") var launchAtLogin = false
 
-    var panelSize: PanelSize { PanelSize(rawValue: panelSizeRaw) ?? .tall }
     var menuBarStyle: MenuBarStyle { MenuBarStyle(rawValue: menuBarStyleRaw) ?? .sessionLimit }
 
     func applyLaunchAtLogin() {

@@ -12,7 +12,10 @@ enum Renderer {
         switch target {
         case .panel(let tab):
             view = AnyView(PanelView(monitor: monitor, initialTab: tab))
-            size = NSSize(width: 380, height: Settings.shared.panelSize.height)
+            size = NSSize(width: 380, height: PanelView.maxHeight)
+        case .awake:
+            view = AnyView(PanelView(monitor: monitor, initialTab: .accounts, initialAwakeOpen: true))
+            size = NSSize(width: 380, height: PanelView.maxHeight)
         case .settings(let tab):
             monitor.settingsTab = tab
             view = AnyView(SettingsWindow(monitor: monitor))

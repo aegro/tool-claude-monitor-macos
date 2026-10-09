@@ -10,6 +10,8 @@ struct AccountsPane: View {
 
     @State private var expanded: String?
     @State private var dragging: String?
+    /// The row (or the divider, as "divider") a dragged account would land on, for the insertion line.
+    @State private var dropTarget: String?
 
     var body: some View {
         let queue = monitor.accountQueue
@@ -47,6 +49,13 @@ struct AccountsPane: View {
                     ForEach(Array(queue.reserve.enumerated()), id: \.element.id) { i, entry in
                         row(entry, index: queue.route.count + 1 + i, inUse: inUse, next: next, queue: queue)
                     }
+                }
+                // A drag dropped outside the list never reaches `performDrop`: the first move of the mouse with the
+                // button up ends it, so the row does not stay faded.
+                .onContinuousHover { _ in
+                    guard dragging != nil, NSEvent.pressedMouseButtons == 0 else { return }
+                    dragging = nil
+                    dropTarget = nil
                 }
                 addButton
             }
@@ -97,12 +106,17 @@ struct AccountsPane: View {
                    monitor: monitor) {
             withAnimation(.easeOut(duration: 0.15)) { expanded = expanded == entry.id ? nil : entry.id }
         }
-        .opacity(dragging == entry.id ? 0.5 : 1)
+        .opacity(dragging == entry.id ? 0.45 : 1)
+        .overlay(alignment: landingEdge(index, queue: queue) == .top ? .top : .bottom) {
+            insertionLine(visible: dropTarget == entry.id, edge: landingEdge(index, queue: queue))
+        }
         .onDrag {
             dragging = entry.id
             return NSItemProvider(object: entry.id as NSString)
         }
-        .onDrop(of: [UTType.text], delegate: QueueDrop(targetIndex: index, monitor: monitor, dragging: $dragging))
+        .onDrop(of: [UTType.text], delegate: QueueDrop(targetIndex: index, targetId: entry.id, monitor: monitor,
+                                                       allowed: moves(to: index, queue: queue),
+                                                       dragging: $dragging, dropTarget: $dropTarget))
         .contextMenu { menu(entry, index: index, queue: queue) }
     }
 
@@ -121,7 +135,9 @@ struct AccountsPane: View {
             Divider()
         }
         if queue.configured {
-            if !entry.hasLogin {
+            if !entry.hasLogin, entry.loginRefused {
+                Button("Ler de novo") { Task { await monitor.readAgain() } }
+            } else if !entry.hasLogin {
                 Button("Autorizar de novo…") { monitor.startReauthorize(entry.id, agents: false); openSettings() }
             }
             if entry.hasLogin, !entry.agentsLogin {
@@ -145,8 +161,33 @@ struct AccountsPane: View {
                 .mask(HStack(spacing: 3) { ForEach(0..<80, id: \.self) { _ in Rectangle().frame(width: 3) } })
         }
         .contentShape(Rectangle())
-        .onDrop(of: [UTType.text], delegate: QueueDrop(targetIndex: index, monitor: monitor, dragging: $dragging))
+        .overlay(alignment: landingEdge(index, queue: queue) == .top ? .top : .bottom) {
+            insertionLine(visible: dropTarget == "divider", edge: landingEdge(index, queue: queue))
+        }
+        .onDrop(of: [UTType.text], delegate: QueueDrop(targetIndex: index, targetId: "divider", monitor: monitor,
+                                                       allowed: moves(to: index, queue: queue),
+                                                       dragging: $dragging, dropTarget: $dropTarget))
         .accessibilityElement(children: .combine)
+    }
+
+    private func insertionLine(visible: Bool, edge: VerticalEdge) -> some View {
+        Capsule().fill(Ink.ember).frame(height: 2).padding(.horizontal, 4).offset(y: edge == .top ? -2 : 2)
+            .opacity(visible ? 1 : 0).allowsHitTesting(false)
+    }
+
+    /// Where the dragged account would land if dropped on `index`, and whether that changes the queue.
+    private func landing(_ index: Int, queue: AccountQueue) -> AccountQueue.Landing? {
+        guard let id = dragging else { return nil }
+        let route = queue.route.map(\.id)
+        return AccountQueue.landing(route + queue.reserve.map(\.id), reserveFrom: route.count, id: id, on: index)
+    }
+
+    private func landingEdge(_ index: Int, queue: AccountQueue) -> VerticalEdge {
+        landing(index, queue: queue)?.below == true ? .bottom : .top
+    }
+
+    private func moves(to index: Int, queue: AccountQueue) -> Bool {
+        landing(index, queue: queue)?.changes == true
     }
 
     private var addButton: some View {
@@ -186,21 +227,36 @@ struct AccountsPane: View {
     }
 }
 
-/// Drops a dragged account at `targetIndex` of the combined list (route, divider, reserve).
+/// Drops a dragged account at `targetIndex` of the combined list (route, divider, reserve), drawing the
+/// insertion line where it would land while the drag hovers the target. A drop that would change nothing, or
+/// empty the route, is refused instead of failing after the fact.
 private struct QueueDrop: DropDelegate {
     let targetIndex: Int
+    let targetId: String
     let monitor: Monitor
+    let allowed: Bool
     @Binding var dragging: String?
+    @Binding var dropTarget: String?
 
     func performDrop(info: DropInfo) -> Bool {
-        guard let id = dragging else { return false }
+        dropTarget = nil
+        let id = dragging
         dragging = nil
+        guard let id, allowed else { return false }
         Task { @MainActor in await monitor.moveAccount(id, to: targetIndex) }
         return true
     }
 
-    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
-    func dropExited(info: DropInfo) {}
+    func dropEntered(info: DropInfo) {
+        guard allowed else { return }
+        withAnimation(.easeOut(duration: 0.1)) { dropTarget = targetId }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: allowed ? .move : .forbidden) }
+
+    func dropExited(info: DropInfo) {
+        if dropTarget == targetId { withAnimation(.easeOut(duration: 0.1)) { dropTarget = nil } }
+    }
 }
 
 /// One account in the queue: who it is, its state, the two windows, and a line of context. Clicking opens the
@@ -225,10 +281,11 @@ struct AccountRow: View {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.tertiary)
-                    .frame(width: 12)
-                    .padding(.top, 7)
+                    .frame(width: 14, height: 26)
+                    .contentShape(Rectangle())
+                    .overlay { if draggable { CursorRegion(cursor: .openHand) } }
                     .opacity(draggable ? (hovering ? 1 : 0.55) : 0)
-                    .help("Arraste para mudar a ordem")
+                    .help(draggable ? "Arraste para mudar a ordem" : "")
                 Avatar(monogram: entry.monogram, active: inUse)
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
@@ -280,7 +337,7 @@ struct AccountRow: View {
         if exhausted {
             StateChip(text: "esgotada", tone: .gone)
         } else if !entry.hasLogin {
-            StateChip(text: "sem login", tone: .gone)
+            StateChip(text: entry.loginRefused ? "sem acesso" : "sem login", tone: .gone)
         } else if inUse {
             StateChip(text: "em uso", tone: .inUse)
         } else if next {
@@ -292,10 +349,13 @@ struct AccountRow: View {
         if let until = entry.exhaustedUntil, until > Date() {
             return "volta às \(Fmt.stamp(until)) · " + renewals
         }
+        if !entry.hasLogin, entry.loginRefused { return "o macOS não liberou o login: Ler de novo em Acessos" }
         if !entry.hasLogin { return "sem login: autorize de novo nos Ajustes" }
         var parts = [renewals]
-        // Numbers this old say so: the server can go quiet on an account (429) for hours.
-        if let at = entry.snapshot?.fetchedAt, Date().timeIntervalSince(at) > 15 * 60 { parts.append("lido \(Fmt.ago(at))") }
+        // Numbers this old say so, and why when the reason is known.
+        if let at = entry.snapshot?.fetchedAt, Date().timeIntervalSince(at) > 15 * 60 {
+            parts.append(entry.loginIdle ? "lido \(Fmt.ago(at)), volta na próxima sessão nela" : "lido \(Fmt.ago(at))")
+        }
         if entry.sessions > 0 { parts.append(entry.sessions == 1 ? "1 sessão aqui" : "\(entry.sessions) sessões aqui") }
         if entry.runsAgents, bgAgents { parts.append("agentes aqui") }
         if !entry.agentsLogin, bgAgents { parts.append("agentes sem login nesta conta") }

@@ -20,6 +20,10 @@ struct AccountQueue: Equatable {
         var runsAgents = false
         /// This entry is the account whose numbers the Monitor reads live.
         var isLive = false
+        /// Its token expired for lack of use: the numbers wait for the next session on it.
+        var loginIdle = false
+        /// macOS was asked to let its login be read and refused (or nobody answered): "Ler de novo" asks again.
+        var loginRefused = false
 
         var headroom: Double? { snapshot.map { AccountRouter.headroom($0) } }
     }
@@ -95,6 +99,25 @@ struct AccountQueue: Equatable {
         let reserve = list[list.index(after: split)...].compactMap { $0 }
         guard !route.isEmpty else { return nil }
         return (route, reserve)
+    }
+
+    /// Dropping `id` on the row (or the divider) at `index` of the combined list: on which edge of the target it
+    /// lands, and whether the drop changes anything. Coming from above, `moving` puts the account after the target
+    /// (at the head of the reserve, for the divider); from below, before it. A drop that keeps the order, or would
+    /// leave the route empty, changes nothing and is refused.
+    struct Landing: Equatable {
+        var below: Bool
+        var changes: Bool
+    }
+
+    static func landing(_ ids: [String], reserveFrom divider: Int, id: String, on index: Int) -> Landing? {
+        guard let from = ids.firstIndex(of: id) else { return nil }
+        let slot = from >= divider ? from + 1 : from
+        let split = min(max(divider, 0), ids.count)
+        let changes = moving(ids, reserveFrom: divider, id: id, to: index).map {
+            $0.route != Array(ids[..<split]) || $0.reserve != Array(ids[split...])
+        } ?? false
+        return Landing(below: slot < index, changes: changes)
     }
 
     // MARK: words

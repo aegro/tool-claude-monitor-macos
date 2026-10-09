@@ -338,6 +338,7 @@ enum AccessAction: Equatable {
     case upgrade(cask: String)
     case readinessFix(id: String, params: [String: String])
     case copy(String)
+    case readAgain
 }
 
 struct AccessItem: Identifiable, Equatable {
@@ -377,10 +378,14 @@ enum AccessBuilder {
         var hasLogin: Bool
         /// nil when the agents never needed a login for this account (it is where the agents run, or no agents).
         var agentsLoginWorks: Bool?
+        /// The Keychain read of its login waits for "Ler de novo" after a refused or unanswered prompt.
+        var keychainRefused = false
     }
 
     struct Inputs {
         var claudeLoginProblem: String?
+        /// The problem is a Keychain prompt that was refused: the way out is to read again, not to log in.
+        var claudeLoginRetry = false
         var routerConfigProblem: String?
         var routerConfigURL: URL = AccountRouter.configURL
         var accounts: [Account] = []
@@ -397,14 +402,22 @@ enum AccessBuilder {
 
         if let problem = inputs.claudeLoginProblem {
             items.append(AccessItem(id: "claude.login", badge: "CC", title: "Login do Claude Code",
-                                    detail: problem, kind: .needsYou, action: .copy("claude"), actionLabel: "Copiar comando"))
+                                    detail: problem, kind: .needsYou,
+                                    action: inputs.claudeLoginRetry ? .readAgain : .copy("claude"),
+                                    actionLabel: inputs.claudeLoginRetry ? "Ler de novo" : "Copiar comando"))
         }
         if let problem = inputs.routerConfigProblem {
             items.append(AccessItem(id: "roteador.config", badge: "CA", title: "Config da troca de conta",
                                     detail: "\(problem). Até corrigir, a fila não aparece no Monitor.",
                                     kind: .needsYou, action: .openURL(inputs.routerConfigURL), actionLabel: "Abrir"))
         }
-        for account in inputs.accounts where !account.hasLogin {
+        for account in inputs.accounts where account.keychainRefused {
+            items.append(AccessItem(id: "conta.\(account.id).keychain", badge: AccountRouter.monogram(for: account.label),
+                                    title: "\(account.label): login no Keychain",
+                                    detail: "O macOS pediu para liberar o login desta conta e o pedido foi recusado ou ficou sem resposta. Clique em Ler de novo e autorize (Sempre Permitir, quando ele oferecer).",
+                                    kind: .needsYou, action: .readAgain, actionLabel: "Ler de novo"))
+        }
+        for account in inputs.accounts where !account.hasLogin && !account.keychainRefused {
             items.append(AccessItem(id: "conta.\(account.id)", badge: AccountRouter.monogram(for: account.label),
                                     title: "\(account.label) sem login",
                                     detail: "A troca não usa esta conta até você autorizar de novo.",

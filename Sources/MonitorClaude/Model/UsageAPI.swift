@@ -112,6 +112,8 @@ extension UsageSnapshot {
 enum UsageError: Error, LocalizedError {
     case unauthorized, forbidden, decode
     case http(Int)
+    /// HTTP 429, with the wait the server asked for (`Retry-After`), when it said.
+    case rateLimited(retryAfter: TimeInterval?)
     case transport(String)
 
     var errorDescription: String? {
@@ -119,10 +121,21 @@ enum UsageError: Error, LocalizedError {
         case .unauthorized: return "Token recusado. Rode o claude no terminal pra renovar o login."
         case .forbidden: return "Token sem o escopo user:profile."
         case .decode: return "Resposta da API em formato inesperado."
-        case .http(429): return "O servidor pediu uma pausa (429). O Monitor tenta de novo no próximo ciclo."
+        case .http(429), .rateLimited: return "O servidor pediu uma pausa (429). O Monitor espera o tempo pedido antes de ler de novo."
         case .http(let c): return "A API respondeu \(c)."
         case .transport(let m): return m
         }
+    }
+
+    /// `Retry-After` in seconds or as an HTTP date.
+    static func retryAfter(_ value: String?, now: Date = Date()) -> TimeInterval? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+        if let seconds = TimeInterval(value) { return max(0, seconds) }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "GMT")
+        f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return f.date(from: value).map { max(0, $0.timeIntervalSince(now)) }
     }
 }
 
@@ -149,6 +162,7 @@ enum UsageAPI {
         case 200: break
         case 401: throw UsageError.unauthorized
         case 403: throw UsageError.forbidden
+        case 429: throw UsageError.rateLimited(retryAfter: UsageError.retryAfter(http.value(forHTTPHeaderField: "Retry-After")))
         default: throw UsageError.http(http.statusCode)
         }
 

@@ -42,6 +42,8 @@ struct PreviewApp: App {
             switch target {
             case .panel(let tab):
                 PanelView(monitor: monitor, initialTab: tab)
+            case .awake:
+                PanelView(monitor: monitor, initialTab: .accounts, initialAwakeOpen: true)
             case .settings(let tab):
                 SettingsWindow(monitor: monitor).onAppear { monitor.settingsTab = tab }
             case .wizard(let step):
@@ -58,6 +60,8 @@ struct PreviewApp: App {
 
 enum PreviewTarget {
     case panel(PanelTab?)
+    /// The panel with the keep-awake card open.
+    case awake
     case settings(SettingsTab)
     case wizard(AddAccountFlow.Step)
 
@@ -68,6 +72,7 @@ enum PreviewTarget {
         let detail = parts.count > 1 ? parts[1] : ""
         switch kind {
         case "settings": self = .settings(SettingsTab(rawValue: detail) ?? .general)
+        case "awake": self = .awake
         case "wizard":
             let steps: [String: AddAccountFlow.Step] = ["choose": .choose, "authorize": .authorize, "connected": .connected,
                                                         "agents": .agents, "place": .place, "done": .done]

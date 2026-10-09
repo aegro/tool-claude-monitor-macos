@@ -55,3 +55,48 @@ enum FeedArbiter {
             .max { ($0.at, $1.org) < ($1.at, $0.org) }
     }
 }
+
+/// What the terminal poll does on one round, as a pure function of what it holds: the live numbers a stream session
+/// received, the last numbers read, when `/usage` last answered, and any pause the server asked for.
+///
+/// The rules, in order:
+///
+/// 1. **Fresh live numbers, and no whole read due (or a pause asked for):** take them, no request. They are seconds
+///    old while a session works, and they spend nothing of the endpoint's tight limit.
+/// 2. **A pause asked for:** no request. Live numbers newer than the last read still go in, wearing their age.
+/// 3. **Otherwise ask `/usage`.** If that fails, the live numbers stand in the same way.
+enum TerminalPlan: Equatable {
+    /// What to do with the live numbers when no whole read lands this round.
+    enum Live: Equatable {
+        /// Newer than anything held and recent: shown as live.
+        case current
+        /// Newer than anything held but not recent: shown with their age, the feed still not live.
+        case older
+        /// Nothing newer than what is held.
+        case none
+    }
+
+    case takeLive
+    case wait(until: Date, live: Live)
+    case read(otherwise: Live)
+
+    /// `lastAttempt` is when a whole read was last tried, answered or not: a failing read waits its turn too.
+    static func plan(live: Date?, held: Date?, lastAttempt: Date?, pause: Date?, now: Date,
+                     interval: TimeInterval) -> TerminalPlan {
+        let liveState: Live
+        if let live, live > (held ?? .distantPast) {
+            liveState = now.timeIntervalSince(live) < max(60, interval) ? .current : .older
+        } else {
+            liveState = .none
+        }
+        let fullDue = lastAttempt.map { now.timeIntervalSince($0) >= fullReadInterval(interval) } ?? true
+        let paused = pause.flatMap { $0 > now ? $0 : nil }
+        if liveState == .current, !fullDue || paused != nil { return .takeLive }
+        if let paused { return .wait(until: paused, live: liveState) }
+        return .read(otherwise: liveState)
+    }
+
+    /// How often a whole `/usage` read runs while live numbers keep arriving: those carry only the session and the
+    /// weekly window, and this read brings the per-model windows and the extra credit.
+    static func fullReadInterval(_ interval: TimeInterval) -> TimeInterval { max(600, interval) }
+}

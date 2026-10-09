@@ -25,11 +25,11 @@ O cask entrega o mesmo `.app` assinado e notarizado publicado em [Releases](http
 
 Baixe o `.zip` mais recente em [Releases](https://github.com/aegro/tool-claude-monitor-macos/releases), descompacte e arraste **Monitor Claude.app** para `/Applications`. Abra com `open -a "Monitor Claude"`.
 
-### O prompt do Keychain na primeira vez
+### Sem prompt do Keychain
 
-Ao abrir pela primeira vez, o macOS pergunta uma única vez se o app pode ler a entrada `Claude Code-credentials`, que guarda o token de login do seu terminal. Digite a senha do Keychain e clique **Sempre Permitir**.
+O app lê o login do Claude Code pelo `/usr/bin/security`, do mesmo jeito que o próprio Claude Code lê: quem grava a entrada `Claude Code-credentials` é o `security`, então ele sempre tem acesso e o macOS não pede a senha. Antes, o app lia como ele mesmo e precisava do **Sempre Permitir**; a cada renovação do login a permissão podia cair e o pedido de senha voltava.
 
-Como o app é assinado com o Developer ID da Aegro, que tem Team ID estável, essa permissão gruda de vez e não volta a perguntar nem depois de atualizar. Esse primeiro prompt é inevitável: quem cria o item é o Claude Code, não o Monitor, então o app não tem como se pré-autorizar.
+Se algum dia o macOS pedir, ele pede uma vez. Recusou, ou deixou o pedido sem resposta por um minuto: o app não pergunta de novo sozinho e mostra em **Acessos** o botão **Ler de novo** (o mesmo do ↻ no rodapé). Com o Keychain bloqueado, ele tenta outra vez em 5 minutos. A leitura roda fora da tela, então um pedido aberto não trava o painel.
 
 ### Compilar do fonte (desenvolvimento)
 
@@ -48,7 +48,7 @@ cd tool-claude-monitor-macos
 ./scripts/test.sh    # roda a suíte (funciona sem o Xcode completo)
 ```
 
-O build de dev pede dois prompts na primeira vez, ambos com **Sempre Permitir**: o `codesign` pede a chave privada do certificado, e o macOS pergunta pelo acesso ao Keychain. Diferente do release notarizado, a identidade autoassinada não tem Team ID, então o prompt do Keychain pode voltar a cada relaunch. É o preço de compilar localmente.
+Na primeira vez, o `codesign` pede a chave privada do certificado de dev (**Sempre Permitir**). O Keychain não pergunta nada, nem no build de dev.
 
 ## O que o painel mostra
 
@@ -58,11 +58,11 @@ O ícone na barra de menu traz a porcentagem da janela de 5h. Um ponto laranja a
 - **Sessões**: cada sessão do Claude com a conta em que roda, CPU, memória, tokens (estimativa local) e tudo o que ela abriu, aninhado embaixo dela, inclusive processos reparentados para o launchd que outros monitores mostram soltos. Os Chrome abertos por uma sessão aparecem dentro dela, com o nome do perfil. **Encerrar** derruba um processo, uma subárvore ou a sessão inteira; `⌥` força (SIGKILL).
 - **Acessos**: o que precisa de você para o Claude Code seguir funcionando. Entram o login do terminal, as contas sem login, o login dos agentes, os conectores que pedem login *e* que você usou nos últimos 7 dias, versões novas do Claude Code e do Monitor no Homebrew e, com o painel de prontidão do workspace instalado, gcloud, AWS, GitHub e Docker. Conector que pede login sem ter sido usado fica quieto, num resumo.
 
-A engrenagem abre os **Ajustes** (`⌘,`), com as abas Geral, Contas, Integrações e Avançado.
+O painel fica da altura do que cada aba mostra, até o espaço que a tela tem abaixo da barra de menu; só então ele rola. A engrenagem abre os **Ajustes** (`⌘,`), com as abas Geral, Contas, Integrações e Avançado.
 
 ## Manter o Mac desperto
 
-O botão da lua, no topo do painel, replica as duas funções do Vorssaint, no estilo do Amphetamine:
+A lua, no topo do painel, abre um cartão com as duas funções do Vorssaint, no estilo do Amphetamine: uma fileira de escolhas (Desligado, 1 h, 2 h, 4 h, 8 h, Sempre) e a chave **Também com a tampa fechada**. Enquanto o Mac está desperto, a lua vira um sol e uma faixa fina sob as abas diz até quando, em qualquer aba.
 
 - **Manter desperto**: segura uma power assertion do IOKit (`PreventUserIdleSystemSleep`), o mesmo mecanismo do `caffeinate`. Não pede senha, aceita uma duração (1h, 2h, 4h, 8h ou indefinido) e desliga sozinho ao esgotar.
 - **Continuar com a tampa fechada**: usa `pmset disablesleep`, que exige root. Em vez de pedir a senha toda vez, o app instala uma única regra sudoers restrita a exatamente `pmset disablesleep 0|1`, validada com `visudo` e instalada como `root:wheel 0440`, com um prompt de admin na primeira vez. Nenhum outro comando fica liberado. Para remover: `sudo rm /etc/sudoers.d/monitor-claude-clamshell`.
@@ -109,6 +109,17 @@ Isso é deliberado. A Anthropic rotaciona o refresh token a cada uso, então doi
 
 O app relê o Keychain quando o token está perto de vencer, momento em que o CLI já gravou um novo, e usa o token fresco. Se ele estiver vencido e o `claude` não roda há algumas horas, o painel avisa que a sessão expirou até você rodar o `claude` uma vez.
 
+### Números ao vivo, sem gastar consulta
+
+O endpoint `/api/oauth/usage` tem limite apertado e responde 429 com facilidade: o Claude Code, o roteador e o Monitor consultam com o mesmo login. Por isso o Monitor usa, primeiro, o que já chegou de graça:
+
+- **Sessões no VS Code e no T3**, com a integração ligada: o `claude-auto` recebe, a cada resposta do servidor, os números de limite da sessão (o `rate_limit_event` do stream) e grava em `~/.claude-accounts/.estado/ao-vivo/<conta>.json`, junto com o login a que eles pertencem. O Monitor lê dali, com segundos de atraso enquanto uma sessão trabalha, e nem consulta o endpoint. Números gravados com outro login (a conta foi trocada desde então) ficam de fora.
+- **Uma leitura completa a cada 10 minutos**, mesmo com os números ao vivo chegando: o evento traz só a sessão de 5h e a semana, e é essa leitura que traz as janelas por modelo e o crédito extra. Se ela falhar, os números ao vivo continuam valendo.
+- **A leitura do roteador** (`.estado/uso.json`), quando é mais nova que a do Monitor.
+- Depois de um 429, o Monitor espera o `Retry-After` que o servidor mandou (ou um tempo que dobra a cada 429 seguido) e respeita a pausa que o roteador já recebeu, em vez de consultar de novo e esticar a pausa. O rodapé diz até quando. Durante a pausa, números ao vivo mais novos que a última leitura entram mesmo assim, com a idade deles no rodapé.
+
+Conta extra que ficou horas sem sessão fica com o login vencido. Só uma sessão renova o login (o Monitor nunca renova), então os números dela esperam a próxima sessão, e o painel diz isso na linha da conta.
+
 ### Quando o login do terminal morre, o app do Claude assume
 
 Só o `claude` no terminal renova esse token. Quem passou a usar o Claude Code pelo app desktop para de renová-lo, e o Monitor ficaria cego por tempo indeterminado.
@@ -137,7 +148,7 @@ O resultado é uma partição exata: cada processo cai em um único balde, nada 
 
 O app lê o Keychain, os arquivos em `~/.claude/`, o histórico de uso que o app desktop do Claude grava em `~/Library/Application Support/Claude/`, e a tabela de processos do seu usuário. Ele fala com um único endpoint, `api.anthropic.com/api/oauth/usage`, o mesmo do comando `/usage`. O token sai da máquina apenas nesse GET, como Bearer.
 
-Com o roteador configurado, o app também lê as credenciais das contas de `~/.claude-accounts` pelo `/usr/bin/security`, consulta o mesmo endpoint com cada uma e lê o cache de leituras do roteador (`.estado/uso.json`), para não repetir uma consulta que ele acabou de fazer. Em `~/.claude-accounts/config.json`, escreve só a fila (`rota`, `reserva`, `preferida`), a chave `ativo` e o nome e a sigla de cada conta (`nome`, `sigla`). O assistente de contas roda os comandos do próprio roteador (`claude-accounts add` e `login`), e o login acontece no navegador, direto com o Claude.
+Com o roteador configurado, o app também lê as credenciais das contas de `~/.claude-accounts` pelo `/usr/bin/security`, consulta o mesmo endpoint com cada uma e lê o cache de leituras do roteador (`.estado/uso.json`) e os limites ao vivo das sessões (`.estado/ao-vivo/`), para não repetir uma consulta que já foi feita. Em `~/.claude-accounts/config.json`, escreve só a fila (`rota`, `reserva`, `preferida`), a chave `ativo` e o nome e a sigla de cada conta (`nome`, `sigla`). O assistente de contas roda os comandos do próprio roteador (`claude-accounts add` e `login`), e o login acontece no navegador, direto com o Claude.
 
 Quando você liga uma integração, o app edita o `~/.zshrc` (só o bloco dele) ou a chave `claudeCode.claudeProcessWrapper` do `settings.json` do VS Code, guardando a versão de antes da primeira edição em `<arquivo>.monitor-claude.bak` quando o arquivo já existia (o que o app cria do zero não tem cópia).
 
@@ -158,11 +169,11 @@ BIN="/Applications/Monitor Claude.app/Contents/MacOS/MonitorClaude"
 "$BIN" --render=panel:accounts tela.png --dark --wait=6   # desenha a tela num PNG, sem janela
 ```
 
-As abas são `accounts`, `sessions` e `access` no painel e `general`, `accounts`, `integrations` e `advanced` nos Ajustes; os passos do assistente são `choose`, `authorize`, `connected`, `agents`, `place` e `done`. Os modos de prévia não trocam o login dos agentes nem gravam histórico. `MONITOR_CLAUDE_KEYCHAIN_VIA_SECURITY=1` faz o binário de dev ler o Keychain pelo `/usr/bin/security`, sem prompt; `CLAUDE_AUTO_HOME`, `CLAUDE_ACCOUNTS_BIN`, `MONITOR_CLAUDE_ZSHRC`, `MONITOR_CLAUDE_VSCODE_SETTINGS` e `MONITOR_CLAUDE_READINESS_DIR` apontam o app para outras pastas, que é como os testes funcionais rodam.
+`--preview=awake` e `--render=awake` abrem o painel com o cartão de manter desperto aberto. As abas são `accounts`, `sessions` e `access` no painel e `general`, `accounts`, `integrations` e `advanced` nos Ajustes; os passos do assistente são `choose`, `authorize`, `connected`, `agents`, `place` e `done`. Os modos de prévia não trocam o login dos agentes nem gravam histórico. `CLAUDE_AUTO_HOME`, `CLAUDE_ACCOUNTS_BIN`, `MONITOR_CLAUDE_ZSHRC`, `MONITOR_CLAUDE_VSCODE_SETTINGS` e `MONITOR_CLAUDE_READINESS_DIR` apontam o app para outras pastas, que é como os testes funcionais rodam.
 
 ## Publicar um release (mantenedores)
 
-O app distribuído é assinado com um **Developer ID Application** da conta Apple Developer da Aegro e notarizado pela Apple. É isso que faz o “Sempre Permitir” grudar para qualquer usuário. O release oficial roda só no CI, e a chave privada nunca sai dos secrets do repositório.
+O app distribuído é assinado com um **Developer ID Application** da conta Apple Developer da Aegro e notarizado pela Apple, o que deixa o Gatekeeper abrir o app sem aviso. O release oficial roda só no CI, e a chave privada nunca sai dos secrets do repositório.
 
 Publicar é empurrar uma tag `v*`:
 

@@ -378,23 +378,7 @@ enum AccountRouter {
     }
 
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", keychainService(for: account), "-w"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let stop = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: stop)
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        stop.cancel()
-        process.waitUntilExit()
-        guard process.terminationReason == .exit, process.terminationStatus == 0,
-              let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let root = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
-        else { return nil }
-        return try? Keychain.parse(root)
+        try? Keychain.credentials(service: keychainService(for: account), timeout: timeout)
     }
 
     // MARK: state
@@ -443,6 +427,81 @@ enum AccountRouter {
             out[id] = RouterReading(snapshot: snap, waitUntil: date(entry["esperarAte"]))
         }
         return out
+    }
+
+    static var liveLimitsDirectory: URL { home.appendingPathComponent(".estado/ao-vivo") }
+
+    /// What a stream session last received for one account, and for which login (`conta`, the account and
+    /// organization pair), so numbers from a login that has since changed are never shown under the new one.
+    struct LiveLimits: Equatable {
+        var snapshot: UsageSnapshot
+        var key: String?
+    }
+
+    /// The limits a stream session (the VS Code extension or T3 through the router) last received for each account,
+    /// saved by the router as the response headers arrive: no `/usage` call spent, and seconds old while a session
+    /// is working.
+    static func liveLimits(in dir: URL = liveLimitsDirectory) -> [String: LiveLimits] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        var out: [String: LiveLimits] = [:]
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file), let live = parseLiveLimits(data) else { continue }
+            out[file.deletingPathExtension().lastPathComponent] = live
+        }
+        return out
+    }
+
+    static func parseLiveLimits(_ data: Data) -> LiveLimits? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let at = (root["em"] as? NSNumber)?.doubleValue,
+              let windows = root["janelas"] as? [String: Any]
+        else { return nil }
+        var snap = UsageSnapshot()
+        snap.fetchedAt = Date(timeIntervalSince1970: at / 1000)
+        for (key, kind) in [("five_hour", "session"), ("seven_day", "weekly_all")] {
+            guard let w = windows[key] as? [String: Any], let used = (w["usado"] as? NSNumber)?.doubleValue else { continue }
+            let resets = (w["renovaEm"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+            snap.windows.append(UsageAPI.window(kind: kind, model: nil, percent: used, resetsAt: resets,
+                                                severity: "normal", isActive: kind == "session"))
+        }
+        guard !snap.windows.isEmpty else { return nil }
+        UsageAPI.sortWindows(&snap)
+        return LiveLimits(snapshot: snap, key: root["conta"] as? String)
+    }
+
+    /// `base` with the session and weekly windows replaced by the live numbers, matched by what the window is (an
+    /// older stored snapshot names them `five_hour` and `seven_day`). The server's severity of an older read does
+    /// not carry over to new numbers, and a reset that already passed is dropped rather than kept. The per-model
+    /// windows and the extra credit stay as the last full read left them.
+    static func merging(_ live: UsageSnapshot, into base: UsageSnapshot?, now: Date = Date()) -> UsageSnapshot {
+        var out = base ?? UsageSnapshot()
+        for window in live.windows {
+            let same: (LimitWindow) -> Bool = window.isSession
+                ? { $0.isSession }
+                : { LimitWindow.weeklyAllKeys.contains($0.key) }
+            if let i = out.windows.firstIndex(where: same) {
+                out.windows[i].utilization = window.utilization
+                out.windows[i].severity = window.severity
+                if let resets = window.resetsAt {
+                    out.windows[i].resetsAt = resets
+                    out.windows[i].resetIsExact = true
+                } else if let old = out.windows[i].resetsAt, old <= now {
+                    out.windows[i].resetsAt = nil
+                }
+            } else {
+                out.windows.append(window)
+            }
+        }
+        out.fetchedAt = live.fetchedAt
+        out.source = .api
+        UsageAPI.sortWindows(&out)
+        return out
+    }
+
+    /// The freshest whole reading, with live numbers merged in when they are newer still.
+    static func combined(full: UsageSnapshot?, live: UsageSnapshot?) -> UsageSnapshot? {
+        guard let live, live.fetchedAt > (full?.fetchedAt ?? .distantPast) else { return full }
+        return merging(live, into: full)
     }
 
     static func exhausted(now: Date = Date()) -> [String: Date] {
@@ -498,7 +557,9 @@ enum AccountRouter {
         var status: Int32
         var output: String
         var error: String
-        var ok: Bool { status == 0 }
+        /// Stopped by the time limit, or ended by a signal, rather than exiting on its own.
+        var interrupted = false
+        var ok: Bool { status == 0 && !interrupted }
     }
 
     /// Runs `claude-accounts` with `arguments` and waits, off the main actor. The environment is the app's plus
@@ -526,30 +587,84 @@ enum AccountRouter {
         // Both pipes drain as the command writes, so one that fills stderr never blocks on it.
         let output = PipeCollector(out.fileHandleForReading)
         let errors = PipeCollector(err.fileHandleForReading)
+        // The time limit is kept by this thread, waiting for the exit with a deadline, not by a timer on a global
+        // queue: on a busy machine (the 3-core CI runner) that timer fired seconds late and the command outlived
+        // its limit.
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch {
             return CommandResult(status: 127, output: "", error: error.localizedDescription)
         }
         let pid = process.processIdentifier
-        let stop = DispatchWorkItem {
+        // Set when the limit stops the command, whatever its exit looks like: one that catches SIGTERM and exits 0
+        // still ran out of time, and its output is not an answer.
+        var timedOut = false
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            // `isRunning` comes from the same exit notice as the handler, so it lags just as much: a command that
+            // exited in time, with its notice still on the way, is not one that ran out of time.
+            timedOut = process.isRunning && !hasExited(pid)
+            if !timedOut {
+                // Exited in time, with only the notice late: there is nothing to stop, and the kernel has already
+                // sent the exit, so the notice comes. Bounded all the same, like every wait here; past it the
+                // status is unknown and the command reads as stopped.
+                if exited.wait(timeout: .now() + 30) == .timedOut {
+                    let deadline = DispatchTime.now() + 2
+                    return CommandResult(status: -1,
+                                         output: String(decoding: output.finish(by: deadline), as: UTF8.self),
+                                         error: String(decoding: errors.finish(by: deadline), as: UTF8.self),
+                                         interrupted: true)
+                }
+            }
+        }
+        if timedOut {
             // Remembered, because once `pid` exits its children belong to launchd and can no longer be found
             // under it; whatever ignored SIGTERM gets SIGKILL with the parent.
             let children = terminateDescendants(of: pid)
-            guard process.isRunning || !children.isEmpty else { return }
             if process.isRunning { process.terminate() }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+            let finish = {
                 let late = process.isRunning ? terminateDescendants(of: pid, signal: SIGKILL) : []
                 for child in children where !late.contains(child) && kill(child, 0) == 0 { kill(child, SIGKILL) }
                 if process.isRunning { kill(pid, SIGKILL) }
             }
+            if exited.wait(timeout: .now() + 2) == .timedOut {
+                finish()
+                // Not even SIGKILL ends a process stuck in uninterruptible I/O (a network volume), and its exit
+                // notice may never come: the wait is bounded too, so the caller is not held for good. Past it the
+                // command reads as stopped by the limit, without its status: read while Foundation believes the
+                // process still runs, it raises an Objective-C exception, which Swift cannot catch and which
+                // crashes the app.
+                if exited.wait(timeout: .now() + 5) == .timedOut {
+                    // It still holds both pipes, so no end of output is coming: only what is already on its way.
+                    let deadline = DispatchTime.now() + 0.2
+                    return CommandResult(status: -1,
+                                         output: String(decoding: output.finish(by: deadline), as: UTF8.self),
+                                         error: String(decoding: errors.finish(by: deadline), as: UTF8.self),
+                                         interrupted: true)
+                }
+            } else if !children.isEmpty {
+                reaper.asyncAfter(deadline: .now() + 2, execute: finish)
+            }
         }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: stop)
-        process.waitUntilExit()
-        stop.cancel()
         // A helper the command left behind can keep the pipes open after it exits: the output gets a moment to
-        // end, and then it is whatever arrived.
+        // end, one moment for both pipes, and then it is whatever arrived.
+        let deadline = DispatchTime.now() + 2
         return CommandResult(status: process.terminationStatus,
-                             output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
-                             error: String(decoding: errors.finish(waiting: 2), as: UTF8.self))
+                             output: String(decoding: output.finish(by: deadline), as: UTF8.self),
+                             error: String(decoding: errors.finish(by: deadline), as: UTF8.self),
+                             interrupted: timedOut || process.terminationReason == .uncaughtSignal)
+    }
+
+    /// Kills, two seconds on, the children of a timed-out command that ignored SIGTERM after the command itself
+    /// exited. A serial queue of its own, which gets a thread even while the global queues are busy.
+    private static let reaper = DispatchQueue(label: "monitor-claude.reaper", qos: .userInitiated)
+
+    /// Whether `pid` has exited, reaped or not. Read from the kernel, not from Foundation's exit notice: an exited
+    /// child no one has reaped yet is a zombie, which `proc_pidinfo` no longer finds (ESRCH) while `kill(pid, 0)`
+    /// still does. Only for a child of this process, whose pid cannot be reused before it is reaped.
+    static func hasExited(_ pid: pid_t) -> Bool {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == 0 && errno == ESRCH
     }
 
     /// Sends `signal` (SIGTERM by default) to everything under `pid`, deepest first, and leaves `pid` itself
@@ -682,6 +797,11 @@ struct RouterState: Equatable {
     var exhausted: [String: Date] = [:]
     var agentsLogins: Set<String> = []
     var switches: [AccountRouter.Switch] = []
+    /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while, and only a
+    /// session renews it (the Monitor never does). Their numbers stay as last read until then.
+    var idleLogins: Set<String> = []
+    /// Accounts whose Keychain read waits for "Ler de novo": macOS asked to let it through and got no, or no answer.
+    var keychainRefused: Set<String> = []
 
     func loginLabel(for id: String) -> String {
         guard available.contains(id) else { return "sem login: claude-accounts login \(id)" }
@@ -725,8 +845,9 @@ enum Blocking {
     }
 }
 
-/// Collects what arrives on a pipe as it arrives. `finish(waiting:)` waits up to that long for the end of the
-/// output and returns what came, so a pipe someone else still holds open never blocks the caller for good.
+/// Collects what arrives on a pipe as it arrives. `finish(by:)` waits until that deadline for the end of the
+/// output and returns what came, so a pipe someone else still holds open never blocks the caller for good. A
+/// deadline rather than a duration, so the two pipes of one command share it instead of adding up.
 final class PipeCollector: @unchecked Sendable {
     private var data = Data()
     private let lock = NSLock()
@@ -749,8 +870,8 @@ final class PipeCollector: @unchecked Sendable {
         }
     }
 
-    func finish(waiting seconds: TimeInterval) -> Data {
-        _ = ended.wait(timeout: .now() + seconds)
+    func finish(by deadline: DispatchTime) -> Data {
+        _ = ended.wait(timeout: deadline)
         handle.readabilityHandler = nil
         lock.lock()
         defer { lock.unlock() }

@@ -77,6 +77,7 @@ struct SessionsPane: View {
                     Sparkline(values: monitor.cpuTrail).frame(width: 46)
                     Text(Fmt.cpu(monitor.system.cpuPercent))
                         .font(Type.strong).monospacedDigit()
+                        .lineLimit(1).fixedSize()
                         .foregroundStyle(Ink.load(monitor.system.cpuPercent / 100))
                         .contentTransition(.numericText())
                 }
@@ -140,7 +141,7 @@ struct SessionsPane: View {
         let cpu = roots.reduce(0) { $0 + $1.subtreeCPU }
         let rss = roots.reduce(UInt64(0)) { $0 + $1.subtreeRSS }
         return VStack(alignment: .leading, spacing: 6) {
-            GroupTitle(title: "Chrome seu", trailing: "\(Fmt.cpu(cpu)) · \(Fmt.bytes(rss))")
+            GroupTitle(title: "Seu Chrome", trailing: "\(Fmt.cpu(cpu)) · \(Fmt.bytes(rss))")
             ProcTree(nodes: roots, monitor: monitor, expanded: $expanded, roleFor: Classify.role)
         }
     }

@@ -219,6 +219,52 @@ struct QueueAndAccountsTests {
         #expect(result.output.contains("antes"))
     }
 
+    /// The limit holds with every utility-QoS worker busy, the state of a 3-core CI runner: it is kept by the
+    /// waiting thread, not by a timer on a global queue that fires only when a worker frees up. What is measured
+    /// is when the SIGTERM lands, which the command records itself, not how long the cleanup after it takes: that
+    /// part is slow on the runner and is not the limit.
+    @Test func prazoValeComAsFilasGlobaisOcupadas() async throws {
+        let mark = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-sigterm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: mark) }
+        let spinUntil = Date().addingTimeInterval(3)
+        for _ in 0..<64 { DispatchQueue.global(qos: .utility).async { while Date() < spinUntil {} } }
+        let started = Date()
+        // The loop keeps the shell alive until its own SIGTERM: with `sleep 30 & wait` the child is signalled
+        // first and the shell can exit on its own before the trap ever runs.
+        let script = "trap \"touch '\(mark.path)'; exit 0\" TERM; while :; do sleep 0.05; done"
+        let result = await Blocking.run { AccountRouter.run(URL(fileURLWithPath: "/bin/sh"), ["-c", script], timeout: 0.3) }
+        let attributes = try FileManager.default.attributesOfItem(atPath: mark.path)
+        let signalled = try #require(attributes[.modificationDate] as? Date)
+        // A timer on a busy global queue would fire only when the spin ends, 3 s in.
+        #expect(signalled.timeIntervalSince(started) < 1.5)
+        #expect(result.interrupted)
+    }
+
+    /// A command that exits in time, with Foundation's exit notice late (the 3-core CI runner delays it by over a
+    /// second), is a zombie at the deadline: it has to read as exited, or its answer is thrown away as a timeout.
+    @Test func comandoQueSaiuMasNaoFoiColhidoContaComoEncerrado() throws {
+        var pid: pid_t = 0
+        var argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sh"), strdup("-c"), strdup("exit 0"), nil]
+        defer { argv.forEach { free($0) } }
+        // Required before the cleanup: with a failed spawn the pid stays 0, and kill(0) and waitpid(0) would act on
+        // the whole process group, the test runner included.
+        try #require(posix_spawn(&pid, "/bin/sh", nil, nil, &argv, environ) == 0 && pid > 0)
+        var status: Int32 = 0
+        defer { waitpid(pid, &status, 0) }
+        // Not reaped: still found by kill(pid, 0) once it has exited.
+        let deadline = Date().addingTimeInterval(5)
+        while !AccountRouter.hasExited(pid) && Date() < deadline { usleep(20_000) }
+        #expect(AccountRouter.hasExited(pid))
+        #expect(kill(pid, 0) == 0)
+
+        var running: pid_t = 0
+        var sleepArgv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("30"), nil]
+        defer { sleepArgv.forEach { free($0) } }
+        try #require(posix_spawn(&running, "/bin/sleep", nil, nil, &sleepArgv, environ) == 0 && running > 0)
+        defer { kill(running, SIGKILL); waitpid(running, &status, 0) }
+        #expect(!AccountRouter.hasExited(running))
+    }
+
     @Test func filhoQueIgnoraOSigtermMorreJuntoComOComandoNoPrazo() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-prazo-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -375,5 +421,24 @@ struct QueueAndAccountsTests {
         let now = Date(timeIntervalSince1970: 1_791_000_000)
         #expect(Fmt.weekday(now.addingTimeInterval(10 * 86_400), now: now).contains("/"))
         #expect(!Fmt.weekday(now.addingTimeInterval(2 * 86_400), now: now).contains("/"))
+    }
+
+    /// The drop line goes where the account lands: under the target when it comes from above, over it from below,
+    /// and nowhere for a drop that changes nothing or would empty the route.
+    @Test func linhaDoArrastoFicaOndeAContaCai() {
+        let ids = ["a", "b", "c", "d"]   // route a b c | reserve d
+        func land(_ id: String, on index: Int) -> AccountQueue.Landing? {
+            AccountQueue.landing(ids, reserveFrom: 3, id: id, on: index)
+        }
+        #expect(land("a", on: 2) == .init(below: true, changes: true))     // a under c: b c a
+        #expect(land("c", on: 0) == .init(below: false, changes: true))    // c over a: c a b
+        #expect(land("c", on: 3) == .init(below: true, changes: true))     // on the divider from above: head of the reserve
+        #expect(land("d", on: 3) == .init(below: false, changes: true))    // on the divider from below: end of the route
+        #expect(land("a", on: 0)?.changes == false)                        // on itself
+        #expect(land("d", on: 4)?.changes == false)
+        #expect(land("x", on: 0) == nil)
+        // The only account in the route cannot go to the reserve.
+        #expect(AccountQueue.landing(["a", "b"], reserveFrom: 1, id: "a", on: 1)?.changes == false)
+        #expect(AccountQueue.landing(["a", "b"], reserveFrom: 1, id: "b", on: 0) == .init(below: false, changes: true))
     }
 }

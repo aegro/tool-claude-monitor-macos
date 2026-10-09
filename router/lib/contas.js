@@ -363,9 +363,37 @@ async function lerCredencial(id, cfg = carregarConfig()) {
   }
 }
 
+function chaveDaConta(conta) {
+  return conta && conta.accountUuid ? [conta.accountUuid, conta.organizationUuid].filter(Boolean).join(':') : null;
+}
+
+// O login que a troca dos agentes guardou para a conta ao mexer no ~/.claude (.estado/agentes/<id>.json).
+function loginGuardadoDaConta(id) {
+  const guardado = lerJson(path.join(DIR_ESTADO, 'agentes', `${id}.json`), null);
+  return guardado && guardado.oauthAccount && !guardado.invalidoEm ? guardado.oauthAccount : null;
+}
+
+// Quem está no ~/.claude. Depois que a troca dos agentes põe outra conta ali, uma sessão do Claude Code ainda
+// aberta regrava o ~/.claude.json com o login com que começou: o arquivo passa a nomear uma conta que mora em outra
+// pasta da fila, e a conta do ~/.claude parecia uma cópia dela. Quando o arquivo nomeia outra conta da fila e há o
+// login guardado desta, vale o guardado.
+function contaDoDirPadrao(id, cfg, declarada) {
+  const guardada = loginGuardadoDaConta(id);
+  const chave = chaveDaConta(declarada);
+  if (!guardada || !chave || chaveDaConta(guardada) === chave) return declarada;
+  const outras = new Set();
+  for (const outro of Object.keys(cfg.contas)) {
+    if (outro === id) continue;
+    if (!usaDirPadrao(outro, cfg)) outras.add(chaveDaConta((lerJson(arquivoConfigDaConta(outro, cfg), {}) || {}).oauthAccount));
+    outras.add(chaveDaConta(loginGuardadoDaConta(outro)));
+  }
+  return outras.has(chave) ? guardada : declarada;
+}
+
 function identidade(id, cfg = carregarConfig()) {
   const dados = lerJson(arquivoConfigDaConta(id, cfg), {});
-  const conta = dados.oauthAccount || {};
+  const declarada = dados.oauthAccount || {};
+  const conta = (usaDirPadrao(id, cfg) ? contaDoDirPadrao(id, cfg, declarada) : declarada) || {};
   return {
     email: conta.emailAddress || null,
     organizacao: conta.organizationName || null,
@@ -788,6 +816,7 @@ function registrarLimiteAoVivo(id, info, agora = Date.now()) {
 }
 
 module.exports = {
+  contaDoDirPadrao,
   principal,
   python3,
   lerJson,

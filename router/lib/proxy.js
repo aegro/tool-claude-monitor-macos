@@ -356,6 +356,8 @@ class Proxy {
   async avaliarTroca(gatilho, geracao) {
     this.avaliando = true;
     try {
+      // Aberta no ~/.claude, a sessão gasta a conta que está lá agora: o limite é dela, e é dela que a sessão sai.
+      this.conta = this.contaQueGasta();
       contas.log(`stream: gatilho ${gatilho.motivo} na conta ${this.conta}`);
       contas.marcarEsgotada(this.conta, gatilho.ate, gatilho.motivo);
       const escolha = await contas.escolher({ excluir: [this.conta] });

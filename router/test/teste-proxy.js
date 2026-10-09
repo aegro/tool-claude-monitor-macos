@@ -8,6 +8,10 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 
+// O Proxy e as contas carregados neste processo leem e gravam aqui, nunca no ~/.claude-accounts de quem roda.
+const HOME_EM_PROCESSO = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-auto-proxy-'));
+process.env.CLAUDE_AUTO_HOME = HOME_EM_PROCESSO;
+
 const RAIZ = path.resolve(__dirname, '..');
 const FAKE = path.join(__dirname, 'fake-claude.js');
 
@@ -402,8 +406,55 @@ async function threadDoT3RetomaASessaoAnterior() {
   }
 }
 
+// Cenários sem processo: o Proxy direto, com a leitura e a escolha de contas trocadas por dublês.
+function proxyEmProcesso(config) {
+  const contas = require('../lib/contas');
+  const { Proxy } = require('../lib/proxy');
+  fs.writeFileSync(path.join(HOME_EM_PROCESSO, 'config.json'), JSON.stringify(config));
+  const p = new Proxy([]);
+  // Aberta no ~/.claude na conta "principal", que a troca dos agentes depois tirou de lá.
+  p.conta = 'principal';
+  p.noClaudePadrao = true;
+  return { contas, p };
+}
+
+async function comDubles(obj, dubles, fn) {
+  const originais = Object.fromEntries(Object.keys(dubles).map((k) => [k, obj[k]]));
+  Object.assign(obj, dubles);
+  try {
+    await fn();
+  } finally {
+    Object.assign(obj, originais);
+  }
+}
+
+async function limiteNaContaQueEntrouNoClaudeMarcaEssaConta() {
+  const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+  const marcadas = [];
+  const excluidas = [];
+  await comDubles(contas, {
+    log() {},
+    marcarEsgotada: (id) => marcadas.push(id),
+    escolher: async ({ excluir = [] } = {}) => {
+      excluidas.push(...excluir);
+      return { escolhida: null, candidatos: [] };
+    },
+  }, () => p.avaliarTroca({ motivo: 'five_hour', ate: null, continuar: false }, p.geracao));
+  // A segunda entrou no ~/.claude no meio do turno: o limite é dela, e é dela que a sessão sai.
+  assert.deepStrictEqual(marcadas, ['segunda']);
+  assert.deepStrictEqual(excluidas, ['segunda']);
+}
+
+async function contaQueSaiuDoClaudeVoltaParaAPastaPropria() {
+  const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+  const trocas = [];
+  p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+  await comDubles(contas, { log() {}, temLoginProprio: () => true }, () => p.checarPreventiva());
+  assert.deepStrictEqual(trocas, [['principal', 'saiu-do-claude']]);
+}
+
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior, limiteNaContaQueEntrouNoClaudeMarcaEssaConta, contaQueSaiuDoClaudeVoltaParaAPastaPropria];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {
@@ -414,5 +465,6 @@ async function threadDoT3RetomaASessaoAnterior() {
       console.log(`FALHA ${cenario.name}\n${e.message}\n${e.stack.split("\n").slice(1, 3).join("\n")}`);
     }
   }
+  fs.rmSync(HOME_EM_PROCESSO, { recursive: true, force: true });
   process.exit(falhas ? 1 : 0);
 })();

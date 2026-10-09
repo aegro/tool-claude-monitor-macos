@@ -105,6 +105,12 @@ final class Monitor: ObservableObject {
     private var usageInterval: TimeInterval { Settings.shared.usageIntervalSeconds }
     /// Extra accounts the server asked us to stop asking about for a while (HTTP 429), and until when.
     private var probePausedUntil: [String: Date] = [:]
+    /// The live read waits until then after a 429: the server's own `Retry-After`, or a wait that doubles while the
+    /// 429s keep coming. Asking again inside that window only extends it.
+    private(set) var livePausedUntil: Date?
+    private var liveBackoff: TimeInterval = 0
+    /// Until when the live read waits, whoever asked (this Monitor's 429 or the router's), for the panel to say.
+    @Published private(set) var livePauseShown: Date?
     /// A router edit is being written; the next one waits for it instead of racing it.
     @Published private(set) var savingRouter = false
     /// The last router edit queued, which the next one waits on, and how many are still to finish.
@@ -360,7 +366,9 @@ final class Monitor: ObservableObject {
         var available: Set<String> = []
         var logins: [String: AccountIdentity] = [:]
         var read: Set<String> = []
+        var idle: Set<String> = []
         let cached = AccountRouter.routerReadings()
+        let liveByAccount = AccountRouter.liveLimits()
         let now = Date()
         func freshest(_ candidates: UsageSnapshot?...) -> UsageSnapshot? {
             candidates.compactMap { $0 }.max { $0.fetchedAt < $1.fetchedAt }
@@ -371,22 +379,25 @@ final class Monitor: ObservableObject {
             logins[account.id] = identity
             let stored = identity.flatMap { accounts.records[$0.key]?.snapshot }
             let routerRead = cached[account.id]
+            let liveRead = liveByAccount[account.id]
 
             let creds = await Blocking.run { AccountRouter.credentials(for: account) }
             guard let creds else { continue }
             available.insert(account.id)
 
             if let identity, identity.key == active?.key {
-                usage[account.id] = freshest(apiSnapshot ?? stored, routerRead?.snapshot)
+                usage[account.id] = freshest(apiSnapshot ?? stored, routerRead?.snapshot, liveRead)
                 continue
             }
 
             // The router read this account a moment ago, or the server asked it (or us) to wait: those numbers
             // stand, and asking again would only spend this account's share of the endpoint.
             let waiting = [routerRead?.waitUntil, probePausedUntil[account.id]].compactMap { $0 }.contains { $0 > now }
-            let recent = routerRead.map { now.timeIntervalSince($0.snapshot.fetchedAt) < usageInterval } ?? false
+            let recent = [routerRead?.snapshot, liveRead].compactMap { $0 }
+                .contains { now.timeIntervalSince($0.fetchedAt) < usageInterval }
+            if creds.isExpired { idle.insert(account.id) }
             if waiting || recent || creds.isExpired {
-                usage[account.id] = freshest(routerRead?.snapshot, stored)
+                usage[account.id] = freshest(routerRead?.snapshot, liveRead, stored)
                 continue
             }
             do {
@@ -400,8 +411,10 @@ final class Monitor: ObservableObject {
                 }
                 usage[account.id] = snap
             } catch {
-                if case UsageError.http(429) = error { probePausedUntil[account.id] = now.addingTimeInterval(5 * 60) }
-                usage[account.id] = freshest(routerRead?.snapshot, stored)
+                if case UsageError.rateLimited(let retryAfter) = error {
+                    probePausedUntil[account.id] = now.addingTimeInterval(min(3600, max(300, retryAfter ?? 300)))
+                }
+                usage[account.id] = freshest(routerRead?.snapshot, liveRead, stored)
             }
         }
 
@@ -419,11 +432,32 @@ final class Monitor: ObservableObject {
             available: available,
             exhausted: exhausted,
             agentsLogins: Set(config.accounts.map(\.id).filter(AccountRouter.hasAgentsLogin)),
-            switches: AccountRouter.switches(limit: 20))
+            switches: AccountRouter.switches(limit: 20),
+            idleLogins: idle)
     }
 
     /// The preferred feed: our own read of the API, with the terminal's token.
+    /// The router account whose login is in `~/.claude`, the one the live read is about.
+    private var liveRouterId: String { router?.config.principal ?? AccountRouter.loadConfig()?.principal ?? "principal" }
+
     private func pollTerminalFeed(identity: AccountIdentity?) async {
+        let now = Date()
+        // A stream session (VS Code, T3) just got the numbers in its response headers: they are fresher than any
+        // read, and taking them spends nothing of the endpoint's tight limit.
+        if let live = AccountRouter.liveLimits()[liveRouterId], identity != nil,
+           live.fetchedAt > (apiSnapshot?.fetchedAt ?? .distantPast),
+           now.timeIntervalSince(live.fetchedAt) < max(60, usageInterval) {
+            useLive(live, identity: identity)
+            return
+        }
+        let routerWait = AccountRouter.routerReadings()[liveRouterId]?.waitUntil
+        if let until = [livePausedUntil, routerWait].compactMap({ $0 }).max(), until > now {
+            usageError = "O servidor pediu uma pausa até \(Fmt.clock(until)). Os números voltam depois disso."
+            feeds.terminal = .broken("pausa pedida")
+            livePauseShown = until
+            return
+        }
+        livePauseShown = nil
         do {
             let creds = try credentials()
             // Fail on the expiry we can read rather than on the 401 it is about to earn. Same
@@ -433,6 +467,8 @@ final class Monitor: ObservableObject {
             guard !creds.isExpired else { throw Keychain.Failure.expired }
 
             let snap = try await fetchUsage(creds: creds)
+            livePausedUntil = nil
+            liveBackoff = 0
             apiSnapshot = snap
             apiSnapshotOrg = identity?.organizationUuid
             usageError = nil
@@ -448,6 +484,27 @@ final class Monitor: ObservableObject {
             terminalFailure = error
             usageError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             feeds.terminal = .broken(FeedState.shortReason(for: error))
+            if case UsageError.rateLimited(let retryAfter) = error {
+                liveBackoff = min(3600, max(usageInterval, liveBackoff * 2))
+                let wait = min(3600, max(60, retryAfter ?? liveBackoff))
+                livePausedUntil = now.addingTimeInterval(wait)
+                livePauseShown = livePausedUntil
+                usageError = "O servidor pediu uma pausa até \(Fmt.clock(now.addingTimeInterval(wait))). Os números voltam depois disso."
+            }
+        }
+    }
+
+    private func useLive(_ live: UsageSnapshot, identity: AccountIdentity?) {
+        livePauseShown = nil
+        let merged = AccountRouter.merging(live, into: apiSnapshot)
+        apiSnapshot = merged
+        apiSnapshotOrg = identity?.organizationUuid
+        usageError = nil
+        terminalFailure = nil
+        feeds.terminal = .live(at: merged.fetchedAt)
+        if let id = identity {
+            accounts.record(uuid: id.key, label: id.label, plan: accounts.records[id.key]?.plan ?? id.planFallback,
+                            snapshot: merged, at: merged.fetchedAt)
         }
     }
 
@@ -756,7 +813,8 @@ final class Monitor: ObservableObject {
                 exhaustedUntil: router.exhausted[account.id].flatMap { $0 > now ? $0 : nil },
                 sessions: sessions.filter { $0.accountId == account.id }.count,
                 runsAgents: account.id == router.config.principal,
-                isLive: live)
+                isLive: live,
+                loginIdle: router.idleLogins.contains(account.id))
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
                             reserveBelow: router.config.reserveBelow, configured: true,

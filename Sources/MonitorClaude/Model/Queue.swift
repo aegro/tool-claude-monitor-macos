@@ -20,6 +20,8 @@ struct AccountQueue: Equatable {
         var runsAgents = false
         /// This entry is the account whose numbers the Monitor reads live.
         var isLive = false
+        /// Its token expired for lack of use: the numbers wait for the next session on it.
+        var loginIdle = false
 
         var headroom: Double? { snapshot.map { AccountRouter.headroom($0) } }
     }

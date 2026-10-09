@@ -445,6 +445,60 @@ enum AccountRouter {
         return out
     }
 
+    static var liveLimitsDirectory: URL { home.appendingPathComponent(".estado/ao-vivo") }
+
+    /// The limits a stream session (the VS Code extension or T3 through the router) last received for each account,
+    /// saved by the router as the response headers arrive: no `/usage` call spent, and seconds old while a session
+    /// is working.
+    static func liveLimits(in dir: URL = liveLimitsDirectory) -> [String: UsageSnapshot] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        var out: [String: UsageSnapshot] = [:]
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file), let snap = parseLiveLimits(data) else { continue }
+            out[file.deletingPathExtension().lastPathComponent] = snap
+        }
+        return out
+    }
+
+    static func parseLiveLimits(_ data: Data) -> UsageSnapshot? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let at = (root["em"] as? NSNumber)?.doubleValue,
+              let windows = root["janelas"] as? [String: Any]
+        else { return nil }
+        var snap = UsageSnapshot()
+        snap.fetchedAt = Date(timeIntervalSince1970: at / 1000)
+        for (key, kind) in [("five_hour", "session"), ("seven_day", "weekly_all")] {
+            guard let w = windows[key] as? [String: Any], let used = (w["usado"] as? NSNumber)?.doubleValue else { continue }
+            let resets = (w["renovaEm"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+            snap.windows.append(UsageAPI.window(kind: kind, model: nil, percent: used, resetsAt: resets,
+                                                severity: "normal", isActive: kind == "session"))
+        }
+        guard !snap.windows.isEmpty else { return nil }
+        UsageAPI.sortWindows(&snap)
+        return snap
+    }
+
+    /// `base` with the windows `live` carries replaced by its numbers, and its time: the per-model windows and the
+    /// extra credit only the `/usage` read has stay as they were.
+    static func merging(_ live: UsageSnapshot, into base: UsageSnapshot?) -> UsageSnapshot {
+        var out = base ?? UsageSnapshot()
+        for window in live.windows {
+            if let i = out.windows.firstIndex(where: { $0.key == window.key }) {
+                out.windows[i].utilization = window.utilization
+                if let resets = window.resetsAt {
+                    out.windows[i].resetsAt = resets
+                    out.windows[i].resetIsExact = true
+                }
+            } else {
+                out.windows.append(window)
+            }
+        }
+        out.fetchedAt = live.fetchedAt
+        out.source = .api
+        UsageAPI.sortWindows(&out)
+        return out
+    }
+
     static func exhausted(now: Date = Date()) -> [String: Date] {
         guard let data = try? Data(contentsOf: exhaustedURL) else { return [:] }
         return parseExhausted(data, now: now)
@@ -682,6 +736,9 @@ struct RouterState: Equatable {
     var exhausted: [String: Date] = [:]
     var agentsLogins: Set<String> = []
     var switches: [AccountRouter.Switch] = []
+    /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while, and only a
+    /// session renews it (the Monitor never does). Their numbers stay as last read until then.
+    var idleLogins: Set<String> = []
 
     func loginLabel(for id: String) -> String {
         guard available.contains(id) else { return "sem login: claude-accounts login \(id)" }

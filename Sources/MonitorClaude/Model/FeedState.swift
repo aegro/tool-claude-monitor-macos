@@ -58,7 +58,7 @@ extension UsageError: ShortFailure {
         case .forbidden: return "sem escopo"
         case .decode: return "resposta estranha"
         case .transport: return "sem rede"
-        case .http(429): return "pausa pedida"
+        case .http(429), .rateLimited: return "pausa pedida"
         case .http(let code): return "erro \(code)"
         }
     }

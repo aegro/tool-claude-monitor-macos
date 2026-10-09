@@ -983,8 +983,9 @@ final class Monitor: ObservableObject {
             let identity = router.logins[account.id]
             let live = identity != nil && identity?.key == activeAccount?.key
             // The freshest reading wins: with the terminal token failing, the router may have just read this
-            // account with its own login while the live feed is still holding an old number.
-            let candidates = [live ? usage : nil, router.usage[account.id],
+            // account with its own login while the live feed is still holding an old number. The live feed counts
+            // only while it is this account's: carried by the desktop app it can be another organization's.
+            let candidates = [live && usageIsActiveAccount ? usage : nil, router.usage[account.id],
                               identity.flatMap { accounts.records[$0.key]?.snapshot }].compactMap { $0 }
             let snapshot = candidates.max { $0.fetchedAt < $1.fetchedAt }
             return AccountQueue.Entry(
@@ -1017,12 +1018,17 @@ final class Monitor: ObservableObject {
         var isLive: Bool
     }
 
+    /// True while `usage` describes the terminal account. With the terminal token dead the desktop app carries the
+    /// live feed, and it may be driving another organization: that reading is not the active account's.
+    private var usageIsActiveAccount: Bool { liveOrg == activeAccount?.organizationUuid }
+
     /// A queue account's reading older than this is drawn muted in the menu bar, like a dead live feed.
     static let menuBarFreshness: TimeInterval = 15 * 60
 
     var menuBarSession: MenuBarReading {
         let q = accountQueue
-        guard q.configured, !q.isSingle, let id = q.newSessions(), let entry = q.entry(id), !entry.isLive else {
+        guard q.configured, !q.isSingle, let id = q.newSessions(), let entry = q.entry(id),
+              !(entry.isLive && usageIsActiveAccount) else {
             return MenuBarReading(window: usage?.session, current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
         }
         let seen = entry.snapshot?.fetchedAt

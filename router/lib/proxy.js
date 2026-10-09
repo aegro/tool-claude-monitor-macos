@@ -77,6 +77,8 @@ class Proxy {
     this.checandoPreventiva = false;
     this.preventivaPendente = false;
     this.ultimaChecagemDeVolta = 0;
+    this.ultimaChecagemDaEscolhida = 0;
+    this.escolhidaVista = undefined;
     this.filaDoHost = [];
     this.retido = null;
     this.saidaDoFilho = null;
@@ -460,6 +462,7 @@ class Proxy {
     this.checandoPreventiva = true;
     try {
       const cfg = contas.carregarConfig();
+      if (await this.checarEscolhida(cfg)) return;
       const folga = contas.folgaDe(await contas.lerUso(this.conta));
       if (folga == null || folga >= cfg.limites.preventiva) {
         this.preventivaPendente = false;
@@ -481,6 +484,25 @@ class Proxy {
     } finally {
       this.checandoPreventiva = false;
     }
+  }
+
+  // A conta escolhida à mão (`fixada`, o "Usar esta agora" do Monitor) leva também a sessão que já está aberta, no
+  // fim de um turno, sem tarefa em segundo plano: o mesmo momento em que a volta para a preferida acontece. Escolha
+  // nova é conferida no primeiro fim de turno; a mesma, no máximo uma vez por minuto.
+  async checarEscolhida(cfg) {
+    if (!cfg.fixada || cfg.fixada === this.conta || this.contaInicial || this.tarefas.size) {
+      this.escolhidaVista = cfg.fixada;
+      return false;
+    }
+    const nova = cfg.fixada !== this.escolhidaVista;
+    if (!nova && Date.now() - this.ultimaChecagemDaEscolhida < INTERVALO_DE_VOLTA_MS) return false;
+    this.escolhidaVista = cfg.fixada;
+    this.ultimaChecagemDaEscolhida = Date.now();
+    const escolha = await contas.escolher();
+    if (escolha.escolhida !== cfg.fixada || escolha.escolhida === this.conta) return false;
+    if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
+    await this.trocar({ para: cfg.fixada, motivo: 'escolhida', forcada: false, continuar: false });
+    return true;
   }
 
   async checarVolta(cfg) {

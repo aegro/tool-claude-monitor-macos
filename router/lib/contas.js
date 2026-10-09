@@ -646,6 +646,7 @@ function motivoLegivel(motivo) {
   if (base === 'preventiva') return 'estava quase no limite';
   if (base === 'ao abrir') return 'estava sem folga quando os agentes abriram';
   if (base === 'manual') return 'foi trocada à mão';
+  if (base === 'escolhida') return 'deu lugar à conta que você escolheu';
   if (base === 'teste') return 'saiu num teste de troca';
   return 'ficou sem folga';
 }

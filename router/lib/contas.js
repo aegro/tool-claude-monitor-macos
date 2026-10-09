@@ -201,6 +201,7 @@ function normalizarConfig(lido) {
   cfg.rota = (cfg.rota || []).filter((id) => cfg.contas[id]);
   if (!cfg.rota.length) cfg.rota = [principal];
   cfg.reserva = (cfg.reserva || []).filter((id) => cfg.contas[id] && !cfg.rota.includes(id));
+  if (cfg.fixada && !cfg.rota.includes(cfg.fixada) && !cfg.reserva.includes(cfg.fixada)) delete cfg.fixada;
   return cfg;
 }
 
@@ -363,9 +364,38 @@ async function lerCredencial(id, cfg = carregarConfig()) {
   }
 }
 
+function chaveDaConta(conta) {
+  return conta && conta.accountUuid ? [conta.accountUuid, conta.organizationUuid].filter(Boolean).join(':') : null;
+}
+
+// O login que a troca dos agentes guardou para a conta ao mexer no ~/.claude (.estado/agentes/<id>.json).
+function loginGuardadoDaConta(id) {
+  const guardado = lerJson(path.join(DIR_ESTADO, 'agentes', `${id}.json`), null);
+  return guardado && guardado.oauthAccount && !guardado.invalidoEm ? guardado.oauthAccount : null;
+}
+
+// Quem está no ~/.claude. Depois que a troca dos agentes põe outra conta ali, uma sessão do Claude Code ainda
+// aberta regrava o ~/.claude.json com o login com que começou: o arquivo passa a nomear uma conta que mora em outra
+// pasta da fila, e a conta do ~/.claude parecia uma cópia dela. Quando o arquivo nomeia outra conta da fila e há o
+// login guardado desta, vale o guardado. Só contam as contas que estão na fila (rota e reserva), como no Monitor: uma
+// conta que saiu da fila e ficou em `contas` não troca o login que alguém pôs à mão no terminal.
+function contaDoDirPadrao(id, cfg, declarada) {
+  const guardada = loginGuardadoDaConta(id);
+  const chave = chaveDaConta(declarada);
+  if (!guardada || !chave || chaveDaConta(guardada) === chave) return declarada;
+  const outras = new Set();
+  for (const outro of [...cfg.rota, ...cfg.reserva]) {
+    if (outro === id) continue;
+    if (!usaDirPadrao(outro, cfg)) outras.add(chaveDaConta((lerJson(arquivoConfigDaConta(outro, cfg), {}) || {}).oauthAccount));
+    outras.add(chaveDaConta(loginGuardadoDaConta(outro)));
+  }
+  return outras.has(chave) ? guardada : declarada;
+}
+
 function identidade(id, cfg = carregarConfig()) {
   const dados = lerJson(arquivoConfigDaConta(id, cfg), {});
-  const conta = dados.oauthAccount || {};
+  const declarada = dados.oauthAccount || {};
+  const conta = (usaDirPadrao(id, cfg) ? contaDoDirPadrao(id, cfg, declarada) : declarada) || {};
   return {
     email: conta.emailAddress || null,
     organizacao: conta.organizationName || null,
@@ -549,6 +579,10 @@ function decidir(candidatos, { excluir = [] } = {}) {
   const ordem = candidatos.map((c) => c.id);
   const pontos = (c) => (c.folga == null ? 1 : c.folga);
   const elegivel = (c) => !excluir.includes(c.id) && !c.esgotada && c.logada && pontos(c) > 0;
+  // A conta que a pessoa escolheu à mão (`fixada`) vale acima da regra enquanto tiver como abrir sessão; esgotada,
+  // sem login ou deixada de fora por uma troca, a regra volta a decidir.
+  const fixada = cfg.fixada && candidatos.find((c) => c.id === cfg.fixada);
+  if (fixada && elegivel(fixada)) return fixada;
   const preferida = cfg.preferida && candidatos.find((c) => c.id === cfg.preferida);
   if (preferida && elegivel(preferida) && pontos(preferida) >= cfg.limites.reserva) return preferida;
   const melhor = (lista) =>
@@ -563,7 +597,7 @@ function decidir(candidatos, { excluir = [] } = {}) {
 }
 
 function preferidaDeVolta(candidatos, atual, cfg = carregarConfig()) {
-  if (!cfg.preferida || cfg.preferida === atual) return null;
+  if (cfg.fixada || !cfg.preferida || cfg.preferida === atual) return null;
   const c = candidatos.find((x) => x.id === cfg.preferida);
   if (!c || c.esgotada || !c.logada || c.folga == null || c.folga < cfg.limites.voltar) return null;
   return c;
@@ -612,6 +646,7 @@ function motivoLegivel(motivo) {
   if (base === 'preventiva') return 'estava quase no limite';
   if (base === 'ao abrir') return 'estava sem folga quando os agentes abriram';
   if (base === 'manual') return 'foi trocada à mão';
+  if (base === 'escolhida') return 'deu lugar à conta que você escolheu';
   if (base === 'teste') return 'saiu num teste de troca';
   return 'ficou sem folga';
 }
@@ -788,6 +823,7 @@ function registrarLimiteAoVivo(id, info, agora = Date.now()) {
 }
 
 module.exports = {
+  contaDoDirPadrao,
   principal,
   python3,
   lerJson,

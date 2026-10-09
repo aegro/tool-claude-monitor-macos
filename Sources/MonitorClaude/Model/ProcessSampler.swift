@@ -13,6 +13,7 @@ struct ClaudeEnv: Hashable {
     var sessionId: String?      // CLAUDE_CODE_SESSION_ID
     var jobId: String?          // basename of CLAUDE_JOB_DIR
     var spawnedByClaude = false // CLAUDECODE=1
+    var account: String?        // CLAUDE_AUTO_CONTA: the router account the session was opened on
     var isEmpty: Bool { sessionId == nil && jobId == nil && !spawnedByClaude }
 }
 
@@ -269,6 +270,8 @@ final class ProcessSampler {
             claude.jobId = (value as NSString).lastPathComponent
         case "CLAUDECODE":
             claude.spawnedByClaude = value == "1"
+        case "CLAUDE_AUTO_CONTA":
+            claude.account = value.isEmpty ? nil : value
         default:
             break
         }

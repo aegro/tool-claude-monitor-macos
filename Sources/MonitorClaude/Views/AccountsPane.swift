@@ -12,6 +12,8 @@ struct AccountsPane: View {
     @State private var dragging: String?
     /// The row (or the divider, as "divider") a dragged account would land on, for the insertion line.
     @State private var dropTarget: String?
+    /// The account whose removal waits for a confirmation under its row.
+    @State private var confirmingRemoval: String?
 
     var body: some View {
         let queue = monitor.accountQueue
@@ -67,11 +69,36 @@ struct AccountsPane: View {
     @ViewBuilder
     private func status(queue: AccountQueue, inUse: String?) -> some View {
         let entry = queue.entry(inUse)
-        StatusBlock(
-            caption: queue.isSingle || !queue.enabled ? "As sessões abrem na" : "Sessões novas abrem na",
-            headline: entry?.label ?? "nenhuma conta com folga",
-            line: AccountQueue.statusLine(queue: queue, inUse: inUse, outlook: monitor.outlook),
-            tone: entry == nil ? Ink.alarm : .primary)
+        let byHand = queue.enabled && queue.pinned != nil && queue.pinned == inUse
+        VStack(alignment: .leading, spacing: 6) {
+            StatusBlock(
+                caption: queue.isSingle || !queue.enabled ? "As sessões abrem na" : (byHand ? "Você escolheu: sessões novas abrem na" : "Sessões novas abrem na"),
+                headline: entry?.label ?? "nenhuma conta com folga",
+                line: AccountQueue.statusLine(queue: queue, inUse: inUse, outlook: monitor.outlook),
+                tone: entry == nil ? Ink.alarm : .primary)
+            if queue.enabled, let pinned = queue.pinned {
+                HStack(spacing: 6) {
+                    Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Ink.ember)
+                    Text(pinnedNote(queue: queue, pinned: pinned, inUse: inUse))
+                        .font(Type.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button("Voltar à regra") { Task { await monitor.pinAccount(nil) } }
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    /// Why the hand-picked account is not the one in use: a lost login asks for authorization, not for waiting.
+    private func pinnedNote(queue: AccountQueue, pinned: String, inUse: String?) -> String {
+        if pinned == inUse { return "Fora da regra da fila, até você voltar." }
+        let entry = queue.entry(pinned)
+        let name = entry?.label ?? pinned
+        if entry?.hasLogin == false {
+            return "\(name) está sem login: a regra da fila decide até você autorizá-la de novo."
+        }
+        return "\(name) está sem folga: a regra da fila decide até ela voltar."
     }
 
     private func strategyMenu(_ queue: AccountQueue) -> some View {
@@ -102,6 +129,7 @@ struct AccountsPane: View {
     private func row(_ entry: AccountQueue.Entry, index: Int, inUse: String?, next: String?, queue: AccountQueue) -> some View {
         AccountRow(entry: entry, inUse: entry.id == inUse, next: entry.id == next && !queue.isSingle,
                    draggable: !queue.isSingle, expanded: expanded == entry.id,
+                   pinned: queue.enabled && queue.pinned == entry.id,
                    bgAgents: monitor.sessions.contains(where: \.isBackground),
                    monitor: monitor) {
             withAnimation(.easeOut(duration: 0.15)) { expanded = expanded == entry.id ? nil : entry.id }
@@ -118,10 +146,73 @@ struct AccountsPane: View {
                                                        allowed: moves(to: index, queue: queue),
                                                        dragging: $dragging, dropTarget: $dropTarget))
         .contextMenu { menu(entry, index: index, queue: queue) }
+        .safeAreaInset(edge: .bottom, spacing: 4) {
+            if confirmingRemoval == entry.id {
+                removalConfirmation(entry)
+            } else if expanded == entry.id, queue.configured, !queue.isSingle {
+                actions(entry, queue: queue)
+            }
+        }
+    }
+
+    /// What can be done with an account, under its open detail: where the click already led.
+    private func actions(_ entry: AccountQueue.Entry, queue: AccountQueue) -> some View {
+        HStack(spacing: 8) {
+            if queue.enabled {
+                if queue.pinned == entry.id {
+                    Button("Voltar à regra") { Task { await monitor.pinAccount(nil) } }
+                } else {
+                    Button("Usar esta agora") { Task { await monitor.pinAccount(entry.id) } }
+                        .buttonStyle(.borderedProminent).tint(Ink.ember)
+                        .disabled(!entry.hasLogin)
+                        .help("Sessões novas abrem nesta conta, fora da regra da fila, até você voltar ou ela ficar sem folga")
+                }
+            }
+            Spacer()
+            if entry.id != queue.principal {
+                Button("Remover da fila…") { withAnimation(.easeOut(duration: 0.15)) { confirmingRemoval = entry.id } }
+                    .buttonStyle(.plain).font(Type.caption).foregroundStyle(.secondary)
+            }
+        }
+        .controlSize(.small)
+        .padding(.leading, 47)
+        .padding(.trailing, 9)
+        .padding(.bottom, 6)
+    }
+
+    /// Asked under the row, not in a dialog, which would close the menu bar panel.
+    private func removalConfirmation(_ entry: AccountQueue.Entry) -> some View {
+        let blocked = AccountQueue.removalBlocked(sessions: entry.sessionsInFolder)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(blocked ?? "Tirar \(entry.label) da fila? A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta.")
+                .font(Type.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancelar") { confirmingRemoval = nil }.controlSize(.small)
+                Button("Remover") {
+                    confirmingRemoval = nil
+                    Task { await monitor.removeAccount(entry.id) }
+                }
+                .controlSize(.small).buttonStyle(.borderedProminent).tint(Ink.alarm)
+                .disabled(blocked != nil)
+            }
+        }
+        .padding(10)
+        .background(Ink.track, in: RoundedRectangle(cornerRadius: 9))
+        .padding(.leading, 30)
     }
 
     @ViewBuilder
     private func menu(_ entry: AccountQueue.Entry, index: Int, queue: AccountQueue) -> some View {
+        if !queue.isSingle, queue.enabled {
+            if queue.pinned == entry.id {
+                Button("Voltar à regra da fila") { Task { await monitor.pinAccount(nil) } }
+            } else {
+                Button("Usar esta agora") { Task { await monitor.pinAccount(entry.id) } }.disabled(!entry.hasLogin)
+            }
+            Divider()
+        }
         if !queue.isSingle {
             Button("Subir") { Task { await monitor.moveAccount(entry.id, to: max(0, index - 1)) } }
                 .disabled(index == 0)
@@ -144,6 +235,10 @@ struct AccountsPane: View {
                 Button("Autorizar os agentes…") { monitor.startReauthorize(entry.id, agents: true); openSettings() }
             }
             Button("Renomear…") { monitor.settingsTab = .accounts; openSettings() }
+            if entry.id != queue.principal {
+                Divider()
+                Button("Remover da fila…") { withAnimation(.easeOut(duration: 0.15)) { confirmingRemoval = entry.id } }
+            }
         }
     }
 
@@ -267,6 +362,7 @@ struct AccountRow: View {
     let next: Bool
     let draggable: Bool
     let expanded: Bool
+    let pinned: Bool
     let bgAgents: Bool
     let monitor: Monitor
     var toggle: () -> Void
@@ -291,8 +387,20 @@ struct AccountRow: View {
                     HStack(spacing: 6) {
                         Text(entry.label).font(Type.strong).lineLimit(1).truncationMode(.tail)
                         if let plan = entry.plan { PlanTag(plan: plan) }
+                        if pinned {
+                            Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Ink.ember)
+                                .help("Escolhida por você para as sessões novas")
+                        }
                         Spacer(minLength: 4)
                         chip
+                        // Says the row opens: without it, the detail under a click was a secret.
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(hovering || expanded ? Color.secondary : Color.secondary.opacity(0.45))
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                            .animation(.easeOut(duration: 0.15), value: expanded)
+                            .frame(width: 12)
+                            .accessibilityHidden(true)
                     }
                     HStack(spacing: 14) {
                         MiniLimit(label: "5h", window: entry.snapshot?.session)
@@ -319,6 +427,7 @@ struct AccountRow: View {
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: toggle)
+            .help(expanded ? "Clique para fechar o detalhe" : "Clique para ver o detalhe dos limites")
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityHint("Abre o detalhe dos limites")
@@ -339,7 +448,8 @@ struct AccountRow: View {
         } else if !entry.hasLogin {
             StateChip(text: entry.loginRefused ? "sem acesso" : "sem login", tone: .gone)
         } else if inUse {
-            StateChip(text: "em uso", tone: .inUse)
+            // Where new sessions open, which is not where every open session runs ("N sessões aqui" says that).
+            StateChip(text: "sessões novas", tone: .inUse)
         } else if next {
             StateChip(text: "próxima", tone: .next)
         }

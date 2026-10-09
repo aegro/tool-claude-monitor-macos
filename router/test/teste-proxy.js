@@ -262,6 +262,55 @@ async function naoVoltaComTarefaEmSegundoPlano() {
   assert.strictEqual(lerTrocas(amb).length, 0, 'não volta com subagente ou workflow rodando');
 }
 
+async function sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno() {
+  const amb = ambiente({ uso: { principal: leitura(10), segunda: leitura(30) } });
+  const sessao = crypto.randomUUID();
+  const s = iniciar(amb, [`--session-id=${sessao}`]);
+  s.enviar(pedido('init-1', { subtype: 'initialize' }));
+  await s.esperar((m) => m.type === 'control_response');
+  s.enviar(usuario('oi'));
+  const primeiro = await s.esperar((m) => m.type === 'result');
+  assert.strictEqual(primeiro.result, 'ok de principal');
+  // "Usar esta agora" na segunda, com a sessão aberta e parada: ela vai junto, no fim do turno seguinte.
+  const cfg = JSON.parse(fs.readFileSync(path.join(amb.home, 'config.json'), 'utf8'));
+  fs.writeFileSync(path.join(amb.home, 'config.json'), JSON.stringify({ ...cfg, fixada: 'segunda' }));
+  s.enviar(usuario('de novo'));
+  const segundo = await s.esperar((m) => m.type === 'result' && m !== primeiro);
+  for (let i = 0; i < 40 && lerTrocas(amb).length === 0; i++) await esperarMs(100);
+  s.enviar(usuario('mais uma'));
+  const terceiro = await s.esperar((m) => m.type === 'result' && m !== primeiro && m !== segundo);
+  s.filho.stdin.end();
+  await s.saida;
+
+  assert.strictEqual(segundo.result, 'ok de principal');
+  assert.strictEqual(terceiro.result, 'ok de segunda');
+  const trocas = lerTrocas(amb);
+  assert.strictEqual(trocas.length, 1);
+  assert.deepStrictEqual([trocas[0].de, trocas[0].para, trocas[0].motivo], ['principal', 'segunda', 'escolhida']);
+  const inicios = lerLog(amb).filter((e) => e.evento === 'inicio');
+  assert.ok(inicios[1].args.includes(`--resume=${sessao}`));
+}
+
+async function contaEscolhidaQuaseSemFolgaNaoLevaASessao() {
+  const amb = ambiente({ uso: { principal: leitura(10), segunda: leitura(98) } });
+  const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
+  s.enviar(pedido('init-1', { subtype: 'initialize' }));
+  await s.esperar((m) => m.type === 'control_response');
+  const cfg = JSON.parse(fs.readFileSync(path.join(amb.home, 'config.json'), 'utf8'));
+  fs.writeFileSync(path.join(amb.home, 'config.json'), JSON.stringify({ ...cfg, fixada: 'segunda' }));
+  s.enviar(usuario('oi'));
+  const primeiro = await s.esperar((m) => m.type === 'result');
+  await esperarMs(1000);
+  s.enviar(usuario('de novo'));
+  const segundo = await s.esperar((m) => m.type === 'result' && m !== primeiro);
+  await esperarMs(1000);
+  s.filho.stdin.end();
+  await s.saida;
+  // Com 2% de folga a preventiva a tiraria de novo no turno seguinte: a sessão fica onde está, sem ir e voltar.
+  assert.strictEqual(segundo.result, 'ok de principal');
+  assert.strictEqual(lerTrocas(amb).length, 0);
+}
+
 async function pedidoDoHostDuranteATrocaChegaUmaVez() {
   const amb = ambiente({ limitadas: 'principal', extra: { FAKE_SIGTERM_MS: '800' } });
   const s = iniciar(amb, [`--session-id=${crypto.randomUUID()}`]);
@@ -354,7 +403,7 @@ async function threadDoT3RetomaASessaoAnterior() {
 }
 
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {

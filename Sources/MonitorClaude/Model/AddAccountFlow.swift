@@ -469,8 +469,11 @@ final class Transcript: @unchecked Sendable {
 }
 
 extension AccountRouter {
-    /// Removes an account the assistant created and never finished: its config entry and its folder. A folder that
-    /// never got a login holds only the router's links, so it goes; one with a login goes to the Trash instead.
+    /// Removes an account from the queue: its config entry, and its folder goes to the Trash, as the confirmation
+    /// promises. Its Keychain item stays (the Monitor never writes the Keychain), so putting the folder back brings
+    /// the account back. The folder is never deleted outright, not even without a detected login: a login the
+    /// Monitor could not read is still a login. The account in `~/.claude` is not removed, and the route never ends
+    /// up empty (see `queue(removing:)`).
     static func discard(_ id: String) throws {
         guard let config = loadConfig(), let account = config.accounts.first(where: { $0.id == id }),
               !account.usesDefaultDirectory, id != config.principal
@@ -479,17 +482,42 @@ extension AccountRouter {
             var contas = root["contas"] as? [String: Any] ?? [:]
             contas.removeValue(forKey: id)
             root["contas"] = contas
-            root["rota"] = (root["rota"] as? [String] ?? []).filter { $0 != id }
-            root["reserva"] = (root["reserva"] as? [String] ?? []).filter { $0 != id }
+            let remaining = queue(removing: id, route: root["rota"] as? [String] ?? [],
+                                  reserve: root["reserva"] as? [String] ?? [], principal: config.principal)
+            root["rota"] = remaining.route
+            root["reserva"] = remaining.reserve
             if root["preferida"] as? String == id { root["preferida"] = nil }
+            // A hand-picked account that leaves the queue stops being the choice: an account added later under the
+            // same id would otherwise come back already chosen.
+            if root["fixada"] as? String == id { root["fixada"] = nil }
         }
         let fm = FileManager.default
         guard fm.fileExists(atPath: account.directory.path) else { return }
-        if identity(for: account) == nil {
-            try? fm.removeItem(at: account.directory)
-        } else {
-            try? fm.trashItem(at: account.directory, resultingItemURL: nil)
+        // The account is already out of the config, which is what the router reads: a folder that stays behind is
+        // never used again, but the person is told where it is instead of believing it went to the Trash.
+        do {
+            try fm.trashItem(at: account.directory, resultingItemURL: nil)
+        } catch {
+            throw FolderNotTrashed(path: (account.directory.path as NSString).abbreviatingWithTildeInPath, reason: error.localizedDescription)
         }
+    }
+
+    struct FolderNotTrashed: LocalizedError {
+        var path: String
+        var reason: String
+        var errorDescription: String? {
+            "A conta saiu da fila, mas a pasta \(path) não foi para o Lixo (\(reason)). Apague-a à mão se quiser."
+        }
+    }
+
+    /// The queue without `id`. The route never ends up empty: the first reserve account moves up, or the principal
+    /// when the reserve is empty too.
+    static func queue(removing id: String, route: [String], reserve: [String],
+                      principal: String) -> (route: [String], reserve: [String]) {
+        var route = route.filter { $0 != id }
+        var reserve = reserve.filter { $0 != id }
+        if route.isEmpty { route = reserve.isEmpty ? [principal] : [reserve.removeFirst()] }
+        return (route, reserve)
     }
 }
 

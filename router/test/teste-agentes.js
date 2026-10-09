@@ -61,6 +61,21 @@ const slotDaConta = JSON.stringify({ mcpOAuth: mcp, claudeAiOauth: { accessToken
 const loginDaSegunda = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r' } });
 
 const testes = {
+  contaFixadaAMaoVenceARegraEnquantoTemFolga() {
+    configurar({ preferida: 'principal', fixada: 'extra' });
+    // Fora da regra: a preferida tem folga, e mesmo assim abre na escolhida à mão.
+    assert.strictEqual(escolhida(candidatas({ extra: { folga: 2 } })), 'extra');
+    // Esgotada, sem login ou deixada de fora por uma troca: a regra volta a decidir.
+    assert.strictEqual(escolhida(candidatas({ extra: { esgotada: Date.now() + 60000 } })), 'principal');
+    assert.strictEqual(escolhida(candidatas({ extra: { logada: false } })), 'principal');
+    assert.strictEqual(escolhida(candidatas(), { excluir: ['extra'] }), 'principal');
+    // Com a fixada, ninguém volta sozinho para a preferida.
+    assert.strictEqual(contas.preferidaDeVolta(candidatas(), 'extra', contas.carregarConfig()), null);
+    // Uma fixada que não é conta da fila some ao ler a config.
+    assert.strictEqual(configurar({ fixada: 'sumiu' }).fixada, undefined);
+    configurar();
+  },
+
   agenteParadoPorLimiteEhDetectado() {
     sessao('s1', [{ type: 'user', timestamp: new Date(agora - 70000).toISOString() }, limite(agora - 60000)]);
     const p = agentes.paradoPorLimite({ id: 'a1', sessionId: 's1', cwd, kind: 'background', startedAt: agora - 3600000 });

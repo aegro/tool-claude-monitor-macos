@@ -19,6 +19,12 @@ enum AccountRouter {
         var accounts: [Account]
         var reserveBelow: Double
         var preferred: String?
+        /// The account the person chose by hand (`fixada`): new sessions open there whatever the rule, while it has
+        /// room; out of room, the rule decides again.
+        var pinned: String? = nil
+        /// Whether the principal lives in `~/.claude` (no `dir` of its own). Only then is `~/.claude` the router's
+        /// slot, and only then does `slotIdentity` apply its rule.
+        var principalUsesDefaultDirectory: Bool = true
 
         var hasExtraAccounts: Bool { accounts.contains { !$0.usesDefaultDirectory } }
         var route: [Account] { accounts.filter { $0.role == .route } }
@@ -159,13 +165,16 @@ enum AccountRouter {
         }
 
         let preferred = (root["preferida"] as? String).flatMap { route.contains($0) || reserve.contains($0) ? $0 : nil }
+        let pinned = (root["fixada"] as? String).flatMap { route.contains($0) || reserve.contains($0) ? $0 : nil }
 
         return Config(
             enabled: root["ativo"] as? Bool ?? true,
             principal: principal,
             accounts: route.map { account($0, .route) } + reserve.map { account($0, .reserve) },
             reserveBelow: reserveBelow,
-            preferred: preferred)
+            preferred: preferred,
+            pinned: pinned,
+            principalUsesDefaultDirectory: ((entries[principal] as? [String: Any])?["dir"] as? String) == nil)
     }
 
     struct UnreadableConfig: LocalizedError {
@@ -191,6 +200,11 @@ enum AccountRouter {
             root["reserva"] = reserve
             root["preferida"] = strategy == .order ? route[0] : nil
         }
+    }
+
+    /// Chooses by hand where new sessions open (`fixada`), above the rule; nil goes back to the rule.
+    static func setPinned(_ id: String?, at url: URL = configURL) throws {
+        try updateConfig(at: url) { root in root["fixada"] = id }
     }
 
     static func setStrategy(_ strategy: Strategy, route: [String], at url: URL = configURL) throws {
@@ -369,12 +383,49 @@ enum AccountRouter {
         return "\(Keychain.service)-\(hex.prefix(8))"
     }
 
-    static func identity(for account: Account) -> AccountIdentity? {
-        let file = account.usesDefaultDirectory
-            ? ClaudeConfig.url
-            : account.directory.appendingPathComponent(".claude.json")
-        guard let data = try? Data(contentsOf: file) else { return nil }
+    static func identity(for account: Account, config: Config? = nil) -> AccountIdentity? {
+        guard !account.usesDefaultDirectory else {
+            return (config ?? loadConfig()).map { slotIdentity(config: $0) } ?? ClaudeConfig.activeAccount()
+        }
+        return folderIdentity(account)
+    }
+
+    private static func folderIdentity(_ account: Account) -> AccountIdentity? {
+        guard let data = try? Data(contentsOf: account.directory.appendingPathComponent(".claude.json")) else { return nil }
         return ClaudeConfig.parseActiveAccount(data)
+    }
+
+    static var savedLoginsDirectory: URL { home.appendingPathComponent(".estado/agentes") }
+
+    /// The login the router saved for `id` when it moved that account in or out of `~/.claude`; nil when there is
+    /// none, or the router marked it as no longer working.
+    static func savedLogin(_ id: String, in dir: URL = savedLoginsDirectory) -> AccountIdentity? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(id).json")),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["invalidoEm"] == nil
+        else { return nil }
+        return ClaudeConfig.parseActiveAccount(data)
+    }
+
+    /// Who is logged into `~/.claude`, the router's slot. `~/.claude.json` says it, but after the router moves
+    /// another account into the slot (the agents' switch), a Claude Code session still open rewrites that file with
+    /// the login it started with. The file then names an account that lives elsewhere in the queue, and the slot
+    /// account showed up as a copy of it: "Thomas (Max)" read as "Thomas (Aegro)". When the file names another
+    /// queue account and the router saved this slot account's own login, that saved login wins.
+    /// With the principal in a folder of its own, `~/.claude` is nobody's slot and the file is taken as it is.
+    static func slotIdentity(config: Config) -> AccountIdentity? {
+        guard config.principalUsesDefaultDirectory else { return ClaudeConfig.activeAccount() }
+        let others = config.accounts.filter { $0.id != config.principal }
+        var otherKeys = Set(others.compactMap { folderIdentity($0)?.key })
+        otherKeys.formUnion(others.compactMap { savedLogin($0.id)?.key })
+        return resolveSlotIdentity(declared: ClaudeConfig.activeAccount(), saved: savedLogin(config.principal),
+                                   otherKeys: otherKeys)
+    }
+
+    static func resolveSlotIdentity(declared: AccountIdentity?, saved: AccountIdentity?,
+                                    otherKeys: Set<String>) -> AccountIdentity? {
+        guard let declared, let saved, declared.key != saved.key, otherKeys.contains(declared.key) else { return declared }
+        return saved
     }
 
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {
@@ -746,6 +797,9 @@ enum AccountRouter {
                      exhausted: [String: Date]) -> String? {
         let order = config.accounts.map(\.id)
         func score(_ id: String) -> Double { headroom[id] ?? 1 }
+        if let pinned = config.pinned, available.contains(pinned), exhausted[pinned] == nil, score(pinned) > 0 {
+            return pinned
+        }
         if let preferred = config.preferred, available.contains(preferred), exhausted[preferred] == nil,
            score(preferred) > 0, score(preferred) >= config.reserveBelow {
             return preferred

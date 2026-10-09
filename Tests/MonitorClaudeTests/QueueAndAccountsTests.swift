@@ -55,6 +55,26 @@ struct QueueAndAccountsTests {
         #expect(cfg.accounts.map(\.id) == ["max", "principal", "extra"])
     }
 
+    @Test func principalComPastaPropriaNaoMoraNoClaudePadrao() throws {
+        let padrao = try #require(AccountRouter.parseConfig(Data(#"{ "contas": { "principal": {} } }"#.utf8),
+                                                            home: home, defaultDirectory: defaultDirectory))
+        #expect(padrao.principalUsesDefaultDirectory)
+        let propria = try #require(AccountRouter.parseConfig(Data(#"""
+        { "contas": { "principal": { "dir": "~/outra" }, "max": {} }, "rota": ["principal", "max"] }
+        """#.utf8), home: home, defaultDirectory: defaultDirectory))
+        #expect(!propria.principalUsesDefaultDirectory)
+        #expect(!propria.accounts.contains { $0.usesDefaultDirectory })
+    }
+
+    @Test func tirarDaFilaNuncaDeixaARotaVazia() {
+        let semReserva = AccountRouter.queue(removing: "max", route: ["max"], reserve: [], principal: "principal")
+        #expect(semReserva.route == ["principal"] && semReserva.reserve.isEmpty)
+        let comReserva = AccountRouter.queue(removing: "max", route: ["max"], reserve: ["extra", "outra"], principal: "principal")
+        #expect(comReserva.route == ["extra"] && comReserva.reserve == ["outra"])
+        let daReserva = AccountRouter.queue(removing: "extra", route: ["principal"], reserve: ["extra"], principal: "principal")
+        #expect(daReserva.route == ["principal"] && daReserva.reserve.isEmpty)
+    }
+
     // MARK: config writes
 
     @Test func salvarAFilaEscreveRotaReservaEPreferida() throws {
@@ -382,10 +402,47 @@ struct QueueAndAccountsTests {
         try write(b, "2", pid: pid, sid: "s-b")
         try write(b, "3", pid: 999_999, sid: "morta")
         let sessions = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
-                                               defaultDirectory: base.appendingPathComponent("vazia"))
+                                               defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in nil })
         #expect(sessions.count == 1)
         #expect(sessions.first?.accountId == "max")
+        // Outside `~/.claude` the folder is the account, whatever the process carries.
+        let marked = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
+                                             defaultDirectory: base.appendingPathComponent("vazia"),
+                                             openedOn: { _ in (account: "principal", started: .distantPast) })
+        #expect(marked.first?.accountId == "max")
         #expect(ClaudeSessionStore.load(directory: a.appendingPathComponent("sessions"), accountId: "principal").first?.accountId == "principal")
+    }
+
+    @Test func aMarcaDoRoteadorValeNoClaudePadraoParaQuemAbriuASessao() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("monitor-sessions-\(UUID().uuidString)")
+        let padrao = base.appendingPathComponent("claude"), max = base.appendingPathComponent("max")
+        for dir in [padrao, max] {
+            try fm.createDirectory(at: dir.appendingPathComponent("sessions"), withIntermediateDirectories: true)
+        }
+        let pid = Int(ProcessInfo.processInfo.processIdentifier)
+        try Data(#"{ "pid": \#(pid), "sessionId": "s", "cwd": "/tmp/x", "startedAt": 1000 }"#.utf8)
+            .write(to: padrao.appendingPathComponent("sessions/1.json"))
+        let antes = Date(timeIntervalSince1970: 0)
+        func load(_ mark: ClaudeSessionStore.ProcessMark?) -> ClaudeSession? {
+            ClaudeSessionStore.load(accounts: [(id: "principal", directory: padrao), (id: "max", directory: max)],
+                                    defaultDirectory: padrao, openedOn: { _ in mark }).first
+        }
+        #expect(load(nil)?.accountId == "principal")
+        // Opened on max before the agents' switch moved the principal into `~/.claude`: it still runs on max, and
+        // its file still lives in the principal's folder, which is what removing an account would trash.
+        #expect(load((account: "max", started: antes))?.accountId == "max")
+        #expect(load((account: "max", started: antes))?.folderAccountId == "principal")
+        // A mark that is no queue account is ignored, and so is the mark of a process younger than the session:
+        // the pid was reused and the file is stale.
+        #expect(load((account: "sumiu", started: antes))?.accountId == "principal")
+        #expect(load((account: "max", started: Date()))?.accountId == "principal")
+    }
+
+    @Test func contaComSessaoNaPastaNaoSaiDaFila() {
+        #expect(AccountQueue.removalBlocked(sessions: 0) == nil)
+        #expect(AccountQueue.removalBlocked(sessions: 1)?.hasPrefix("1 sessão ainda roda") == true)
+        #expect(AccountQueue.removalBlocked(sessions: 3)?.hasPrefix("3 sessões ainda rodam") == true)
     }
 
     @Test func contaCujaPastaEUmAtalhoDoPadraoMantemAMarca() throws {
@@ -397,7 +454,8 @@ struct QueueAndAccountsTests {
         let pid = Int(ProcessInfo.processInfo.processIdentifier)
         try Data(#"{ "pid": \#(pid), "sessionId": "s", "cwd": "/tmp/x", "startedAt": 1000 }"#.utf8)
             .write(to: real.appendingPathComponent("sessions/1.json"))
-        let sessions = ClaudeSessionStore.load(accounts: [(id: "principal", directory: atalho)], defaultDirectory: real)
+        let sessions = ClaudeSessionStore.load(accounts: [(id: "principal", directory: atalho)], defaultDirectory: real,
+                                               openedOn: { _ in nil })
         #expect(sessions.count == 1)
         #expect(sessions.first?.accountId == "principal")
     }

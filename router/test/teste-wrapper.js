@@ -58,6 +58,27 @@ const testes = {
     assert.ok(!fs.existsSync(path.join(contas.DIR_AO_VIVO, 'compare.json')));
   },
 
+  contaDoTerminalVemDoLoginGuardadoQuandoOArquivoNomeiaOutraContaDaFila() {
+    const home = process.env.CLAUDE_AUTO_HOME;
+    const aegro = { accountUuid: 'u1', organizationUuid: 'org-aegro', organizationName: 'Aegro' };
+    const max = { accountUuid: 'u1', organizationUuid: 'org-max', organizationName: 'Max' };
+    fs.mkdirSync(path.join(home, 'aegro'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'aegro', '.claude.json'), JSON.stringify({ oauthAccount: aegro }));
+    fs.mkdirSync(path.join(contas.DIR_ESTADO, 'agentes'), { recursive: true });
+    fs.writeFileSync(path.join(contas.DIR_ESTADO, 'agentes', 'max.json'), JSON.stringify({ oauthAccount: max, chave: 'u1:org-max' }));
+    const cfg = { principal: 'max', contas: { max: {}, aegro: {} }, rota: ['max', 'aegro'], reserva: [] };
+    // A sessão aberta regravou o ~/.claude.json com a Aegro, que mora na pasta dela: vale o login guardado da Max.
+    assert.strictEqual(contas.contaDoDirPadrao('max', cfg, aegro).organizationUuid, 'org-max');
+    // Um login novo que não é de nenhuma conta da fila (o /login no terminal) fica como está.
+    const outra = { accountUuid: 'u9', organizationUuid: 'org-9' };
+    assert.strictEqual(contas.contaDoDirPadrao('max', cfg, outra), outra);
+    // O arquivo concorda com o guardado, ou não há guardado: fica o arquivo.
+    assert.strictEqual(contas.contaDoDirPadrao('max', cfg, max), max);
+    assert.strictEqual(contas.contaDoDirPadrao('aegro', { principal: 'aegro', contas: { aegro: {} }, rota: ['aegro'], reserva: [] }, aegro), aegro);
+    // Uma conta que saiu da fila mas ficou em `contas` não conta: o login dela no terminal fica como está.
+    assert.strictEqual(contas.contaDoDirPadrao('max', { ...cfg, rota: ['max'] }, aegro), aegro);
+  },
+
   primeiroArgumentoComOCaminhoDoClaudeViraOBinario() {
     const r = binarioDoWrapper(['/ext/resources/native-binary/claude', '--output-format', 'stream-json'], ehExecutavel);
     assert.strictEqual(r.bin, '/ext/resources/native-binary/claude');

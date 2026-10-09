@@ -16,6 +16,9 @@ struct AccountQueue: Equatable {
         var agentsLogin: Bool
         var exhaustedUntil: Date?
         var sessions: Int = 0
+        /// Sessions running with this account's folder as their config directory, whatever account they were opened
+        /// on: the account cannot leave the queue while they run, since its folder would go to the Trash under them.
+        var sessionsInFolder: Int = 0
         /// Whether the agents of `claude agents` run on this account now (its login is in `~/.claude`).
         var runsAgents = false
         /// This entry is the account whose numbers the Monitor reads live.
@@ -37,6 +40,18 @@ struct AccountQueue: Equatable {
     /// The account in `~/.claude`: with switching off, the router hands everything to plain `claude`, which opens
     /// there whatever the order of the queue.
     var principal: String?
+    /// Chosen by hand to take new sessions, above the rule (see `AccountRouter.Config.pinned`).
+    var pinned: String?
+
+    /// Why an account cannot leave the queue now, or nil when it can: its folder would go to the Trash under
+    /// sessions still running with it.
+    static func removalBlocked(sessions: Int) -> String? {
+        switch sessions {
+        case 0: nil
+        case 1: "1 sessão ainda roda com a pasta desta conta. Feche-a antes de tirar a conta da fila: a pasta iria para o Lixo com ela aberta."
+        default: "\(sessions) sessões ainda rodam com a pasta desta conta. Feche-as antes de tirar a conta da fila: a pasta iria para o Lixo com elas abertas."
+        }
+    }
 
     var route: [Entry] { entries.filter { $0.role == .route } }
     var reserve: [Entry] { entries.filter { $0.role == .reserve } }
@@ -51,7 +66,8 @@ struct AccountQueue: Equatable {
                                       usesDefaultDirectory: false, role: $0.role, monogram: $0.monogram)
             },
             reserveBelow: reserveBelow,
-            preferred: strategy == .order ? route.first?.id : nil)
+            preferred: strategy == .order ? route.first?.id : nil,
+            pinned: pinned)
     }
 
     private func pick(excluding: Set<String>, now: Date) -> String? {

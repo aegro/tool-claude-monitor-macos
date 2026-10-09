@@ -374,7 +374,9 @@ final class Monitor: ObservableObject {
         let desktopSeries = ClaudeDesktop.samplesByOrg()
         desktopOrgs = ClaudeDesktop.summarize(desktopSeries)
 
-        let identity = ClaudeConfig.activeAccount()
+        // The router's view of `~/.claude` when there is one: the file alone can name the wrong account right after
+        // the agents' switch (see `slotIdentity`).
+        let identity = AccountRouter.loadConfig().map { AccountRouter.slotIdentity(config: $0) } ?? ClaudeConfig.activeAccount()
         if identity?.key != lastAccountKey {
             cachedCreds = nil
             usage = nil
@@ -435,7 +437,7 @@ final class Monitor: ObservableObject {
         var refused: Set<String> = []
 
         for account in config.accounts {
-            let identity = AccountRouter.identity(for: account)
+            let identity = AccountRouter.identity(for: account, config: config)
             logins[account.id] = identity
             let stored = identity.flatMap { accounts.records[$0.key]?.snapshot }
             let routerRead = readings[account.id]
@@ -941,7 +943,11 @@ final class Monitor: ObservableObject {
         cpuTrail.append(sys.cpuPercent)
         if cpuTrail.count > 60 { cpuTrail.removeFirst(cpuTrail.count - 60) }
 
-        sessions = ClaudeSessionStore.load(accounts: sessionDirectories)
+        // The router's mark comes from the sample: the sampler caches each process's environment by pid and start
+        // time, so reading it again here would cost a KERN_PROCARGS2 per session per tick, on the main actor.
+        var marks: [pid_t: ClaudeSessionStore.ProcessMark] = [:]
+        for proc in procs { if let account = proc.claude.account { marks[proc.pid] = (account, proc.started) } }
+        sessions = ClaudeSessionStore.load(accounts: sessionDirectories, openedOn: { marks[$0] })
         attribution = Attribution.build(procs: procs, sessions: sessions)
     }
 
@@ -975,7 +981,9 @@ final class Monitor: ObservableObject {
         }
         let entries: [AccountQueue.Entry] = router.config.accounts.map { account in
             let identity = router.logins[account.id]
-            let live = identity != nil && identity?.key == activeAccount?.key
+            // The live feed belongs to this row only while it is this account's: carried by the desktop app it can be
+            // another organization's, and then the row, its detail and its forecast all use the account's own reading.
+            let live = identity != nil && identity?.key == activeAccount?.key && usageIsActiveAccount
             // The freshest reading wins: with the terminal token failing, the router may have just read this
             // account with its own login while the live feed is still holding an old number.
             let candidates = [live ? usage : nil, router.usage[account.id],
@@ -989,6 +997,7 @@ final class Monitor: ObservableObject {
                 agentsLogin: account.id == router.config.principal || router.agentsLogins.contains(account.id),
                 exhaustedUntil: router.exhausted[account.id].flatMap { $0 > now ? $0 : nil },
                 sessions: sessions.filter { $0.accountId == account.id }.count,
+                sessionsInFolder: sessions.filter { $0.folderAccountId == account.id }.count,
                 runsAgents: account.id == router.config.principal,
                 isLive: live,
                 loginIdle: router.idleLogins.contains(account.id),
@@ -996,7 +1005,36 @@ final class Monitor: ObservableObject {
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
                             reserveBelow: router.config.reserveBelow, configured: true,
-                            principal: router.config.principal)
+                            principal: router.config.principal, pinned: router.config.pinned)
+    }
+
+    /// The 5h window the menu bar shows, and whether it is current: the account new sessions open on, which is the
+    /// one its monogram names. Before, the number came from the account in `~/.claude` whatever the queue said, so
+    /// after choosing another account the menu bar kept showing the old one's percentage.
+    struct MenuBarReading {
+        var window: LimitWindow?
+        var current: Bool
+        var seenAt: Date?
+        /// The live account's own reading: only then does the outlook (its pace forecast) describe this number.
+        var isLive: Bool
+    }
+
+    /// True while `usage` describes the terminal account. With the terminal token dead the desktop app carries the
+    /// live feed, and it may be driving another organization: that reading is not the active account's.
+    private var usageIsActiveAccount: Bool { liveOrg == activeAccount?.organizationUuid }
+
+    /// A queue account's reading older than this is drawn muted in the menu bar, like a dead live feed.
+    static let menuBarFreshness: TimeInterval = 15 * 60
+
+    var menuBarSession: MenuBarReading {
+        let q = accountQueue
+        guard q.configured, !q.isSingle, let id = q.newSessions(), let entry = q.entry(id),
+              !entry.isLive else {
+            return MenuBarReading(window: usage?.session, current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
+        }
+        let seen = entry.snapshot?.fetchedAt
+        let fresh = seen.map { Date().timeIntervalSince($0) < Self.menuBarFreshness } ?? false
+        return MenuBarReading(window: entry.snapshot?.session, current: fresh, seenAt: seen, isLive: false)
     }
 
     /// The monogram the menu bar shows: only when new sessions are not opening on the head of the queue.
@@ -1004,6 +1042,24 @@ final class Monitor: ObservableObject {
         let q = accountQueue
         guard q.configured, !q.isSingle, let inUse = q.newSessions(), inUse != q.route.first?.id else { return nil }
         return q.entry(inUse)?.monogram
+    }
+
+    /// New sessions open on `id` from now on, above the rule; nil goes back to the rule.
+    func pinAccount(_ id: String?) async {
+        await save { try AccountRouter.setPinned(id) }
+        watchAgentsNow()
+    }
+
+    /// Takes an account out of the queue (see `AccountRouter.discard`): for an entry that should not be there, such
+    /// as a second login into the same account.
+    func removeAccount(_ id: String) async {
+        // The account's folder goes to the Trash: never under a session still running with it as its config
+        // directory. Checked when the removal's turn comes, after the edits queued before it, not when the button
+        // was pressed: a session opened in between counts.
+        await save(unless: { [weak self] in
+            AccountQueue.removalBlocked(sessions: self?.sessions.filter { $0.folderAccountId == id }.count ?? 0)
+        }) { try AccountRouter.discard(id) }
+        watchAgentsNow()
     }
 
     func moveAccount(_ id: String, to index: Int) async {
@@ -1043,7 +1099,9 @@ final class Monitor: ObservableObject {
 
     /// One router edit at a time, then the config is read back into the panel right away. The usage stays as it
     /// was: an edit to the queue changes no number, and a fresh poll would only spend the endpoint.
-    private func save(_ change: @escaping @Sendable () throws -> Void) async {
+    /// `unless`, when it returns a reason, cancels the edit at its turn and shows the reason instead.
+    private func save(unless blocked: (@MainActor () -> String?)? = nil,
+                      _ change: @escaping @Sendable () throws -> Void) async {
         // Edits run one after the other, in the order they were asked for: a second move made while the first is
         // still writing is applied after it, never dropped.
         pendingRouterSaves += 1
@@ -1051,6 +1109,10 @@ final class Monitor: ObservableObject {
         let previous = routerSaveTail
         let mine = Task { @MainActor in
             await previous?.value
+            if let reason = blocked?() {
+                actionError = reason
+                return
+            }
             do {
                 try await Blocking.runThrowing { try change() }
                 actionError = nil

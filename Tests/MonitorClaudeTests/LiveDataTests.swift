@@ -234,4 +234,27 @@ struct LiveDataTests {
         #expect(!quick.interrupted)
         #expect(quick.status == 1)
     }
+
+    /// After the agents' switch an open Claude Code session rewrote `~/.claude.json` with the login it started with:
+    /// the slot account read as a copy of the one now in its own folder. The router's saved login wins then.
+    @Test func contaDoTerminalVemDoLoginGuardadoQuandoOArquivoNomeiaOutraConta() throws {
+        let aegro = AccountIdentity(accountUuid: "u1", organizationUuid: "org-aegro")
+        let max = AccountIdentity(accountUuid: "u1", organizationUuid: "org-max")
+        #expect(AccountRouter.resolveSlotIdentity(declared: aegro, saved: max, otherKeys: [aegro.key]) == max)
+        // A new login that is no queue account's (a /login in the terminal) stands.
+        let other = AccountIdentity(accountUuid: "u9", organizationUuid: "org-9")
+        #expect(AccountRouter.resolveSlotIdentity(declared: other, saved: max, otherKeys: [aegro.key]) == other)
+        #expect(AccountRouter.resolveSlotIdentity(declared: max, saved: max, otherKeys: [aegro.key]) == max)
+        #expect(AccountRouter.resolveSlotIdentity(declared: aegro, saved: nil, otherKeys: [aegro.key]) == aegro)
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-agentes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(#"{"oauthAccount": {"accountUuid": "u1", "organizationUuid": "org-max"}, "chave": "u1:org-max"}"#.utf8)
+            .write(to: dir.appendingPathComponent("max.json"))
+        try Data(#"{"oauthAccount": {"accountUuid": "u2"}, "invalidoEm": 1}"#.utf8).write(to: dir.appendingPathComponent("velha.json"))
+        #expect(AccountRouter.savedLogin("max", in: dir)?.key == "u1:org-max")
+        #expect(AccountRouter.savedLogin("velha", in: dir) == nil)
+        #expect(AccountRouter.savedLogin("nada", in: dir) == nil)
+    }
 }

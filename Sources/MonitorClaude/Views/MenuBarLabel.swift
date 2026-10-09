@@ -13,7 +13,6 @@ struct MenuBarLabel: View {
     @ObservedObject private var settings = Settings.shared
     @ObservedObject private var keep = KeepAwake.shared
 
-    private var session: LimitWindow? { monitor.usage?.session }
     private var showLimit: Bool { settings.menuBarStyle != .cpu }
     private var showCPU: Bool { settings.menuBarStyle != .sessionLimit }
 
@@ -21,30 +20,37 @@ struct MenuBarLabel: View {
     /// that is no longer current is drawn muted and suffixed with "·" rather than pretending —
     /// this is the surface that sat for twenty-one hours reporting a dead feed's percentage in
     /// exactly the same ink as a live one.
-    private var current: Bool { monitor.liveIsCurrent }
-
-    private var staleHelp: String {
-        let age = monitor.liveSeenAt.map { " (\(Fmt.ago($0)))" } ?? ""
+    private func staleHelp(_ reading: Monitor.MenuBarReading) -> String {
+        let age = reading.seenAt.map { " (\(Fmt.ago($0)))" } ?? ""
         return "Número parado\(age) — abra o painel para ver qual fonte caiu."
     }
 
-    private var tone: Color {
-        guard let session, current else { return .secondary }
-        if session.isCritical { return Ink.alarm }
-        if case .willHitCap(_, _, _, _, true) = monitor.outlook { return Ink.alarm }
+    /// Alarm only from what describes the number shown: its own window, and the pace forecast only when that
+    /// forecast is about this account (the live one).
+    private func alarmed(_ reading: Monitor.MenuBarReading) -> Bool? {
+        guard let session = reading.window, reading.current else { return nil }
+        if session.isCritical { return true }
+        if reading.isLive, case .willHitCap(_, _, _, _, true) = monitor.outlook { return true }
+        return false
+    }
+
+    private func tone(_ reading: Monitor.MenuBarReading) -> Color {
+        guard let alarm = alarmed(reading), let session = reading.window else { return .secondary }
+        if alarm { return Ink.alarm }
         if (session.paceRatio ?? 0) >= 1.15 { return Ink.ember }
         return .primary
     }
 
-    private var nsTone: NSColor {
-        guard let session, current else { return .secondaryLabelColor }
-        if session.isCritical { return NSColor(Ink.alarm) }
-        if case .willHitCap(_, _, _, _, true) = monitor.outlook { return NSColor(Ink.alarm) }
+    private func nsTone(_ reading: Monitor.MenuBarReading) -> NSColor {
+        guard let alarm = alarmed(reading), let session = reading.window else { return .secondaryLabelColor }
+        if alarm { return NSColor(Ink.alarm) }
         if (session.paceRatio ?? 0) >= 1.15 { return NSColor(Ink.ember) }
         return .labelColor
     }
 
     var body: some View {
+        let reading = monitor.menuBarSession
+        let current = reading.current
         HStack(spacing: 4) {
             if keep.active {
                 Image(systemName: keep.lidClosed ? "sun.max.fill" : "sun.max")
@@ -53,21 +59,21 @@ struct MenuBarLabel: View {
                     .help(keep.stateText)
             }
 
-            if showLimit, let session {
+            if showLimit, let session = reading.window {
                 Image(nsImage: RingIcon.make(
                     fraction: session.utilization / 100,
                     // No pace notch on a stale number: the notch advances with the clock while the
                     // percentage stands still, so it would keep drawing a verdict about a reading
                     // that stopped moving hours ago.
                     pace: current ? session.paceTarget / 100 : 0,
-                    tint: nsTone,
+                    tint: nsTone(reading),
                     hot: showCPU ? false : monitor.system.cpuPercent > 60,
                     alert: monitor.access.attention > 0
                 ))
                 Text("\(Int(session.utilization.rounded()))%\(current ? "" : "·")")
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(tone)
-                    .modifier(StaleHint(text: current ? nil : staleHelp))
+                    .foregroundStyle(tone(reading))
+                    .modifier(StaleHint(text: current ? nil : staleHelp(reading)))
                 // Off the head of the queue, the menu bar says which account new sessions open on.
                 if let monogram = monitor.menuBarMonogram {
                     Text(monogram)
@@ -76,6 +82,9 @@ struct MenuBarLabel: View {
                 }
             } else if showLimit {
                 Image(systemName: "gauge.with.dots.needle.33percent")
+                if let monogram = monitor.menuBarMonogram {
+                    Text(monogram).font(.system(size: 9.5, weight: .bold)).help("Sessões novas abrem nesta conta")
+                }
             }
 
             if showCPU {
@@ -83,7 +92,9 @@ struct MenuBarLabel: View {
                 Image(systemName: "cpu").font(.system(size: 10))
                 Text("\(Int(monitor.system.cpuPercent.rounded()))%")
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(monitor.system.cpuPercent > 80 ? tone : .primary)
+                    // The machine's own heat, in the ember the ring uses for a loaded machine: the limit reading's
+                    // tone says nothing about the CPU, and muted it would hide the load at its peak.
+                    .foregroundStyle(monitor.system.cpuPercent > 80 ? Ink.ember : .primary)
             }
         }
     }

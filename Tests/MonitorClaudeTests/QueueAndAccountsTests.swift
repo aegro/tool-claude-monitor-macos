@@ -219,6 +219,29 @@ struct QueueAndAccountsTests {
         #expect(result.output.contains("antes"))
     }
 
+    /// A command that exits in time, with Foundation's exit notice late (the 3-core CI runner delays it by over a
+    /// second), is a zombie at the deadline: it has to read as exited, or its answer is thrown away as a timeout.
+    @Test func comandoQueSaiuMasNaoFoiColhidoContaComoEncerrado() {
+        var pid: pid_t = 0
+        var argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sh"), strdup("-c"), strdup("exit 0"), nil]
+        defer { argv.forEach { free($0) } }
+        #expect(posix_spawn(&pid, "/bin/sh", nil, nil, &argv, environ) == 0)
+        var status: Int32 = 0
+        defer { waitpid(pid, &status, 0) }
+        // Not reaped: still found by kill(pid, 0) once it has exited.
+        let deadline = Date().addingTimeInterval(5)
+        while !AccountRouter.hasExited(pid) && Date() < deadline { usleep(20_000) }
+        #expect(AccountRouter.hasExited(pid))
+        #expect(kill(pid, 0) == 0)
+
+        var running: pid_t = 0
+        var sleepArgv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("30"), nil]
+        defer { sleepArgv.forEach { free($0) } }
+        #expect(posix_spawn(&running, "/bin/sleep", nil, nil, &sleepArgv, environ) == 0)
+        defer { kill(running, SIGKILL); waitpid(running, &status, 0) }
+        #expect(!AccountRouter.hasExited(running))
+    }
+
     @Test func filhoQueIgnoraOSigtermMorreJuntoComOComandoNoPrazo() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-prazo-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

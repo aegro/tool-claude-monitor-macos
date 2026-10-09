@@ -600,7 +600,9 @@ enum AccountRouter {
         // still ran out of time, and its output is not an answer.
         var timedOut = false
         if exited.wait(timeout: .now() + timeout) == .timedOut {
-            timedOut = process.isRunning
+            // `isRunning` comes from the same exit notice as the handler, so it lags just as much: a command that
+            // exited in time, with its notice still on the way, is not one that ran out of time.
+            timedOut = process.isRunning && !hasExited(pid)
             // Remembered, because once `pid` exits its children belong to launchd and can no longer be found
             // under it; whatever ignored SIGTERM gets SIGKILL with the parent.
             let children = terminateDescendants(of: pid)
@@ -628,6 +630,15 @@ enum AccountRouter {
     /// Kills, two seconds on, the children of a timed-out command that ignored SIGTERM after the command itself
     /// exited. A serial queue of its own, which gets a thread even while the global queues are busy.
     private static let reaper = DispatchQueue(label: "monitor-claude.reaper", qos: .userInitiated)
+
+    /// Whether `pid` has exited, reaped or not. Read from the kernel, not from Foundation's exit notice: an exited
+    /// child no one has reaped yet is a zombie, which `proc_pidinfo` no longer finds (ESRCH) while `kill(pid, 0)`
+    /// still does. Only for a child of this process, whose pid cannot be reused before it is reaped.
+    static func hasExited(_ pid: pid_t) -> Bool {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == 0 && errno == ESRCH
+    }
 
     /// Sends `signal` (SIGTERM by default) to everything under `pid`, deepest first, and leaves `pid` itself
     /// alone. Returns the processes it signalled.

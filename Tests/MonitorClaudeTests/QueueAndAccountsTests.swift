@@ -402,9 +402,17 @@ struct QueueAndAccountsTests {
         try write(b, "2", pid: pid, sid: "s-b")
         try write(b, "3", pid: 999_999, sid: "morta")
         let sessions = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
-                                               defaultDirectory: base.appendingPathComponent("vazia"))
+                                               defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in nil })
         #expect(sessions.count == 1)
         #expect(sessions.first?.accountId == "max")
+        // The router's mark on the process wins over the folder: a session opened on the account that later left
+        // `~/.claude` in the agents' switch still runs on it. A mark that is no queue account is ignored.
+        let marked = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
+                                             defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in "principal" })
+        #expect(marked.first?.accountId == "principal")
+        let stranger = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
+                                               defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in "sumiu" })
+        #expect(stranger.first?.accountId == "max")
         #expect(ClaudeSessionStore.load(directory: a.appendingPathComponent("sessions"), accountId: "principal").first?.accountId == "principal")
     }
 
@@ -417,7 +425,8 @@ struct QueueAndAccountsTests {
         let pid = Int(ProcessInfo.processInfo.processIdentifier)
         try Data(#"{ "pid": \#(pid), "sessionId": "s", "cwd": "/tmp/x", "startedAt": 1000 }"#.utf8)
             .write(to: real.appendingPathComponent("sessions/1.json"))
-        let sessions = ClaudeSessionStore.load(accounts: [(id: "principal", directory: atalho)], defaultDirectory: real)
+        let sessions = ClaudeSessionStore.load(accounts: [(id: "principal", directory: atalho)], defaultDirectory: real,
+                                               openedOn: { _ in nil })
         #expect(sessions.count == 1)
         #expect(sessions.first?.accountId == "principal")
     }

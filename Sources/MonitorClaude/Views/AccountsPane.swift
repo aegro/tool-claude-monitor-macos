@@ -436,7 +436,8 @@ struct AccountRow: View {
         } else if !entry.hasLogin {
             StateChip(text: entry.loginRefused ? "sem acesso" : "sem login", tone: .gone)
         } else if inUse {
-            StateChip(text: "em uso", tone: .inUse)
+            // Where new sessions open, which is not where every open session runs ("N sessões aqui" says that).
+            StateChip(text: "sessões novas", tone: .inUse)
         } else if next {
             StateChip(text: "próxima", tone: .next)
         }

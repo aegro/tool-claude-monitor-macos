@@ -38,7 +38,9 @@ enum ClaudeSessionStore {
 
     /// Sessions from `~/.claude` plus every router account directory: a session opened on an extra account writes
     /// its file under that account's own `sessions/`, which is not linked to `~/.claude`.
-    static func load(accounts: [(id: String?, directory: URL)] = [], defaultDirectory: URL = root) -> [ClaudeSession] {
+    static func load(accounts: [(id: String?, directory: URL)] = [], defaultDirectory: URL = root,
+                     openedOn: (pid_t) -> String? = { ProcessSampler.argsAndEnv(pid: $0)?.claude.account }) -> [ClaudeSession] {
+        let known = Set(accounts.compactMap(\.id))
         var seen = Set<pid_t>()
         var out: [ClaudeSession] = []
         var dirs: [(String?, URL)] = accounts.map { ($0.id, $0.directory) }
@@ -50,9 +52,13 @@ enum ClaudeSessionStore {
             dirs.insert((nil, defaultDirectory), at: 0)
         }
         for (id, dir) in dirs {
-            for session in load(directory: dir.appendingPathComponent("sessions"), accountId: id)
+            for var session in load(directory: dir.appendingPathComponent("sessions"), accountId: id)
             where !seen.contains(session.pid) {
                 seen.insert(session.pid)
+                // The folder says where the session lives; the router's mark on the process says which account it
+                // was opened on. They differ in `~/.claude` after the agents' switch moves another account in: a
+                // session opened there before the switch still runs on the account that left.
+                if let marked = openedOn(session.pid), known.contains(marked) { session.accountId = marked }
                 out.append(session)
             }
         }

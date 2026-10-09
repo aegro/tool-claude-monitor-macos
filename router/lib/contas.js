@@ -599,6 +599,78 @@ function apararTrocas() {
   } catch {}
 }
 
+function motivoLegivel(motivo) {
+  const texto = String(motivo || '');
+  const base = texto.startsWith('agents ') ? texto.slice('agents '.length) : texto;
+  if (base === 'five_hour') return 'bateu o limite de 5h';
+  if (base.startsWith('seven_day')) return 'bateu o limite da semana';
+  if (base === 'limite' || base === 'rate_limit') return 'bateu o limite';
+  if (base === 'auth') return 'pediu login de novo';
+  if (base === 'cobranca') return 'deu erro de cobrança';
+  if (base === 'conta_suspensa') return 'teve a conta suspensa';
+  if (base === 'preventiva') return 'estava quase no limite';
+  if (base === 'ao abrir') return 'estava sem folga quando os agentes abriram';
+  if (base === 'manual') return 'foi trocada à mão';
+  if (base === 'teste') return 'saiu num teste de troca';
+  return 'ficou sem folga';
+}
+
+function eLimite(motivo) {
+  const base = String(motivo || '').replace(/^agents /, '');
+  return base === 'five_hour' || base.startsWith('seven_day') || base === 'limite' || base === 'rate_limit';
+}
+
+function horaDaVolta(ms, agora = Date.now()) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  const hora = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return new Date(agora).toDateString() === d.toDateString() ? hora : `${p(d.getDate())}/${p(d.getMonth() + 1)} ${hora}`;
+}
+
+function textoDaTroca({ de, para, motivo }, nome = (id) => id, volta = null, agora = Date.now()) {
+  const agentes = String(motivo || '').startsWith('agents ');
+  if (String(motivo || '').replace(/^agents /, '') === 'preferida') {
+    return {
+      titulo: `Voltou para ${nome(para)}`,
+      texto: `${nome(para)} voltou a ter folga${agentes ? '. Os agentes voltaram junto.' : '.'}`,
+    };
+  }
+  let texto = `${nome(de)} ${motivoLegivel(motivo)}.`;
+  // Só um limite renova numa hora certa; para os outros motivos, o prazo guardado é um palpite.
+  if (volta && volta > agora && eLimite(motivo)) texto += ` Volta às ${horaDaVolta(volta, agora)}.`;
+  if (agentes) texto += ' Os agentes seguiram junto.';
+  return { titulo: `Trocou para ${nome(para)}`, texto };
+}
+
+// A hora da volta na notificação só sai de uma janela de uso conhecida (a busca do prazoPadrao,
+// sem o palpite de 1h/6h): o prazo de esgotadas.json continua guiando a escolha, mas um palpite
+// não vira "Volta às" para quem lê o aviso. Um limite semanal de um modelo (seven_day_opus) usa
+// a janela daquele modelo, que renova em outra hora que a semanal geral.
+function janelaDoModelo(uso, base) {
+  const modelo = base.slice('seven_day_'.length).toLowerCase();
+  if (!modelo) return null;
+  // O formato antigo guarda a chave crua (seven_day_opus); o novo, a janela com escopo e o nome do
+  // modelo no rótulo ("Weekly Opus").
+  const casa = (j) =>
+    j.chave === base ||
+    String(j.chave || '').toLowerCase().endsWith(`_${modelo}`) ||
+    String(j.rotulo || '').toLowerCase() === `weekly ${modelo}`;
+  return (uso.janelas || []).find(casa) || null;
+}
+
+function voltaConhecida(id, motivo, agora = Date.now()) {
+  const cache = lerJson(ARQ_USO, {})[id];
+  const uso = cache && cache.uso;
+  if (!uso) return null;
+  const base = String(motivo || '').replace(/^agents /, '');
+  const doModelo = base.startsWith('seven_day_') ? janelaDoModelo(uso, base) : null;
+  if (doModelo && doModelo.renovaEm > agora) return doModelo.renovaEm;
+  const janela = base === 'five_hour' ? uso.cinco : base.startsWith('seven_day') ? uso.sete : null;
+  if (janela && janela.renovaEm > agora) return janela.renovaEm;
+  const cheias = (uso.janelas || []).filter((j) => j.usado >= 98 && j.renovaEm > agora).map((j) => j.renovaEm);
+  return cheias.length ? Math.max(...cheias) : null;
+}
+
 function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
   const registro = { em: Date.now(), de, para, motivo, sessao: sessao || null, interrompidas, pid: process.pid };
   try {
@@ -607,7 +679,9 @@ function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
     fs.appendFileSync(ARQ_TROCAS, JSON.stringify(registro) + '\n');
   } catch {}
   log(`troca ${de} -> ${para} (${motivo}) sessão ${sessao || '-'}`);
-  notificar('Claude: account switch', `${nomeDaConta(de)} → ${nomeDaConta(para)} (${motivo})`);
+  const cfg = carregarConfig();
+  const aviso = textoDaTroca({ de, para, motivo }, (id) => nomeDaConta(id, cfg), voltaConhecida(de, motivo));
+  notificar(aviso.titulo, aviso.texto);
 }
 
 function lerTrocas(limite = 30) {
@@ -708,6 +782,8 @@ module.exports = {
   lerEsgotadas,
   liberar,
   registrarTroca,
+  textoDaTroca,
+  voltaConhecida,
   lerTrocas,
   notificar,
   resolverClaude,

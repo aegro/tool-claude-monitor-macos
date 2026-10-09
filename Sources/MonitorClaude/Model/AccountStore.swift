@@ -38,12 +38,17 @@ final class AccountStore: ObservableObject {
     /// older snapshot finishing last would silently revert accounts.json to stale data.
     private let writeQueue = DispatchQueue(label: "farol.accounts.write", qos: .utility)
 
-    init() {
-        let dir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Farol", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        url = dir.appendingPathComponent("accounts.json")
+    /// `url` is for tests; the app keeps the registry next to the usage history.
+    init(url: URL? = nil) {
+        if let url {
+            self.url = url
+        } else {
+            let dir = FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Farol", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            self.url = dir.appendingPathComponent("accounts.json")
+        }
         load()
     }
 
@@ -66,7 +71,7 @@ final class AccountStore: ObservableObject {
     // MARK: persistence
 
     func flush() {
-        guard dirty else { return }
+        guard dirty, !Monitor.readOnly else { return }
         dirty = false
         let snapshot = records
         let target = url

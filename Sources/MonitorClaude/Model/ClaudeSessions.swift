@@ -13,6 +13,8 @@ struct ClaudeSession: Identifiable, Equatable {
     var jobId: String?
     var startedAt: Date?
     var updatedAt: Date?
+    /// The router account whose config directory holds this session, nil for `~/.claude` when no router is set up.
+    var accountId: String?
 
     var id: pid_t { pid }
     var isBusy: Bool { status == "busy" }
@@ -34,8 +36,30 @@ enum ClaudeSessionStore {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
     }
 
-    static func load() -> [ClaudeSession] {
-        let dir = root.appendingPathComponent("sessions")
+    /// Sessions from `~/.claude` plus every router account directory: a session opened on an extra account writes
+    /// its file under that account's own `sessions/`, which is not linked to `~/.claude`.
+    static func load(accounts: [(id: String?, directory: URL)] = [], defaultDirectory: URL = root) -> [ClaudeSession] {
+        var seen = Set<pid_t>()
+        var out: [ClaudeSession] = []
+        var dirs: [(String?, URL)] = accounts.map { ($0.id, $0.directory) }
+        // Resolve symlinks first: an account `dir` that aliases `~/.claude` is the same folder, and scanning it
+        // as the nil account first would win the pid dedup and drop the account marker.
+        func canonical(_ url: URL) -> URL { url.resolvingSymlinksInPath().standardizedFileURL }
+        let defaultCanonical = canonical(defaultDirectory)
+        if !dirs.contains(where: { canonical($0.1) == defaultCanonical }) {
+            dirs.insert((nil, defaultDirectory), at: 0)
+        }
+        for (id, dir) in dirs {
+            for session in load(directory: dir.appendingPathComponent("sessions"), accountId: id)
+            where !seen.contains(session.pid) {
+                seen.insert(session.pid)
+                out.append(session)
+            }
+        }
+        return out.sorted { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
+    }
+
+    static func load(directory dir: URL, accountId: String?) -> [ClaudeSession] {
         guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
         else { return [] }
 
@@ -60,9 +84,10 @@ enum ClaudeSessionStore {
                 agent: d["agent"] as? String,
                 jobId: d["jobId"] as? String,
                 startedAt: (d["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) },
-                updatedAt: (d["updatedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+                updatedAt: (d["updatedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) },
+                accountId: accountId
             ))
         }
-        return out.sorted { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
+        return out
     }
 }

@@ -44,6 +44,17 @@ enum Type {
     static let valueBig = Font.system(size: 19, weight: .semibold).monospacedDigit()
     static let section = Font.system(size: 10, weight: .semibold)
     static let mono = Font.system(size: 10, weight: .regular).monospaced()
+
+    // The 2.0 panel reads at the size of the Mac's own menu bar panels (13 pt names, 11 pt captions).
+    static let body = Font.system(size: 12.5)
+    static let bodyMedium = Font.system(size: 12.5, weight: .medium)
+    static let strong = Font.system(size: 13, weight: .semibold)
+    static let caption = Font.system(size: 11)
+    static let captionMedium = Font.system(size: 11, weight: .medium)
+    static let captionStrong = Font.system(size: 11, weight: .semibold).monospacedDigit()
+    static let headline = Font.system(size: 18, weight: .semibold)
+    static let groupTitle = Font.system(size: 11, weight: .semibold)
+    static let mini = Font.system(size: 10.5)
 }
 
 enum Fmt {
@@ -105,10 +116,31 @@ enum Fmt {
         return f.string(from: d)
     }
 
+    /// "sáb 07:59" within the coming week, "13/10 12:00" further out: a weekly reset reads by its day.
+    static func weekday(_ d: Date, now: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = br
+        if d.timeIntervalSince(now) < 6 * 86_400, d > now {
+            f.dateFormat = Calendar.current.isDate(d, inSameDayAs: now) ? "HH:mm" : "EEE HH:mm"
+            return f.string(from: d).replacingOccurrences(of: ".", with: "")
+        }
+        f.dateFormat = "dd/MM HH:mm"
+        return f.string(from: d)
+    }
+
     /// "há 3h05" — the one phrasing for a relative age, so the several places that show one all
     /// read the same.
     static func ago(_ d: Date, now: Date = Date()) -> String {
         "há \(duration(now.timeIntervalSince(d)))"
+    }
+
+    /// "a, b e c": a list in Portuguese, whatever the system language is.
+    static func list(_ items: [String]) -> String {
+        switch items.count {
+        case 0: return ""
+        case 1: return items[0]
+        default: return items.dropLast().joined(separator: ", ") + " e " + items[items.count - 1]
+        }
     }
 
     static func cpu(_ v: Double) -> String {

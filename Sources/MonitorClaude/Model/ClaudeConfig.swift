@@ -44,6 +44,13 @@ struct AccountIdentity: Equatable {
         return Self.localPart(of: email) ?? String(accountUuid.prefix(8))
     }
 
+    /// The organization for a line of detail: the auto-named solo one ("<email>'s Organization") reads as
+    /// "organização pessoal", since the e-mail is already next to it.
+    var organizationDisplay: String? {
+        guard let org = organizationName?.trimmingCharacters(in: .whitespacesAndNewlines), !org.isEmpty else { return nil }
+        return Self.isPersonalOrgName(org) ? "organização pessoal" : org
+    }
+
     /// Plan badge, best-effort. "claude_max" → "max"; nil when we have nothing honest to show.
     var planFallback: String? {
         guard let t = organizationType, !t.isEmpty else { return nil }

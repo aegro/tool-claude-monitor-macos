@@ -71,6 +71,12 @@ final class KeepAwake: ObservableObject {
         guard !didBootstrap else { return }
         didBootstrap = true
         lidClosed = Self.systemSleepDisabled()
+        // Um Monitor só de leitura (preview, MONITOR_CLAUDE_READ_ONLY=1) só mostra o estado: a assertion, o timer
+        // e a intenção salva são do app que está rodando. Sem isto, o timer da preview desligaria o Mac desperto.
+        guard !Monitor.readOnly else {
+            awake = UserDefaults.standard.bool(forKey: "keepAwake")
+            return
+        }
         if lidClosed { setAwake(true) }
         else if UserDefaults.standard.bool(forKey: "keepAwake") { setAwake(true) }
     }

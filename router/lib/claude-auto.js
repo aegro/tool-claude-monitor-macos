@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const contas = require('./contas');
 const { Proxy } = require('./proxy');
-const { valorDaFlag, temFlag } = require('./args');
+const { valorDaFlag, temFlag, binarioDoWrapper } = require('./args');
 const { retomarThreadT3 } = require('./t3');
 const agentes = require('./agentes');
 
@@ -129,9 +129,37 @@ function repassar(args) {
   filho.on('exit', (codigo, sinal) => process.exit(codigo ?? (sinal ? 1 : 0)));
 }
 
+function realpath(arquivo) {
+  try {
+    return fs.realpathSync(arquivo);
+  } catch {
+    return arquivo;
+  }
+}
+
+function executavel(arquivo) {
+  try {
+    fs.accessSync(arquivo, fs.constants.X_OK);
+    return fs.statSync(arquivo).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function semWrapper(argv) {
+  const lancador = realpath(path.resolve(__dirname, '..', 'bin', 'claude-auto'));
+  const { bin, args } = binarioDoWrapper(argv, executavel, (p) => realpath(p) === lancador);
+  if (bin) {
+    process.env.CLAUDE_AUTO_CLAUDE_BIN = bin;
+    contas.log(`wrapper: usando o claude de ${bin}`);
+  }
+  return args;
+}
+
 async function main() {
-  if (contas.carregarConfig().ativo === false) return repassar(process.argv.slice(2));
-  const args = retomarThreadT3(process.argv.slice(2));
+  const argv = semWrapper(process.argv.slice(2));
+  if (contas.carregarConfig().ativo === false) return repassar(argv);
+  const args = retomarThreadT3(argv);
   if (doDaemon(args)) return abrirNoSlot(args);
   if (valorDaFlag(args, '--input-format') !== 'stream-json') return rodarDireto(args);
   const fixada = contaFixada();

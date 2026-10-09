@@ -226,7 +226,12 @@ struct AccountRouterTests {
         }
         #expect(FileManager.default.fileExists(atPath: lock.path))
 
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { try? FileManager.default.removeItem(at: lock) }
+        // A thread of its own plays the other holder: a GCD timer can wait past the 2 s the save allows when the
+        // rest of the suite keeps the pool's few threads busy, which is what a 3-core CI runner does.
+        Thread.detachNewThread {
+            usleep(200_000)
+            try? FileManager.default.removeItem(at: lock)
+        }
         try AccountRouter.setEnabled(false, at: url)
         #expect(try config(String(decoding: try Data(contentsOf: url), as: UTF8.self)).enabled == false)
         #expect(!FileManager.default.fileExists(atPath: lock.path))

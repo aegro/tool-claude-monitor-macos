@@ -119,6 +119,7 @@ enum UsageError: Error, LocalizedError {
         case .unauthorized: return "Token recusado. Rode o claude no terminal pra renovar o login."
         case .forbidden: return "Token sem o escopo user:profile."
         case .decode: return "Resposta da API em formato inesperado."
+        case .http(429): return "O servidor pediu uma pausa (429). O Monitor tenta de novo no próximo ciclo."
         case .http(let c): return "A API respondeu \(c)."
         case .transport(let m): return m
         }
@@ -174,25 +175,9 @@ enum UsageAPI {
                       let percent = numeric(l["percent"]) else { continue }
 
                 let model = ((l["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
-                let isSession = kind == "session"
-
-                let title: String
-                switch kind {
-                case "session": title = "Sessão · 5h"
-                case "weekly_all": title = "Semana"
-                case "weekly_scoped": title = model.map { "Semana · \($0)" } ?? "Semana · modelo"
-                default: title = kind.replacingOccurrences(of: "_", with: " ").capitalized
-                }
-
-                snap.windows.append(LimitWindow(
-                    key: kind == "weekly_scoped" ? "weekly_scoped:\(model ?? "?")" : kind,
-                    title: title,
-                    utilization: clamp(percent),
-                    resetsAt: parseDate(l["resets_at"]),
-                    severity: (l["severity"] as? String) ?? "normal",
-                    isSession: isSession,
-                    isActive: (l["is_active"] as? Bool) ?? false
-                ))
+                snap.windows.append(window(kind: kind, model: model, percent: percent, resetsAt: parseDate(l["resets_at"]),
+                                           severity: (l["severity"] as? String) ?? "normal",
+                                           isActive: (l["is_active"] as? Bool) ?? false))
             }
         } else {
             // Fallback for older payload shapes that only expose the flat keys.
@@ -213,12 +198,31 @@ enum UsageAPI {
             }
         }
 
-        // Session first, then the weekly caps, biggest first.
+        sortWindows(&snap)
+        return snap
+    }
+
+    /// One entry of the `limits` array, named the way the panel names it.
+    static func window(kind: String, model: String?, percent: Double, resetsAt: Date?, severity: String,
+                       isActive: Bool) -> LimitWindow {
+        let title: String
+        switch kind {
+        case "session": title = "Sessão · 5h"
+        case "weekly_all": title = "Semana"
+        case "weekly_scoped": title = model.map { "Semana · \($0)" } ?? "Semana · modelo"
+        default: title = kind.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+        return LimitWindow(key: kind == "weekly_scoped" ? "weekly_scoped:\(model ?? "?")" : kind, title: title,
+                           utilization: clamp(percent), resetsAt: resetsAt, severity: severity,
+                           isSession: kind == "session", isActive: isActive)
+    }
+
+    /// Session first, then the weekly caps, biggest first.
+    static func sortWindows(_ snap: inout UsageSnapshot) {
         snap.windows.sort { a, b in
             if a.isSession != b.isSession { return a.isSession }
             return a.utilization > b.utilization
         }
-        return snap
     }
 
     private static func numeric(_ any: Any?) -> Double? {

@@ -167,7 +167,7 @@ final class UsageHistory {
     // MARK: persistence
 
     func flush() {
-        guard dirty else { return }
+        guard dirty, !Monitor.readOnly else { return }
         dirty = false
         let snapshot = samples
         let target = url

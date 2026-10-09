@@ -15,7 +15,7 @@ struct SessionsPane: View {
         }
         let ghosts = monitor.attribution.ghostBuckets
         let share = monitor.claudeShare
-        let monograms = Dictionary(uniqueKeysWithValues: monitor.accountQueue.entries.map { ($0.id, $0.monogram) })
+        let monograms = Dictionary(monitor.accountQueue.entries.map { ($0.id, $0.monogram) }, uniquingKeysWith: { first, _ in first })
         let showTags = monitor.accountQueue.configured && !monitor.accountQueue.isSingle
 
         VStack(alignment: .leading, spacing: 12) {

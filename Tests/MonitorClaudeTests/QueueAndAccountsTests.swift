@@ -47,6 +47,14 @@ struct QueueAndAccountsTests {
         #expect(cfg.accounts.map(\.monogram) == ["AE", "MX"])
     }
 
+    @Test func contaRepetidaNaRotaOuNaReservaViraUmaSo() throws {
+        let cfg = try #require(AccountRouter.parseConfig(Data(#"""
+        { "contas": { "principal": {}, "max": {}, "extra": {} },
+          "rota": ["max", "principal", "max"], "reserva": ["extra", "extra", "max"] }
+        """#.utf8), home: home, defaultDirectory: defaultDirectory))
+        #expect(cfg.accounts.map(\.id) == ["max", "principal", "extra"])
+    }
+
     // MARK: config writes
 
     @Test func salvarAFilaEscreveRotaReservaEPreferida() throws {

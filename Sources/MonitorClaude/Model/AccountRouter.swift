@@ -134,9 +134,13 @@ enum AccountRouter {
         let principal = root["principal"] as? String ?? "principal"
         let entries = root["contas"] as? [String: Any] ?? [:]
         let known = Set(entries.keys).union([principal])
-        let listedRoute = ((root["rota"] as? [String]) ?? []).filter(known.contains)
+        // A hand-edited config can list an account twice; keep the first, since every view keys accounts by id.
+        var seen = Set<String>()
+        let listedRoute = ((root["rota"] as? [String]) ?? []).filter { known.contains($0) && seen.insert($0).inserted }
         let route = listedRoute.isEmpty ? [principal] : listedRoute
-        let reserve = ((root["reserva"] as? [String]) ?? []).filter { known.contains($0) && !route.contains($0) }
+        let reserve = ((root["reserva"] as? [String]) ?? []).filter {
+            known.contains($0) && !route.contains($0) && seen.insert($0).inserted
+        }
         let reserveBelow = ((root["limites"] as? [String: Any])?["reserva"] as? NSNumber)?.doubleValue ?? 3
 
         func account(_ id: String, _ role: Account.Role) -> Account {

@@ -83,29 +83,38 @@ final class MCPUsageScanner: @unchecked Sendable {
             var from = progress[path] ?? 0
             if size < from { from = 0 }
             guard size > from else { continue }
-            for (key, at) in Self.uses(in: url, from: from) {
+            let read = Self.uses(in: url, from: from)
+            for (key, at) in read.uses {
                 let used = at == .distantPast ? modified : min(at, modified)
                 if (lastUse[key] ?? .distantPast) < used { lastUse[key] = used }
             }
-            progress[path] = size
+            progress[path] = read.through
         }
         lastUse = lastUse.filter { $0.value >= cutoff }
         return lastUse
     }
 
-    static func uses(in url: URL, from offset: UInt64) -> [String: Date] {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return [:] }
+    /// The uses in `url` from `offset` on, and the offset just past the last newline read. The next scan starts
+    /// there, so a line Claude Code was still writing is read again, whole, once it is complete.
+    static func uses(in url: URL, from offset: UInt64) -> (uses: [String: Date], through: UInt64) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return ([:], offset) }
         defer { try? handle.close() }
-        do { try handle.seek(toOffset: offset) } catch { return [:] }
+        do { try handle.seek(toOffset: offset) } catch { return ([:], offset) }
         var found: [String: Date] = [:]
         var carry = Data()
+        var read = offset
+        var through = offset
         while let block = try? handle.read(upToCount: chunk), !block.isEmpty {
+            if let newline = block.lastIndex(of: UInt8(ascii: "\n")) {
+                through = read + UInt64(block.distance(from: block.startIndex, to: newline) + 1)
+            }
+            read += UInt64(block.count)
             var data = carry
             data.append(block)
             found.merge(uses(in: data)) { max($0, $1) }
             carry = data.count > 256 ? data.suffix(256) : data
         }
-        return found
+        return (found, through)
     }
 
     static func servers(in data: Data) -> Set<String> { Set(uses(in: data).keys) }

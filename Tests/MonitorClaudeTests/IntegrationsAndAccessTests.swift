@@ -271,6 +271,24 @@ struct AccessTests {
         #expect(scanner.scan(root: root, now: Date().addingTimeInterval(8 * 86_400)).isEmpty)
     }
 
+    @Test func linhaAindaSendoEscritaEntraQuandoTermina() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("monitor-transcripts-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("s.jsonl")
+        try Data((#"{"name":"mcp__claude_ai_Slack__x"}"# + "\n" + #"{"name":"mcp__claude_ai_Gm"#).utf8).write(to: file)
+
+        let scanner = MCPUsageScanner()
+        #expect(Set(scanner.scan(root: root).keys) == ["claude_ai_Slack"])
+
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((#"ail__y"}"# + "\n").utf8))
+        try handle.close()
+        #expect(Set(scanner.scan(root: root).keys) == ["claude_ai_Slack", "claude_ai_Gmail"])
+    }
+
     // MARK: readiness panel
 
     private let report = Data(#"""

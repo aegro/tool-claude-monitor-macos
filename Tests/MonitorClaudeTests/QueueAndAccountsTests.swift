@@ -215,6 +215,23 @@ struct QueueAndAccountsTests {
         #expect(result.output.contains("antes"))
     }
 
+    @Test func filhoQueIgnoraOSigtermMorreJuntoComOComandoNoPrazo() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-prazo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appendingPathComponent("filho.pid")
+        // The ignored SIGTERM is inherited by the child, like a helper that traps it.
+        _ = AccountRouter.run(URL(fileURLWithPath: "/bin/sh"),
+                              ["-c", "trap '' TERM; sleep 30 & echo $! > '\(pidFile.path)'; wait"], timeout: 1)
+        let child = pid_t(try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        #expect(child > 0)
+        let deadline = Date().addingTimeInterval(4)
+        while kill(child, 0) == 0 && Date() < deadline { try? await Task.sleep(nanoseconds: 50_000_000) }
+        let alive = kill(child, 0) == 0
+        if alive { kill(child, SIGKILL) }
+        #expect(!alive)
+    }
+
     @Test func moverDentroDaRotaParaAReservaEDeVolta() throws {
         let ids = ["aegro", "max", "compare"]
         // Combined list: aegro(0) max(1) [divider](2) compare(3)

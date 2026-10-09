@@ -531,10 +531,16 @@ enum AccountRouter {
         }
         let pid = process.processIdentifier
         let stop = DispatchWorkItem {
-            terminateDescendants(of: pid)
-            guard process.isRunning else { return }
-            process.terminate()
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { if process.isRunning { kill(pid, SIGKILL) } }
+            // Remembered, because once `pid` exits its children belong to launchd and can no longer be found
+            // under it; whatever ignored SIGTERM gets SIGKILL with the parent.
+            let children = terminateDescendants(of: pid)
+            guard process.isRunning || !children.isEmpty else { return }
+            if process.isRunning { process.terminate() }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                let late = process.isRunning ? terminateDescendants(of: pid, signal: SIGKILL) : []
+                for child in children where !late.contains(child) && kill(child, 0) == 0 { kill(child, SIGKILL) }
+                if process.isRunning { kill(pid, SIGKILL) }
+            }
         }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: stop)
         process.waitUntilExit()
@@ -546,16 +552,21 @@ enum AccountRouter {
                              error: String(decoding: errors.finish(waiting: 2), as: UTF8.self))
     }
 
-    /// Sends SIGTERM to everything under `pid`, deepest first, and leaves `pid` itself alone.
-    static func terminateDescendants(of pid: pid_t) {
-        guard pid > 1 else { return }
+    /// Sends `signal` (SIGTERM by default) to everything under `pid`, deepest first, and leaves `pid` itself
+    /// alone. Returns the processes it signalled.
+    @discardableResult
+    static func terminateDescendants(of pid: pid_t, signal: Int32 = SIGTERM) -> [pid_t] {
+        guard pid > 1 else { return [] }
         var pids = [pid_t](repeating: 0, count: 128)
         let written = proc_listpids(UInt32(PROC_PPID_ONLY), UInt32(pid), &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        guard written > 0 else { return }
+        guard written > 0 else { return [] }
+        var signalled: [pid_t] = []
         for child in pids.prefix(Int(written) / MemoryLayout<pid_t>.size) where child > 1 && child != pid {
-            terminateDescendants(of: child)
-            kill(child, SIGTERM)
+            signalled += terminateDescendants(of: child, signal: signal)
+            kill(child, signal)
+            signalled.append(child)
         }
+        return signalled
     }
 
     static func parseSwitch(_ line: Data) -> Switch? {

@@ -608,9 +608,10 @@ enum AccountRouter {
                 // sent the exit, so the notice comes. Bounded all the same, like every wait here; past it the
                 // status is unknown and the command reads as stopped.
                 if exited.wait(timeout: .now() + 30) == .timedOut {
+                    let deadline = DispatchTime.now() + 2
                     return CommandResult(status: -1,
-                                         output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
-                                         error: String(decoding: errors.finish(waiting: 2), as: UTF8.self),
+                                         output: String(decoding: output.finish(by: deadline), as: UTF8.self),
+                                         error: String(decoding: errors.finish(by: deadline), as: UTF8.self),
                                          interrupted: true)
                 }
             }
@@ -633,9 +634,11 @@ enum AccountRouter {
                 // process still runs, it raises an Objective-C exception, which Swift cannot catch and which
                 // crashes the app.
                 if exited.wait(timeout: .now() + 5) == .timedOut {
+                    // It still holds both pipes, so no end of output is coming: only what is already on its way.
+                    let deadline = DispatchTime.now() + 0.2
                     return CommandResult(status: -1,
-                                         output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
-                                         error: String(decoding: errors.finish(waiting: 2), as: UTF8.self),
+                                         output: String(decoding: output.finish(by: deadline), as: UTF8.self),
+                                         error: String(decoding: errors.finish(by: deadline), as: UTF8.self),
                                          interrupted: true)
                 }
             } else if !children.isEmpty {
@@ -643,10 +646,11 @@ enum AccountRouter {
             }
         }
         // A helper the command left behind can keep the pipes open after it exits: the output gets a moment to
-        // end, and then it is whatever arrived.
+        // end, one moment for both pipes, and then it is whatever arrived.
+        let deadline = DispatchTime.now() + 2
         return CommandResult(status: process.terminationStatus,
-                             output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
-                             error: String(decoding: errors.finish(waiting: 2), as: UTF8.self),
+                             output: String(decoding: output.finish(by: deadline), as: UTF8.self),
+                             error: String(decoding: errors.finish(by: deadline), as: UTF8.self),
                              interrupted: timedOut || process.terminationReason == .uncaughtSignal)
     }
 
@@ -841,8 +845,9 @@ enum Blocking {
     }
 }
 
-/// Collects what arrives on a pipe as it arrives. `finish(waiting:)` waits up to that long for the end of the
-/// output and returns what came, so a pipe someone else still holds open never blocks the caller for good.
+/// Collects what arrives on a pipe as it arrives. `finish(by:)` waits until that deadline for the end of the
+/// output and returns what came, so a pipe someone else still holds open never blocks the caller for good. A
+/// deadline rather than a duration, so the two pipes of one command share it instead of adding up.
 final class PipeCollector: @unchecked Sendable {
     private var data = Data()
     private let lock = NSLock()
@@ -865,8 +870,8 @@ final class PipeCollector: @unchecked Sendable {
         }
     }
 
-    func finish(waiting seconds: TimeInterval) -> Data {
-        _ = ended.wait(timeout: .now() + seconds)
+    func finish(by deadline: DispatchTime) -> Data {
+        _ = ended.wait(timeout: deadline)
         handle.readabilityHandler = nil
         lock.lock()
         defer { lock.unlock() }

@@ -469,8 +469,10 @@ final class Transcript: @unchecked Sendable {
 }
 
 extension AccountRouter {
-    /// Removes an account the assistant created and never finished: its config entry and its folder. A folder that
-    /// never got a login holds only the router's links, so it goes; one with a login goes to the Trash instead.
+    /// Removes an account from the queue: its config entry and its folder. A folder that never got a login holds
+    /// only the router's links, so it goes; one with a login goes to the Trash instead, and its Keychain item stays
+    /// (the Monitor never writes the Keychain), so putting the folder back brings the account back. The account in
+    /// `~/.claude` is not removed, and the route never ends up empty: the first reserve account moves up.
     static func discard(_ id: String) throws {
         guard let config = loadConfig(), let account = config.accounts.first(where: { $0.id == id }),
               !account.usesDefaultDirectory, id != config.principal
@@ -479,8 +481,11 @@ extension AccountRouter {
             var contas = root["contas"] as? [String: Any] ?? [:]
             contas.removeValue(forKey: id)
             root["contas"] = contas
-            root["rota"] = (root["rota"] as? [String] ?? []).filter { $0 != id }
-            root["reserva"] = (root["reserva"] as? [String] ?? []).filter { $0 != id }
+            var route = (root["rota"] as? [String] ?? []).filter { $0 != id }
+            var reserve = (root["reserva"] as? [String] ?? []).filter { $0 != id }
+            if route.isEmpty, !reserve.isEmpty { route = [reserve.removeFirst()] }
+            root["rota"] = route
+            root["reserva"] = reserve
             if root["preferida"] as? String == id { root["preferida"] = nil }
         }
         let fm = FileManager.default

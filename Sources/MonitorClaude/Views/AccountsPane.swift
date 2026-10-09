@@ -12,6 +12,8 @@ struct AccountsPane: View {
     @State private var dragging: String?
     /// The row (or the divider, as "divider") a dragged account would land on, for the insertion line.
     @State private var dropTarget: String?
+    /// The account whose removal waits for a confirmation under its row.
+    @State private var confirmingRemoval: String?
 
     var body: some View {
         let queue = monitor.accountQueue
@@ -118,6 +120,30 @@ struct AccountsPane: View {
                                                        allowed: moves(to: index, queue: queue),
                                                        dragging: $dragging, dropTarget: $dropTarget))
         .contextMenu { menu(entry, index: index, queue: queue) }
+        .safeAreaInset(edge: .bottom, spacing: 4) {
+            if confirmingRemoval == entry.id { removalConfirmation(entry) }
+        }
+    }
+
+    /// Asked under the row, not in a dialog, which would close the menu bar panel.
+    private func removalConfirmation(_ entry: AccountQueue.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tirar \(entry.label) da fila? A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta.")
+                .font(Type.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancelar") { confirmingRemoval = nil }.controlSize(.small)
+                Button("Remover") {
+                    confirmingRemoval = nil
+                    Task { await monitor.removeAccount(entry.id) }
+                }
+                .controlSize(.small).buttonStyle(.borderedProminent).tint(Ink.alarm)
+            }
+        }
+        .padding(10)
+        .background(Ink.track, in: RoundedRectangle(cornerRadius: 9))
+        .padding(.leading, 30)
     }
 
     @ViewBuilder
@@ -144,6 +170,10 @@ struct AccountsPane: View {
                 Button("Autorizar os agentes…") { monitor.startReauthorize(entry.id, agents: true); openSettings() }
             }
             Button("Renomear…") { monitor.settingsTab = .accounts; openSettings() }
+            if entry.id != queue.principal {
+                Divider()
+                Button("Remover da fila…") { withAnimation(.easeOut(duration: 0.15)) { confirmingRemoval = entry.id } }
+            }
         }
     }
 
@@ -293,6 +323,14 @@ struct AccountRow: View {
                         if let plan = entry.plan { PlanTag(plan: plan) }
                         Spacer(minLength: 4)
                         chip
+                        // Says the row opens: without it, the detail under a click was a secret.
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(hovering || expanded ? Color.secondary : Color.secondary.opacity(0.45))
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                            .animation(.easeOut(duration: 0.15), value: expanded)
+                            .frame(width: 12)
+                            .accessibilityHidden(true)
                     }
                     HStack(spacing: 14) {
                         MiniLimit(label: "5h", window: entry.snapshot?.session)
@@ -319,6 +357,7 @@ struct AccountRow: View {
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: toggle)
+            .help(expanded ? "Clique para fechar o detalhe" : "Clique para ver o detalhe dos limites")
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityHint("Abre o detalhe dos limites")

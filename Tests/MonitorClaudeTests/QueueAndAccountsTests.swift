@@ -219,6 +219,27 @@ struct QueueAndAccountsTests {
         #expect(result.output.contains("antes"))
     }
 
+    /// The limit holds with every utility-QoS worker busy, the state of a 3-core CI runner: it is kept by the
+    /// waiting thread, not by a timer on a global queue that fires only when a worker frees up. What is measured
+    /// is when the SIGTERM lands, which the command records itself, not how long the cleanup after it takes: that
+    /// part is slow on the runner and is not the limit.
+    @Test func prazoValeComAsFilasGlobaisOcupadas() async throws {
+        let mark = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-sigterm-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: mark) }
+        let spinUntil = Date().addingTimeInterval(3)
+        for _ in 0..<64 { DispatchQueue.global(qos: .utility).async { while Date() < spinUntil {} } }
+        let started = Date()
+        // The loop keeps the shell alive until its own SIGTERM: with `sleep 30 & wait` the child is signalled
+        // first and the shell can exit on its own before the trap ever runs.
+        let script = "trap \"touch '\(mark.path)'; exit 0\" TERM; while :; do sleep 0.05; done"
+        let result = await Blocking.run { AccountRouter.run(URL(fileURLWithPath: "/bin/sh"), ["-c", script], timeout: 0.3) }
+        let attributes = try FileManager.default.attributesOfItem(atPath: mark.path)
+        let signalled = try #require(attributes[.modificationDate] as? Date)
+        // A timer on a busy global queue would fire only when the spin ends, 3 s in.
+        #expect(signalled.timeIntervalSince(started) < 1.5)
+        #expect(result.interrupted)
+    }
+
     /// A command that exits in time, with Foundation's exit notice late (the 3-core CI runner delays it by over a
     /// second), is a zombie at the deadline: it has to read as exited, or its answer is thrown away as a timeout.
     @Test func comandoQueSaiuMasNaoFoiColhidoContaComoEncerrado() {

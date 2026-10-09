@@ -4,6 +4,9 @@ const { spawn } = require('child_process');
 const contas = require('./contas');
 const { valorDaFlag, argsDeRetomada } = require('./args');
 
+// A sessão da conta do ~/.claude que saiu da pasta própria porque o login de lá foi recusado: mesma conta.
+const MOTIVO_LOGIN_PROPRIO = 'login-da-pasta-propria';
+
 const AJUSTES_REPETIDOS = new Set([
   'set_permission_mode', 'set_model', 'set_max_thinking_tokens', 'apply_flag_settings', 'mcp_set_servers',
 ]);
@@ -88,6 +91,9 @@ class Proxy {
     this.runIdsWorkflow = new Map();
     this.hostEncerrou = false;
     this.encerrando = false;
+    this.naPastaPropria = false;
+    // Contas cujo login na pasta própria foi recusado nesta sessão: ela volta a abrir no ~/.claude.
+    this.loginProprioRecusado = new Set();
   }
 
   async iniciar() {
@@ -119,7 +125,7 @@ class Proxy {
 
   lancar(args) {
     const geracao = this.geracao;
-    const env = contas.envDaSessao(this.conta);
+    const env = this.envDaAbertura();
     try {
       contas.prepararSessao(this.conta, env);
     } catch (e) {
@@ -128,6 +134,8 @@ class Proxy {
     // Aberta no ~/.claude (a conta não tem login na pasta própria): a troca dos agentes pode mudar a conta por
     // baixo dela, e `checarSlot` acompanha.
     this.noClaudePadrao = !env.CLAUDE_CONFIG_DIR;
+    // A conta do ~/.claude aberta na pasta própria (envDaConta nunca põe CLAUDE_CONFIG_DIR para ela).
+    this.naPastaPropria = Boolean(env.CLAUDE_CONFIG_DIR) && contas.usaDirPadrao(this.conta);
     const filho = spawn(contas.resolverClaude(), args, {
       env,
       stdio: ['pipe', 'pipe', 'inherit'],
@@ -145,6 +153,11 @@ class Proxy {
     });
     filho.on('exit', (codigo, sinal) => this.filhoSaiu(geracao, codigo, sinal));
     return filho;
+  }
+
+  // Na pasta própria quando a conta tem login lá (envDaSessao), salvo se esse login já foi recusado nesta sessão.
+  envDaAbertura() {
+    return this.loginProprioRecusado.has(this.conta) ? contas.envDaConta(this.conta) : contas.envDaSessao(this.conta);
   }
 
   paraFilho(linha) {
@@ -328,9 +341,12 @@ class Proxy {
 
   mensagemDeContinuacao(de, motivo, interrompidas) {
     let texto =
-      `[claude-auto] A conta "${contas.nomeDaConta(de)}" atingiu o limite (${motivo}) no meio do turno ` +
-      `e esta sessão foi retomada na conta "${contas.nomeDaConta(this.conta)}". ` +
-      'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
+      motivo === MOTIVO_LOGIN_PROPRIO
+        ? `[claude-auto] O login da conta "${contas.nomeDaConta(de)}" foi recusado no meio do turno e esta sessão ` +
+          'foi retomada na mesma conta, pelo login do ~/.claude. '
+        : `[claude-auto] A conta "${contas.nomeDaConta(de)}" atingiu o limite (${motivo}) no meio do turno ` +
+          `e esta sessão foi retomada na conta "${contas.nomeDaConta(this.conta)}". `;
+    texto += 'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
     if (interrompidas.length) {
       texto += '\n\nEstas tarefas estavam rodando e foram encerradas pela troca. Relance cada uma:';
       for (const t of interrompidas) {
@@ -356,6 +372,14 @@ class Proxy {
   async avaliarTroca(gatilho, geracao) {
     this.avaliando = true;
     try {
+      // O login da pasta própria pode estar revogado (ficou parado enquanto a conta estava no ~/.claude), e o do
+      // ~/.claude é desta mesma conta: a sessão volta para lá antes de a conta inteira ser dada como esgotada.
+      if (gatilho.motivo === 'auth' && this.naPastaPropria && contas.usaDirPadrao(this.conta)) {
+        contas.log(`stream: login de ${this.conta} recusado na pasta própria; a sessão volta para o ~/.claude`);
+        this.loginProprioRecusado.add(this.conta);
+        await this.trocar({ para: this.conta, motivo: MOTIVO_LOGIN_PROPRIO, forcada: true, continuar: gatilho.continuar });
+        return;
+      }
       // Aberta no ~/.claude, a sessão gasta a conta que está lá agora: o limite é dela, e é dela que a sessão sai.
       this.conta = this.contaQueGasta();
       contas.log(`stream: gatilho ${gatilho.motivo} na conta ${this.conta}`);
@@ -509,7 +533,7 @@ class Proxy {
   async checarSlot(cfg) {
     if (!this.noClaudePadrao || !cfg.principal || cfg.principal === this.conta) return false;
     if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
-    if (contas.temLoginProprio(this.conta, cfg)) {
+    if (!this.loginProprioRecusado.has(this.conta) && contas.temLoginProprio(this.conta, cfg)) {
       await this.trocar({ para: this.conta, motivo: 'saiu-do-claude', forcada: false, continuar: false });
       return true;
     }

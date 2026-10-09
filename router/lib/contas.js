@@ -377,13 +377,14 @@ function loginGuardadoDaConta(id) {
 // Quem está no ~/.claude. Depois que a troca dos agentes põe outra conta ali, uma sessão do Claude Code ainda
 // aberta regrava o ~/.claude.json com o login com que começou: o arquivo passa a nomear uma conta que mora em outra
 // pasta da fila, e a conta do ~/.claude parecia uma cópia dela. Quando o arquivo nomeia outra conta da fila e há o
-// login guardado desta, vale o guardado.
+// login guardado desta, vale o guardado. Só contam as contas que estão na fila (rota e reserva), como no Monitor: uma
+// conta que saiu da fila e ficou em `contas` não troca o login que alguém pôs à mão no terminal.
 function contaDoDirPadrao(id, cfg, declarada) {
   const guardada = loginGuardadoDaConta(id);
   const chave = chaveDaConta(declarada);
   if (!guardada || !chave || chaveDaConta(guardada) === chave) return declarada;
   const outras = new Set();
-  for (const outro of Object.keys(cfg.contas)) {
+  for (const outro of [...cfg.rota, ...cfg.reserva]) {
     if (outro === id) continue;
     if (!usaDirPadrao(outro, cfg)) outras.add(chaveDaConta((lerJson(arquivoConfigDaConta(outro, cfg), {}) || {}).oauthAccount));
     outras.add(chaveDaConta(loginGuardadoDaConta(outro)));

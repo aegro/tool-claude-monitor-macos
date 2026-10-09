@@ -404,19 +404,139 @@ struct AccountRouterTests {
         #expect(try Data(contentsOf: url) == broken)
     }
 
-    @Test func instalarComandosCriaLinksSemSobrescreverArquivoDeVerdade() throws {
+    private func commandsSandbox(bundle: String = "Monitor Claude.app") throws -> (root: URL, bin: URL, target: URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let bin = root.appendingPathComponent("bundle/bin")
+        let bin = root.appendingPathComponent("\(bundle)/Contents/Resources/router/bin")
         let target = root.appendingPathComponent("local/bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        return (root, bin, target)
+    }
+
+    private func isLink(_ url: URL) -> Bool {
+        (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
+    }
+
+    @Test func instalarComandosEscreveScriptQueRodaOBundlePeloBashSemSobrescreverArquivoDeVerdade() throws {
+        let (root, bin, target) = try commandsSandbox()
+        defer { try? FileManager.default.removeItem(at: root) }
         try Data("own".utf8).write(to: target.appendingPathComponent("claude-accounts"))
 
         try AccountRouter.installCommands(from: bin, into: target)
 
-        #expect(try FileManager.default.destinationOfSymbolicLink(
-            atPath: target.appendingPathComponent("claude-auto").path) == bin.appendingPathComponent("claude-auto").path)
+        let command = target.appendingPathComponent("claude-auto")
+        let script = bin.appendingPathComponent("claude-auto").path
+        #expect(!isLink(command))
+        #expect(try String(contentsOf: command, encoding: .utf8) == "#!/bin/bash\nexec /bin/bash '\(script)' \"$@\"\n")
+        #expect((try FileManager.default.attributesOfItem(atPath: command.path)[.posixPermissions] as? NSNumber)?.intValue == 0o755)
+        #expect(AccountRouter.installedCommand(at: command, name: "claude-auto") == .launcher(script: script))
         #expect(try String(contentsOf: target.appendingPathComponent("claude-accounts"), encoding: .utf8) == "own")
+    }
+
+    @Test func scriptInstaladoCitaOCaminhoDoBundleERepassaOsArgumentos() throws {
+        let (root, bin, target) = try commandsSandbox(bundle: #"Mon'itor "Claude" $HOME `id` \ ; *.app"#)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let output = root.appendingPathComponent("saida")
+        let script = bin.appendingPathComponent("claude-auto")
+        try Data(#"printf '%s\n' "$0" "$@" > "$SAIDA""#.utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: script.path)
+
+        try AccountRouter.installCommands(from: bin, into: target)
+        let process = Process()
+        process.executableURL = target.appendingPathComponent("claude-auto")
+        process.arguments = ["um arg", "*", "$x", "'"]
+        process.environment = ["SAIDA": output.path]
+        try process.run()
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus == 0)
+        #expect(try String(contentsOf: output, encoding: .utf8) == [script.path, "um arg", "*", "$x", "'"].joined(separator: "\n") + "\n")
+        #expect(AccountRouter.launcherScript(AccountRouter.launcher(for: script.path)) == script.path)
+    }
+
+    @Test func aberturaTrocaOLinkAntigoPeloScript() throws {
+        let (root, bin, target) = try commandsSandbox()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let auto = target.appendingPathComponent("claude-auto")
+        let accounts = target.appendingPathComponent("claude-accounts")
+        try FileManager.default.createSymbolicLink(at: auto, withDestinationURL: bin.appendingPathComponent("claude-auto"))
+        try FileManager.default.createSymbolicLink(
+            atPath: accounts.path, withDestinationPath: "../../Monitor Claude.app/Contents/Resources/router/bin/claude-accounts")
+        #expect(AccountRouter.installedCommand(at: auto, name: "claude-auto") == .link)
+        #expect(AccountRouter.installedCommand(at: accounts, name: "claude-accounts") == .link)
+
+        try AccountRouter.refreshInstalledCommands(from: bin, into: target)
+
+        for name in AccountRouter.commandNames {
+            let command = target.appendingPathComponent(name)
+            #expect(!isLink(command))
+            #expect(AccountRouter.installedCommand(at: command, name: name)
+                    == .launcher(script: bin.appendingPathComponent(name).path))
+        }
+    }
+
+    @Test func aberturaReescreveScriptQueApontaParaOutroBundle() throws {
+        let (root, bin, target) = try commandsSandbox()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let old = root.appendingPathComponent("antigo/Monitor Claude.app/Contents/Resources/router/bin")
+        try AccountRouter.installCommands(from: old, into: target)
+        #expect(AccountRouter.installedCommand(at: target.appendingPathComponent("claude-auto"), name: "claude-auto")
+                == .launcher(script: old.appendingPathComponent("claude-auto").path))
+
+        try AccountRouter.refreshInstalledCommands(from: bin, into: target)
+
+        for name in AccountRouter.commandNames {
+            #expect(try String(contentsOf: target.appendingPathComponent(name), encoding: .utf8)
+                    == AccountRouter.launcher(for: bin.appendingPathComponent(name).path))
+        }
+    }
+
+    @Test func instalarComandosNãoMexeEmLinkNemScriptAlheio() throws {
+        let (root, bin, target) = try commandsSandbox()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let auto = target.appendingPathComponent("claude-auto")
+        let accounts = target.appendingPathComponent("claude-accounts")
+        let source = "/Users/exemplo/src/tool-claude-monitor-macos/router/bin/claude-auto"
+        let lookalike = "#!/bin/bash\nexec /bin/bash '/opt/meu/claude-accounts' \"$@\"\n"
+        try FileManager.default.createSymbolicLink(atPath: auto.path, withDestinationPath: source)
+        try Data(lookalike.utf8).write(to: accounts)
+
+        try AccountRouter.installCommands(from: bin, into: target)
+        try AccountRouter.refreshInstalledCommands(from: bin, into: target)
+
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: auto.path) == source)
+        #expect(try String(contentsOf: accounts, encoding: .utf8) == lookalike)
+        #expect(AccountRouter.installedCommand(at: auto, name: "claude-auto") == .foreign)
+        #expect(AccountRouter.installedCommand(at: accounts, name: "claude-accounts") == .foreign)
+    }
+
+    @Test func aberturaNãoInstalaParaQuemNuncaInstalouNemDeDentroDoAppTranslocado() throws {
+        let (root, bin, target) = try commandsSandbox()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try AccountRouter.refreshInstalledCommands(from: bin, into: target)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+
+        let auto = target.appendingPathComponent("claude-auto")
+        try FileManager.default.createSymbolicLink(at: auto, withDestinationURL: bin.appendingPathComponent("claude-auto"))
+        let translocated = URL(fileURLWithPath: "/private/var/folders/xy/T/AppTranslocation/ABC/d/Monitor Claude.app/Contents/Resources/router/bin")
+        try AccountRouter.refreshInstalledCommands(from: translocated, into: target)
+        try AccountRouter.refreshInstalledCommands(from: nil, into: target)
+
+        #expect(isLink(auto))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: target.path) == ["claude-auto"])
+    }
+
+    @Test func vigiaRodaOScriptPeloBashSemExecutarOArquivo() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let script = root.appendingPathComponent("claude-accounts")
+        try Data(#"printf '%s\n' "$@" > "$(dirname "$0")/vigia""#.utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: script.path)
+
+        AccountRouter.watchAgents(with: script)
+
+        #expect(try String(contentsOf: root.appendingPathComponent("vigia"), encoding: .utf8) == "_vigiar\n")
     }
 }

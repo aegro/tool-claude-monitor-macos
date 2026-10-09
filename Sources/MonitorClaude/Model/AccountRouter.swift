@@ -64,17 +64,21 @@ enum AccountRouter {
         return root["invalidoEm"] == nil
     }
 
+    /// Bundled scripts always run through this shell, never exec'd: Homebrew quarantines every file of the
+    /// bundle and Gatekeeper rejects a loose script, but it only assesses the binary being exec'd.
+    static let shell = URL(fileURLWithPath: "/bin/bash")
+
     static var accountsCommand: URL? {
+        if let bundled = bundledCommands { return bundled.appendingPathComponent("claude-accounts") }
         let installed = commandsDirectory.appendingPathComponent("claude-accounts")
-        if FileManager.default.isExecutableFile(atPath: installed.path) { return installed }
-        return bundledCommands?.appendingPathComponent("claude-accounts")
+        return FileManager.default.isReadableFile(atPath: installed.path) ? installed : nil
     }
 
-    static func watchAgents() {
-        guard let command = accountsCommand else { return }
+    static func watchAgents(with script: URL? = accountsCommand) {
+        guard let script else { return }
         let process = Process()
-        process.executableURL = command
-        process.arguments = ["_vigiar"]
+        process.executableURL = shell
+        process.arguments = [script.path, "_vigiar"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return }
@@ -227,19 +231,83 @@ enum AccountRouter {
         return UInt64(info.st_ino)
     }
 
-    static func installCommands(from bin: URL, into directory: URL = commandsDirectory) throws {
-        let fm = FileManager.default
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        for name in commandNames {
-            let link = directory.appendingPathComponent(name)
-            let target = bin.appendingPathComponent(name)
-            if let current = try? fm.destinationOfSymbolicLink(atPath: link.path) {
-                if current == target.path { continue }
-                try fm.removeItem(at: link)
-            } else if fm.fileExists(atPath: link.path) {
-                continue
+    enum InstalledCommand: Equatable {
+        case missing, foreign, link
+        case launcher(script: String)
+
+        var installedByApp: Bool {
+            switch self {
+            case .link, .launcher: return true
+            case .missing, .foreign: return false
             }
-            try fm.createSymbolicLink(at: link, withDestinationURL: target)
+        }
+    }
+
+    static func installCommands(from bin: URL, into directory: URL = commandsDirectory) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for name in commandNames {
+            let command = directory.appendingPathComponent(name)
+            let script = bin.appendingPathComponent(name).path
+            let current = installedCommand(at: command, name: name)
+            if current == .foreign || current == .launcher(script: script) { continue }
+            try replaceAtomically(Data(launcher(for: script).utf8), at: command.path, mode: 0o755)
+        }
+    }
+
+    static func refreshInstalledCommands(from bin: URL? = bundledCommands, into directory: URL = commandsDirectory) throws {
+        guard let bin, !bin.path.contains("/AppTranslocation/"),
+              commandNames.contains(where: { installedCommand(at: directory.appendingPathComponent($0), name: $0).installedByApp })
+        else { return }
+        try installCommands(from: bin, into: directory)
+    }
+
+    static func launcher(for script: String) -> String {
+        "#!/bin/bash\nexec \(shell.path) \(shellQuoted(script)) \"$@\"\n"
+    }
+
+    static func shellQuoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+    }
+
+    static func installedCommand(at url: URL, name: String) -> InstalledCommand {
+        let fm = FileManager.default
+        if let destination = try? fm.destinationOfSymbolicLink(atPath: url.path) {
+            let resolved = URL(fileURLWithPath: destination, relativeTo: url.deletingLastPathComponent())
+                .standardizedFileURL.path
+            return isBundledCommand(resolved, name: name) ? .link : .foreign
+        }
+        guard fm.fileExists(atPath: url.path) else { return .missing }
+        guard let size = (try? fm.attributesOfItem(atPath: url.path)[.size]) as? NSNumber, size.intValue <= 4096,
+              let text = try? String(contentsOf: url, encoding: .utf8),
+              let script = launcherScript(text), isBundledCommand(script, name: name)
+        else { return .foreign }
+        return .launcher(script: script)
+    }
+
+    static func launcherScript(_ text: String) -> String? {
+        let head = "#!/bin/bash\nexec \(shell.path) '", tail = "' \"$@\"\n"
+        guard text.hasPrefix(head), text.hasSuffix(tail), text.count >= head.count + tail.count else { return nil }
+        let script = String(text.dropFirst(head.count).dropLast(tail.count)).replacingOccurrences(of: #"'\''"#, with: "'")
+        return launcher(for: script) == text ? script : nil
+    }
+
+    private static func isBundledCommand(_ path: String, name: String) -> Bool {
+        path.hasSuffix(".app/Contents/Resources/router/bin/\(name)")
+    }
+
+    private static func replaceAtomically(_ data: Data, at path: String, mode: mode_t) throws {
+        let temporary = "\(path).\(getpid()).\(UUID().uuidString).tmp"
+        let descriptor = open(temporary, O_WRONLY | O_CREAT | O_EXCL, mode)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        do {
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            guard fchmod(descriptor, mode) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            try handle.write(contentsOf: data)
+            try handle.close()
+            guard rename(temporary, path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        } catch {
+            unlink(temporary)
+            throw error
         }
     }
 
@@ -331,18 +399,7 @@ enum AccountRouter {
         encoder.outputFormatting = .sortedKeys
         let data = try encoder.encode(rate)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let temporary = "\(url.path).\(getpid()).\(UUID().uuidString).tmp"
-        let descriptor = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        do {
-            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-            try handle.write(contentsOf: data)
-            try handle.close()
-            guard rename(temporary, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        } catch {
-            unlink(temporary)
-            throw error
-        }
+        try replaceAtomically(data, at: url.path, mode: 0o600)
     }
 
     static func withdrawSlotBurnRate(at url: URL = slotBurnRateURL) {

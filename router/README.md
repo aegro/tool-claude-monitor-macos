@@ -83,7 +83,7 @@ A troca guarda uma impressão (hash) do refresh token que está em `~/.claude` n
 
 ## Instalar a partir do repositório
 
-O app instala os comandos sozinho. Para usar direto do fonte: `router/install.sh`, que cria os links em `~/.local/bin`. Precisa de Node 18+ e, para o supervisor do terminal, do `python3` do sistema.
+O app instala os comandos sozinho, como scripts em `~/.local/bin` que rodam pelo `/bin/bash` os de dentro do bundle (o Gatekeeper não deixa executar direto um script do bundle em quarentena do Homebrew). Para usar direto do fonte: `router/install.sh`, que cria os links em `~/.local/bin`. Precisa de Node 18+ e, para o supervisor do terminal, do `python3` do sistema.
 
 ## Testes
 

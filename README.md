@@ -73,7 +73,7 @@ Para quem tem mais de uma conta do Claude: o Monitor acompanha todas e, com a op
 
 - **Contas lado a lado.** `~/.claude` continua sendo a conta principal. Cada conta extra mora em `~/.claude-accounts/<id>` e roda o CLI oficial com `CLAUDE_CONFIG_DIR` apontando para lá, com o próprio login. Settings, hooks, skills, plugins, memória e transcrições são links para `~/.claude`, então um `--resume` feito em outra conta acha a mesma conversa.
 - **No painel.** Toda conta do roteador aparece na seção de limites com a leitura atual: o Monitor consulta cada uma com o login dela, lido pelo `/usr/bin/security`, então nenhuma conta extra gera prompt novo do Keychain. A conta que o roteador usaria agora ganha o selo **roteador**.
-- **A opção.** Em **⚙ Configurações → Troca de conta**, um botão liga e desliga a troca. Desligado, o `claude-auto` só repassa tudo para o `claude`. O app instala `claude-auto` e `claude-accounts` em `~/.local/bin` como links para dentro dele, então o `brew upgrade` atualiza o roteador junto.
+- **A opção.** Em **⚙ Configurações → Troca de conta**, um botão liga e desliga a troca. Desligado, o `claude-auto` só repassa tudo para o `claude`. O app instala `claude-auto` e `claude-accounts` em `~/.local/bin` como scripts de uma linha que rodam pelo `/bin/bash` os comandos de dentro dele, então o `brew upgrade` atualiza o roteador junto. Não são links porque o Homebrew põe quarentena em todo arquivo do app e o Gatekeeper barra um script em quarentena executado direto; os links de versões antigas viram scripts na próxima abertura do app.
 - **Conta preferida.** No mesmo lugar, **Conta preferida** escolhe uma conta para usar primeiro (`preferida` na config). Sessões novas abrem nela sempre que ela tem folga. Depois de uma troca, o `claude agents` e o T3 (entre um turno e outro) voltam para ela quando ela recupera 20% de folga; uma sessão de terminal já aberta fica na conta atual até o próximo limite. Em **Nenhuma**, vale sempre a conta com mais folga.
 
 ### Configurar
@@ -130,7 +130,7 @@ O resultado é uma partição exata: cada processo cai em um único balde, nada 
 
 O app lê o Keychain, os arquivos em `~/.claude/`, o histórico de uso que o app desktop do Claude grava em `~/Library/Application Support/Claude/`, e a tabela de processos do seu usuário. Ele fala com um único endpoint, `api.anthropic.com/api/oauth/usage`, o mesmo do comando `/usage`. O token sai da máquina apenas nesse GET, como Bearer.
 
-Com o roteador configurado, o app também lê as credenciais das contas de `~/.claude-accounts` pelo `/usr/bin/security` e consulta o mesmo endpoint com cada uma. Nele, escreve só as chaves `ativo` e `preferida` de `~/.claude-accounts/config.json` e os links de `~/.local/bin`.
+Com o roteador configurado, o app também lê as credenciais das contas de `~/.claude-accounts` pelo `/usr/bin/security` e consulta o mesmo endpoint com cada uma. Nele, escreve só as chaves `ativo` e `preferida` de `~/.claude-accounts/config.json` e os dois scripts de `~/.local/bin`.
 
 O app nunca escreve a sua credencial, nem no Keychain nem em disco. Em `~/Library/Application Support/Farol/` ficam dois arquivos, ambos sem credenciais: `usage-history.json` (porcentagens, horários de reset e o uuid da organização a que cada leitura pertence) e `accounts.json` (o último snapshot de limites por conta, com rótulo e plano).
 

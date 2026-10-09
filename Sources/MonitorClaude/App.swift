@@ -8,6 +8,7 @@ struct MonitorApp: App {
         // Fora do dispatch_once do singleton: lê o estado de energia do sistema e re-aplica
         // a intenção salva sem re-entrar no init de KeepAwake.shared.
         DispatchQueue.main.async { KeepAwake.shared.bootstrap() }
+        DispatchQueue.global(qos: .utility).async { try? AccountRouter.refreshInstalledCommands() }
     }
 
     var body: some Scene {

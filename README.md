@@ -86,7 +86,7 @@ Para quem tem mais de uma conta do Claude: o Monitor acompanha todas e, com a tr
    - **VS Code:** o app aponta `claudeCode.claudeProcessWrapper` para o `claude-auto` no `settings.json` do VS Code, editando o texto no lugar (comentários e formatação ficam). A extensão passa o caminho do próprio `claude` como primeiro argumento, e o roteador usa esse binário.
    - **T3 Code:** em cada instância Claude, binário `~/.local/bin/claude-auto` (o botão copia o caminho) e nenhum home próprio. Em stream-json a troca acontece no meio do turno, e para o T3 é o mesmo processo o tempo todo. `CLAUDE_AUTO_CONTA=<id>` no ambiente da instância fixa a conta de partida.
 
-Cada arquivo que o app edita ganha ao lado uma cópia `<arquivo>.monitor-claude.bak` com a versão anterior.
+Cada arquivo que o app edita ganha ao lado uma cópia `<arquivo>.monitor-claude.bak` com a versão de antes da primeira edição do app; as edições seguintes não mexem nela.
 
 O roteador continua tendo a linha de comando, que é o que o assistente roda por baixo:
 
@@ -139,7 +139,7 @@ O app lê o Keychain, os arquivos em `~/.claude/`, o histórico de uso que o app
 
 Com o roteador configurado, o app também lê as credenciais das contas de `~/.claude-accounts` pelo `/usr/bin/security`, consulta o mesmo endpoint com cada uma e lê o cache de leituras do roteador (`.estado/uso.json`), para não repetir uma consulta que ele acabou de fazer. Em `~/.claude-accounts/config.json`, escreve só a fila (`rota`, `reserva`, `preferida`), a chave `ativo` e o nome e a sigla de cada conta (`nome`, `sigla`). O assistente de contas roda os comandos do próprio roteador (`claude-accounts add` e `login`), e o login acontece no navegador, direto com o Claude.
 
-Quando você liga uma integração, o app edita o `~/.zshrc` (só o bloco dele) ou a chave `claudeCode.claudeProcessWrapper` do `settings.json` do VS Code, sempre guardando a versão anterior em `<arquivo>.monitor-claude.bak`.
+Quando você liga uma integração, o app edita o `~/.zshrc` (só o bloco dele) ou a chave `claudeCode.claudeProcessWrapper` do `settings.json` do VS Code, guardando a versão de antes da primeira edição em `<arquivo>.monitor-claude.bak`.
 
 A aba Acessos não gasta tokens nem abre conexões: lê o registro de conectores que pediram login (`~/.claude/mcp-needs-auth-cache.json`), os transcripts dos últimos 7 dias (só os nomes dos conectores usados), o relatório do painel de prontidão (`~/.aeg/dev-readiness/report.json`) e o `brew outdated` com os metadados locais do Homebrew.
 

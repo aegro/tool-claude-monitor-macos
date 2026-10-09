@@ -170,6 +170,11 @@ struct IntegrationsTests {
         #expect(try String(contentsOf: URL(fileURLWithPath: real.path + ".monitor-claude.bak"), encoding: .utf8) == "export A=1\n")
         let perms = try fm.attributesOfItem(atPath: real.path)[.posixPermissions] as? NSNumber
         #expect(perms?.intValue == 0o600)
+
+        // A second edit keeps the copy of the user's original, not the version the Monitor wrote.
+        try Integrations.write("export A=3\n", to: link)
+        #expect(try String(contentsOf: real, encoding: .utf8) == "export A=3\n")
+        #expect(try String(contentsOf: URL(fileURLWithPath: real.path + ".monitor-claude.bak"), encoding: .utf8) == "export A=1\n")
     }
 }
 

@@ -317,16 +317,17 @@ enum Integrations {
         var errorDescription: String? { "O settings.json do VS Code não é um JSON válido. Corrija o arquivo antes de ligar." }
     }
 
-    /// Keeps the previous version as `<file>.monitor-claude.bak` and writes the new one atomically.
+    /// Keeps the file as it was before the Monitor first edited it as `<file>.monitor-claude.bak` and writes the
+    /// new one atomically. Later edits leave that copy alone: turning an integration on, off and on again would
+    /// otherwise replace the user's original with a version the Monitor wrote.
     static func write(_ text: String, to link: URL) throws {
         let fm = FileManager.default
         // A dotfile that is a symlink into a repository stays one: the edit lands on the file it points to.
         let url = link.resolvingSymlinksInPath()
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let permissions = (try? fm.attributesOfItem(atPath: url.path))?[.posixPermissions]
-        if fm.fileExists(atPath: url.path) {
-            let backup = URL(fileURLWithPath: url.path + ".monitor-claude.bak")
-            try? fm.removeItem(at: backup)
+        let backup = URL(fileURLWithPath: url.path + ".monitor-claude.bak")
+        if fm.fileExists(atPath: url.path), !fm.fileExists(atPath: backup.path) {
             try fm.copyItem(at: url, to: backup)
         }
         try Data(text.utf8).write(to: url, options: .atomic)

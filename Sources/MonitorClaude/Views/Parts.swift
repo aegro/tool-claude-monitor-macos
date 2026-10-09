@@ -344,12 +344,44 @@ struct WindowSizer: NSViewRepresentable {
         let report = screenHeight
         DispatchQueue.main.async {
             guard let window = view.window else { return }
+            PanelWindow.current = window
             if let visible = window.screen?.visibleFrame.height { report(visible) }
             let content = window.contentRect(forFrameRect: window.frame)
             guard target > 0, abs(content.height - target) > 0.5 else { return }
             let resized = NSRect(x: content.minX, y: content.maxY - target, width: content.width, height: target)
             window.setFrame(window.frameRect(forContentRect: resized), display: true)
         }
+    }
+}
+
+/// The menu bar panel's window, remembered so the settings window can open where the panel is instead of in the
+/// middle of the screen, far from the click that asked for it.
+@MainActor
+enum PanelWindow {
+    static weak var current: NSWindow?
+
+    /// Puts the settings window under the menu bar, its top right corner on the panel's (the panel closes as the
+    /// window takes the focus, so the window takes its place). Retries briefly: SwiftUI creates the window a moment
+    /// after it is asked for.
+    static func placeSettings(attempt: Int = 0) {
+        guard let anchor = current?.frame else { return }
+        let settings = NSApp.windows.first {
+            $0.identifier?.rawValue.contains("Settings") == true && $0 !== current
+        }
+        guard let settings, settings.isVisible else {
+            if attempt < 20 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { placeSettings(attempt: attempt + 1) } }
+            return
+        }
+        let visible = (current?.screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        settings.setFrameOrigin(settingsOrigin(anchor: anchor, size: settings.frame.size, visible: visible))
+    }
+
+    /// The window's top right corner on the panel's, kept inside the visible part of the screen.
+    nonisolated static func settingsOrigin(anchor: NSRect, size: NSSize, visible: NSRect) -> NSPoint {
+        var origin = NSPoint(x: anchor.maxX - size.width, y: anchor.maxY - size.height)
+        origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - size.width - 8)
+        origin.y = min(max(origin.y, visible.minY + 8), visible.maxY - size.height)
+        return origin
     }
 }
 

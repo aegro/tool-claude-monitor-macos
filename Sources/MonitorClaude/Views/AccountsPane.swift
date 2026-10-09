@@ -460,7 +460,7 @@ struct AccountRow: View {
             return "volta às \(Fmt.stamp(until)) · " + renewals
         }
         if !entry.hasLogin, entry.loginRefused { return "o macOS não liberou o login: Ler de novo em Acessos" }
-        if !entry.hasLogin { return "sem login: autorize de novo nos Ajustes" }
+        if !entry.hasLogin { return "sem login: autorize de novo em Contas e logins" }
         var parts = [renewals]
         // Numbers this old say so, and why when the reason is known.
         if let at = entry.snapshot?.fetchedAt, Date().timeIntervalSince(at) > 15 * 60 {

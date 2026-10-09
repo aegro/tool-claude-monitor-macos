@@ -16,6 +16,9 @@ enum Renderer {
         case .awake:
             view = AnyView(PanelView(monitor: monitor, initialTab: .accounts, initialAwakeOpen: true))
             size = NSSize(width: 380, height: PanelView.maxHeight)
+        case .panelSettings(let tab):
+            view = AnyView(PanelView(monitor: monitor, initialTab: .accounts, initialSettingsPage: tab))
+            size = NSSize(width: 380, height: PanelView.maxHeight)
         case .settings(let tab):
             monitor.settingsTab = tab
             view = AnyView(SettingsWindow(monitor: monitor))

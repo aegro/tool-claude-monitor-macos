@@ -15,7 +15,12 @@ struct PanelView: View {
     var initialTab: PanelTab?
     /// Opens with the keep-awake card unfolded, for `--preview=awake` and `--render=awake`.
     var initialAwakeOpen = false
+    /// Opens on the settings page inside the panel, for `--preview=ajustes:<tab>` and `--render=ajustes:<tab>`.
+    var initialSettingsPage: SettingsTab?
     @State private var previewTab: PanelTab?
+    /// The settings page shown in place of the tabs: Geral, Integrações and Avançado live in the panel; Contas (the
+    /// logins, which open the browser and would close the panel under them) opens the window.
+    @State private var settingsPage: SettingsTab?
 
     private var tab: Binding<PanelTab> {
         Binding(get: { previewTab ?? initialTab ?? PanelTab(rawValue: tabRaw) ?? .accounts },
@@ -34,10 +39,16 @@ struct PanelView: View {
     /// The pane is as tall as what the tab shows, up to the room the screen has below the menu bar; only then
     /// it scrolls. Switching tabs resizes the panel, the way a popover follows its content. It never takes more
     /// than that room, so on a short screen (or with the keep-awake card open) the footer stays in sight.
+    private var room: CGFloat { max(min(screenHeight - 12, Self.maxHeight) - topHeight - bottomHeight, 0) }
+
     private var paneHeight: CGFloat {
-        let room = max(min(screenHeight - 12, Self.maxHeight) - topHeight - bottomHeight, 0)
+        if let page = settingsPage { return min(Self.settingsHeight(page), room) }
         return min(max(paneNatural, 60), room)
     }
+
+    /// A settings page is a form, which fills what it is given: a fixed height per page, the room permitting, sized
+    /// to what each page holds (Geral is short; the other two scroll inside past that).
+    static func settingsHeight(_ page: SettingsTab) -> CGFloat { page == .general ? 380 : 520 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,6 +65,10 @@ struct PanelView: View {
                 Hairline()
             }
             .measuringHeight { if abs(topHeight - $0) > 0.5 { topHeight = $0 } }
+            if let page = settingsPage {
+                PanelSettings(monitor: monitor, page: Binding(get: { page }, set: { settingsPage = $0 }))
+                    .frame(height: paneHeight)
+            } else {
             ScrollView {
                 Group {
                     switch tab.wrappedValue {
@@ -68,6 +83,7 @@ struct PanelView: View {
             }
             .scrollIndicators(.automatic)
             .frame(height: paneHeight)
+            }
             VStack(spacing: 0) {
                 Hairline()
                 footer
@@ -80,33 +96,78 @@ struct PanelView: View {
         })
         .background {
             // ⌘, opens the settings while the panel is up, like in any Mac app.
-            Button("Ajustes") { openSettings() }
+            Button("Ajustes") { monitor.settingsTab = .general; openSettings() }
                 .keyboardShortcut(",", modifiers: .command)
                 .opacity(0)
                 .accessibilityHidden(true)
         }
         .onAppear {
             if initialAwakeOpen { showAwake = true }
+            if let initialSettingsPage { settingsPage = initialSettingsPage }
             monitor.panelOpen = true
             Task { await monitor.refreshAccessIfDue() }
         }
-        .onDisappear { monitor.panelOpen = false }
+        .onDisappear {
+            monitor.panelOpen = false
+            settingsPage = nil
+        }
     }
 
+    /// Account work (add, authorize, rename) opens the window, anchored where the panel is; everything else is a
+    /// page of the panel itself.
     private func openSettings() {
+        if monitor.settingsTab == .accounts || monitor.accountFlow != nil {
+            openAccountsWindow()
+        } else {
+            withAnimation(.easeOut(duration: 0.15)) { settingsPage = monitor.settingsTab }
+        }
+    }
+
+    private func openAccountsWindow() {
+        monitor.settingsTab = .accounts
         openSettingsAction()
         NSApp.activate(ignoringOtherApps: true)
+        PanelWindow.placeSettings()
     }
 
     // MARK: header
 
+    @ViewBuilder
     private var header: some View {
+        if settingsPage != nil {
+            HStack(spacing: 6) {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { settingsPage = nil }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                        Text("Voltar").font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(Ink.ember)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                Spacer()
+                Text("Ajustes").font(.system(size: 12.5, weight: .semibold))
+                Spacer()
+                // Balances the back button, so the title sits in the middle.
+                Text("Voltar").font(.system(size: 12, weight: .medium)).hidden().padding(.leading, 14)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+        } else {
+            tabsHeader
+        }
+    }
+
+    private var tabsHeader: some View {
         HStack(spacing: 4) {
             PanelTabs(selection: tab, dot: monitor.access.attention > 0 ? [.access] : [])
             Spacer(minLength: 6)
             keepAwakeButton
             Menu {
-                Button("Ajustes…") { openSettings() }.keyboardShortcut(",", modifiers: .command)
+                Button("Ajustes…") { monitor.settingsTab = .general; openSettings() }.keyboardShortcut(",", modifiers: .command)
+                Button("Contas e logins…") { openAccountsWindow() }
                 Button("Monitor de Atividade") { monitor.revealInActivityMonitor() }
                 Divider()
                 Button("Sair do Monitor Claude") { NSApp.terminate(nil) }
@@ -144,6 +205,29 @@ struct PanelView: View {
 
     @ViewBuilder
     private var footer: some View {
+        if settingsPage != nil {
+            HStack(spacing: 10) {
+                Button {
+                    openAccountsWindow()
+                } label: {
+                    Label("Contas e logins…", systemImage: "person.2").font(Type.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Ink.ember)
+                .help("Adicionar, autorizar e renomear contas abre numa janela: o login vai para o navegador")
+                Spacer()
+                Button("Sair do Monitor") { NSApp.terminate(nil) }
+                    .buttonStyle(.plain).font(Type.caption).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        } else {
+            tabsFooter
+        }
+    }
+
+    @ViewBuilder
+    private var tabsFooter: some View {
         HStack(spacing: 10) {
             switch tab.wrappedValue {
             case .accounts:

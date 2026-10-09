@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AppKit
 @testable import MonitorClaude
 
 struct QueueAndAccountsTests {
@@ -498,5 +499,17 @@ struct QueueAndAccountsTests {
         // The only account in the route cannot go to the reserve.
         #expect(AccountQueue.landing(["a", "b"], reserveFrom: 1, id: "a", on: 1)?.changes == false)
         #expect(AccountQueue.landing(["a", "b"], reserveFrom: 1, id: "b", on: 0) == .init(below: false, changes: true))
+    }
+
+    /// The accounts window opens where the panel was, under the menu bar, not in the middle of the screen.
+    @Test func janelaDeContasAbreNoLugarDoPainel() {
+        let visible = NSRect(x: 0, y: 0, width: 1728, height: 1080)
+        let panel = NSRect(x: 1300, y: 300, width: 380, height: 780)   // top at 1080, right at 1680
+        let origin = PanelWindow.settingsOrigin(anchor: panel, size: NSSize(width: 640, height: 540), visible: visible)
+        #expect(origin.x + 640 == 1680 && origin.y + 540 == 1080)
+        // Near the left edge or below the bottom, it stays on screen.
+        let left = PanelWindow.settingsOrigin(anchor: NSRect(x: 0, y: 900, width: 380, height: 100),
+                                              size: NSSize(width: 640, height: 540), visible: visible)
+        #expect(left.x == 8 && left.y >= 8)
     }
 }

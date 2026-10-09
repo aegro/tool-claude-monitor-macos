@@ -58,7 +58,7 @@ O ícone na barra de menu traz a porcentagem da janela de 5h. Um ponto laranja a
 - **Sessões**: cada sessão do Claude com a conta em que roda, CPU, memória, tokens (estimativa local) e tudo o que ela abriu, aninhado embaixo dela, inclusive processos reparentados para o launchd que outros monitores mostram soltos. Os Chrome abertos por uma sessão aparecem dentro dela, com o nome do perfil. **Encerrar** derruba um processo, uma subárvore ou a sessão inteira; `⌥` força (SIGKILL).
 - **Acessos**: o que precisa de você para o Claude Code seguir funcionando. Entram o login do terminal, as contas sem login, o login dos agentes, os conectores que pedem login *e* que você usou nos últimos 7 dias, versões novas do Claude Code e do Monitor no Homebrew e, com o painel de prontidão do workspace instalado, gcloud, AWS, GitHub e Docker. Conector que pede login sem ter sido usado fica quieto, num resumo.
 
-O painel fica da altura do que cada aba mostra, até o espaço que a tela tem abaixo da barra de menu; só então ele rola. A engrenagem abre os **Ajustes** (`⌘,`), com as abas Geral, Contas, Integrações e Avançado.
+O painel fica da altura do que cada aba mostra, até o espaço que a tela tem abaixo da barra de menu; só então ele rola. A engrenagem abre os **Ajustes** (`⌘,`) dentro do próprio painel, com Geral, Integrações e Avançado, e **‹ Voltar** volta às abas. **Contas e logins…** (no menu da engrenagem e no rodapé dos Ajustes) abre uma janela logo abaixo do ícone: adicionar e autorizar conta passam pelo navegador, que tira o foco e fecharia o painel no meio do assistente.
 
 ## Manter o Mac desperto
 
@@ -73,15 +73,15 @@ Para quem tem mais de uma conta do Claude: o Monitor acompanha todas e, com a tr
 
 - **Contas lado a lado.** `~/.claude` continua sendo a conta principal. Cada conta extra mora em `~/.claude-accounts/<id>` e roda o CLI oficial com `CLAUDE_CONFIG_DIR` apontando para lá, com o próprio login. Settings, hooks, skills, plugins, memória e transcrições são links para `~/.claude`, então um `--resume` feito em outra conta acha a mesma conversa.
 - **A fila.** A ordem das contas é a da fila na aba **Contas**. Com a regra **A do topo primeiro**, as sessões novas abrem na primeira conta enquanto ela tiver folga e, quando ela acaba, na conta da rota com mais folga. Com **A de mais folga**, vale sempre a de mais folga. A reserva só entra quando a rota inteira acabar. Na config do roteador, isso é `rota`, `reserva` e `preferida` (a primeira da fila, na regra do topo). Depois de uma troca, o `claude agents` e o T3 (entre um turno e outro) voltam para a do topo quando ela recupera 20% de folga; uma sessão de terminal já aberta fica na conta atual até o próximo limite.
-- **A troca automática.** Liga e desliga no rodapé da aba Contas ou em **Ajustes → Contas**. Desligada, o `claude-auto` só repassa tudo para o `claude`. O app instala `claude-auto` e `claude-accounts` em `~/.local/bin` como links para dentro dele, então o `brew upgrade` atualiza o roteador junto.
+- **A troca automática.** Liga e desliga no rodapé da aba Contas ou em **Contas e logins…**. Desligada, o `claude-auto` só repassa tudo para o `claude`. O app instala `claude-auto` e `claude-accounts` em `~/.local/bin` como links para dentro dele, então o `brew upgrade` atualiza o roteador junto.
 - **O aviso.** Cada troca vira uma notificação com o motivo e a hora em que a conta anterior volta: “Trocou para Thomas (Max) — Thomas (Aegro) bateu o limite de 5h. Volta às 18:59.”
 
 ### Configurar
 
-1. Em **Ajustes → Contas**, clique **Adicionar conta**. O assistente sugere as contas que você já usou neste Mac, abre o login do Claude no navegador ou numa janela anônima (para quando o navegador já está logado em outra conta), mostra quem entrou e avisa se for a mesma conta e organização de outra que já está na fila.
+1. Em **Contas e logins…**, clique **Adicionar conta**. O assistente sugere as contas que você já usou neste Mac, abre o login do Claude no navegador ou numa janela anônima (para quando o navegador já está logado em outra conta), mostra quem entrou e avisa se for a mesma conta e organização de outra que já está na fila.
 2. Se você usa o `claude agents`, autorize também os agentes: é uma segunda autorização, da mesma conta.
 3. Escolha o lugar na fila: na rota ou na reserva.
-4. Em **Ajustes → Integrações**, ligue onde a troca vale:
+4. Em **Ajustes → Integrações** (dentro do painel), ligue onde a troca vale:
    - **Terminal:** o app acrescenta ao `~/.zshrc` um bloco que faz o `claude` apontar para o `claude-auto` quando o comando existe. A sessão roda dentro de um supervisor; quando aparece o aviso de limite, ele reabre a mesma sessão com `--resume` na outra conta e manda continuar. Um alias escrito à mão é respeitado e não é editado.
    - **VS Code:** o app aponta `claudeCode.claudeProcessWrapper` para o `claude-auto` no `settings.json` do VS Code, editando o texto no lugar (comentários e formatação ficam). A extensão passa o caminho do próprio `claude` como primeiro argumento, e o roteador usa esse binário.
    - **T3 Code:** em cada instância Claude, binário `~/.local/bin/claude-auto` (o botão copia o caminho) e nenhum home próprio. Em stream-json a troca acontece no meio do turno, e para o T3 é o mesmo processo o tempo todo. `CLAUDE_AUTO_CONTA=<id>` no ambiente da instância fixa a conta de partida.
@@ -169,7 +169,7 @@ BIN="/Applications/Monitor Claude.app/Contents/MacOS/MonitorClaude"
 "$BIN" --render=panel:accounts tela.png --dark --wait=6   # desenha a tela num PNG, sem janela
 ```
 
-`--preview=awake` e `--render=awake` abrem o painel com o cartão de manter desperto aberto. As abas são `accounts`, `sessions` e `access` no painel e `general`, `accounts`, `integrations` e `advanced` nos Ajustes; os passos do assistente são `choose`, `authorize`, `connected`, `agents`, `place` e `done`. Os modos de prévia não trocam o login dos agentes nem gravam histórico. `CLAUDE_AUTO_HOME`, `CLAUDE_ACCOUNTS_BIN`, `MONITOR_CLAUDE_ZSHRC`, `MONITOR_CLAUDE_VSCODE_SETTINGS` e `MONITOR_CLAUDE_READINESS_DIR` apontam o app para outras pastas, que é como os testes funcionais rodam.
+`--preview=awake` e `--render=awake` abrem o painel com o cartão de manter desperto aberto. As abas são `accounts`, `sessions` e `access` no painel e `general`, `accounts`, `integrations` e `advanced` na janela de Ajustes (`--render=settings:<aba>`); `--render=ajustes:<aba>` desenha a página de Ajustes dentro do painel (`general`, `integrations`, `advanced`); os passos do assistente são `choose`, `authorize`, `connected`, `agents`, `place` e `done`. Os modos de prévia não trocam o login dos agentes nem gravam histórico. `CLAUDE_AUTO_HOME`, `CLAUDE_ACCOUNTS_BIN`, `MONITOR_CLAUDE_ZSHRC`, `MONITOR_CLAUDE_VSCODE_SETTINGS` e `MONITOR_CLAUDE_READINESS_DIR` apontam o app para outras pastas, que é como os testes funcionais rodam.
 
 ## Publicar um release (mantenedores)
 

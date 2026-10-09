@@ -247,22 +247,25 @@ function dirPropria(id, cfg = carregarConfig()) {
   return conta.dir ? path.resolve(expandir(conta.dir)) : path.join(DIR_CONTAS, id);
 }
 
-// A resposta do Keychain por pasta própria, guardada pela vida do processo (o proxy de uma sessão). O `security`
-// roda síncrono no event loop do proxy, que nesse tempo não encaminha nada entre o VS Code e o filho; sem guardar,
-// ele rodaria em toda abertura, em toda troca e em todo fim de turno de uma sessão cuja conta saiu do ~/.claude.
+// A resposta do Keychain por pasta própria, guardada por alguns minutos no processo (o proxy de uma sessão). O
+// `security` roda síncrono no event loop do proxy, que nesse tempo não encaminha nada entre o VS Code e o filho; sem
+// guardar, ele rodaria em toda abertura e em toda troca. O prazo curto vale para os dois valores: um logout (o `true`
+// guardado) e um login feito depois (o `false`) aparecem na consulta seguinte ao prazo.
+const PRAZO_DO_LOGIN_PROPRIO_MS = 5 * 60 * 1000;
 const loginProprioPorDir = new Map();
 
 // Se a conta tem login na pasta própria (o item do Keychain existe; o valor não é lido). Um Keychain que não
 // responde em 2 s conta como sem login (a sessão fica no ~/.claude, como antes) e não é guardado: a próxima
-// consulta tenta de novo.
-function temLoginProprio(id, cfg = carregarConfig()) {
+// consulta tenta de novo. `fresco` ignora a resposta guardada, para quem vai reabrir a sessão por causa dela.
+function temLoginProprio(id, cfg = carregarConfig(), { fresco = false } = {}) {
   const dir = dirPropria(id, cfg);
   if (process.platform !== 'darwin') return fs.existsSync(path.join(dir, '.credentials.json'));
-  if (loginProprioPorDir.has(dir)) return loginProprioPorDir.get(dir);
+  const guardado = loginProprioPorDir.get(dir);
+  if (!fresco && guardado && Date.now() - guardado.em < PRAZO_DO_LOGIN_PROPRIO_MS) return guardado.tem;
   const hash = crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8);
   const r = spawnSync('security', ['find-generic-password', '-s', `Claude Code-credentials-${hash}`], { stdio: 'ignore', timeout: 2000 });
   if (r.error || r.signal) return false;
-  loginProprioPorDir.set(dir, r.status === 0);
+  loginProprioPorDir.set(dir, { tem: r.status === 0, em: Date.now() });
   return r.status === 0;
 }
 

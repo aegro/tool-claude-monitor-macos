@@ -112,6 +112,18 @@ const testes = {
         assert.strictEqual(contas.temLoginProprio('max'), true);
         process.env.FAKE_SECURITY_STATUS = '44';
         assert.strictEqual(contas.temLoginProprio('max'), true);
+        // Por poucos minutos: passado o prazo, o logout aparece; e quem vai reabrir a sessão consulta sem o guardado.
+        const agora = Date.now;
+        try {
+          Date.now = () => agora() + 6 * 60 * 1000;
+          assert.strictEqual(contas.temLoginProprio('max'), false);
+        } finally {
+          Date.now = agora;
+        }
+        process.env.FAKE_SECURITY_STATUS = '0';
+        assert.strictEqual(contas.temLoginProprio('max'), false);
+        assert.strictEqual(contas.temLoginProprio('max', undefined, { fresco: true }), true);
+        assert.strictEqual(contas.temLoginProprio('max'), true);
         // Um Keychain que não responde em 2 s conta como sem login e não fica guardado.
         contas.esquecerLoginProprio();
         process.env.FAKE_SECURITY_STATUS = '0';

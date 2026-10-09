@@ -493,7 +493,21 @@ extension AccountRouter {
         }
         let fm = FileManager.default
         guard fm.fileExists(atPath: account.directory.path) else { return }
-        try? fm.trashItem(at: account.directory, resultingItemURL: nil)
+        // The account is already out of the config, which is what the router reads: a folder that stays behind is
+        // never used again, but the person is told where it is instead of believing it went to the Trash.
+        do {
+            try fm.trashItem(at: account.directory, resultingItemURL: nil)
+        } catch {
+            throw FolderNotTrashed(path: (account.directory.path as NSString).abbreviatingWithTildeInPath, reason: error.localizedDescription)
+        }
+    }
+
+    struct FolderNotTrashed: LocalizedError {
+        var path: String
+        var reason: String
+        var errorDescription: String? {
+            "A conta saiu da fila, mas a pasta \(path) não foi para o Lixo (\(reason)). Apague-a à mão se quiser."
+        }
     }
 
     /// The queue without `id`. The route never ends up empty: the first reserve account moves up, or the principal

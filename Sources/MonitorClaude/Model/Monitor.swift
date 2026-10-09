@@ -943,11 +943,12 @@ final class Monitor: ObservableObject {
         cpuTrail.append(sys.cpuPercent)
         if cpuTrail.count > 60 { cpuTrail.removeFirst(cpuTrail.count - 60) }
 
-        // The router's mark comes from the sample: the sampler caches each process's environment by pid and start
-        // time, so reading it again here would cost a KERN_PROCARGS2 per session per tick, on the main actor.
-        var marks: [pid_t: ClaudeSessionStore.ProcessMark] = [:]
-        for proc in procs { if let account = proc.claude.account { marks[proc.pid] = (account, proc.started) } }
-        sessions = ClaudeSessionStore.load(accounts: sessionDirectories, openedOn: { marks[$0] })
+        // A session in `~/.claude` runs on whatever login the folder holds now: after the agents' switch the open
+        // Claude Code re-reads the Keychain item and spends the account that moved in, whatever account the router
+        // opened it on (09/10: sessions marked Max were spending Squad Compare). So the folder decides, not the
+        // router's mark on the process; the router now opens stream sessions in the account's own folder and
+        // brings a stranded one back to it.
+        sessions = ClaudeSessionStore.load(accounts: sessionDirectories)
         attribution = Attribution.build(procs: procs, sessions: sessions)
     }
 

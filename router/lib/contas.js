@@ -640,6 +640,20 @@ function textoDaTroca({ de, para, motivo }, nome = (id) => id, volta = null, ago
   return { titulo: `Trocou para ${nome(para)}`, texto };
 }
 
+// A hora da volta na notificação só sai de uma janela de uso conhecida (a mesma busca do
+// prazoPadrao, sem o palpite de 1h/6h): o prazo de esgotadas.json continua guiando a escolha,
+// mas um palpite não vira "Volta às" para quem lê o aviso.
+function voltaConhecida(id, motivo, agora = Date.now()) {
+  const cache = lerJson(ARQ_USO, {})[id];
+  const uso = cache && cache.uso;
+  if (!uso) return null;
+  const base = String(motivo || '').replace(/^agents /, '');
+  const janela = base === 'five_hour' ? uso.cinco : base.startsWith('seven_day') ? uso.sete : null;
+  if (janela && janela.renovaEm > agora) return janela.renovaEm;
+  const cheias = (uso.janelas || []).filter((j) => j.usado >= 98 && j.renovaEm > agora).map((j) => j.renovaEm);
+  return cheias.length ? Math.max(...cheias) : null;
+}
+
 function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
   const registro = { em: Date.now(), de, para, motivo, sessao: sessao || null, interrompidas, pid: process.pid };
   try {
@@ -649,8 +663,7 @@ function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
   } catch {}
   log(`troca ${de} -> ${para} (${motivo}) sessão ${sessao || '-'}`);
   const cfg = carregarConfig();
-  const esgotada = lerEsgotadas()[de];
-  const aviso = textoDaTroca({ de, para, motivo }, (id) => nomeDaConta(id, cfg), esgotada && esgotada.ate);
+  const aviso = textoDaTroca({ de, para, motivo }, (id) => nomeDaConta(id, cfg), voltaConhecida(de, motivo));
   notificar(aviso.titulo, aviso.texto);
 }
 
@@ -753,6 +766,7 @@ module.exports = {
   liberar,
   registrarTroca,
   textoDaTroca,
+  voltaConhecida,
   lerTrocas,
   notificar,
   resolverClaude,

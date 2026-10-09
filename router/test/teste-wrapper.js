@@ -102,6 +102,38 @@ const testes = {
     assert.strictEqual(texto('auth'), 'a pediu login de novo.');
     assert.strictEqual(texto('agents preventiva'), 'a estava quase no limite. Os agentes seguiram junto.');
   },
+
+  voltaDoAvisoSoVemDeUmaJanelaDeUsoConhecida() {
+    const estado = path.join(process.env.CLAUDE_AUTO_HOME, '.estado');
+    fs.mkdirSync(estado, { recursive: true });
+    const agora = Date.now();
+    const cinco = agora + 2 * 3600 * 1000;
+    const semana = agora + 3 * 86400 * 1000;
+    const cheia = agora + 5 * 3600 * 1000;
+    fs.writeFileSync(
+      path.join(estado, 'uso.json'),
+      JSON.stringify({
+        comUso: {
+          ok: true,
+          uso: {
+            cinco: { usado: 100, renovaEm: cinco },
+            sete: { usado: 40, renovaEm: semana },
+            janelas: [
+              { chave: 'session', usado: 100, renovaEm: cinco },
+              { chave: 'weekly_opus', usado: 99, renovaEm: cheia },
+            ],
+          },
+        },
+        semJanelaCheia: { ok: true, uso: { cinco: null, sete: null, janelas: [{ chave: 'session', usado: 50, renovaEm: cinco }] } },
+      }),
+    );
+    assert.strictEqual(contas.voltaConhecida('comUso', 'five_hour', agora), cinco);
+    assert.strictEqual(contas.voltaConhecida('comUso', 'agents seven_day', agora), semana);
+    assert.strictEqual(contas.voltaConhecida('comUso', 'rate_limit', agora), cheia);
+    // Sem janela que explique o limite, o aviso fica sem hora em vez de mostrar o palpite de 1h.
+    assert.strictEqual(contas.voltaConhecida('semJanelaCheia', 'limite', agora), null);
+    assert.strictEqual(contas.voltaConhecida('naoSondada', 'five_hour', agora), null);
+  },
 };
 
 let falhas = 0;

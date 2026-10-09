@@ -943,7 +943,11 @@ final class Monitor: ObservableObject {
         cpuTrail.append(sys.cpuPercent)
         if cpuTrail.count > 60 { cpuTrail.removeFirst(cpuTrail.count - 60) }
 
-        sessions = ClaudeSessionStore.load(accounts: sessionDirectories)
+        // The router's mark comes from the sample: the sampler caches each process's environment by pid and start
+        // time, so reading it again here would cost a KERN_PROCARGS2 per session per tick, on the main actor.
+        var marks: [pid_t: ClaudeSessionStore.ProcessMark] = [:]
+        for proc in procs { if let account = proc.claude.account { marks[proc.pid] = (account, proc.started) } }
+        sessions = ClaudeSessionStore.load(accounts: sessionDirectories, openedOn: { marks[$0] })
         attribution = Attribution.build(procs: procs, sessions: sessions)
     }
 

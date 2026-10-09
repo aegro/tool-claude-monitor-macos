@@ -36,10 +36,15 @@ enum ClaudeSessionStore {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
     }
 
+    /// What the sampler read from a live process: the router account it was opened on (`CLAUDE_AUTO_CONTA`) and
+    /// when it started.
+    typealias ProcessMark = (account: String, started: Date)
+
     /// Sessions from `~/.claude` plus every router account directory: a session opened on an extra account writes
-    /// its file under that account's own `sessions/`, which is not linked to `~/.claude`.
+    /// its file under that account's own `sessions/`, which is not linked to `~/.claude`. `openedOn` answers from
+    /// what the process sampler already read, so a tick never re-reads a process's environment.
     static func load(accounts: [(id: String?, directory: URL)] = [], defaultDirectory: URL = root,
-                     openedOn: (pid_t) -> String? = { ProcessSampler.argsAndEnv(pid: $0)?.claude.account }) -> [ClaudeSession] {
+                     openedOn: (pid_t) -> ProcessMark? = { _ in nil }) -> [ClaudeSession] {
         let known = Set(accounts.compactMap(\.id))
         var seen = Set<pid_t>()
         var out: [ClaudeSession] = []
@@ -58,7 +63,7 @@ enum ClaudeSessionStore {
                 // The folder says where the session lives; the router's mark on the process says which account it
                 // was opened on. They differ in `~/.claude` after the agents' switch moves another account in: a
                 // session opened there before the switch still runs on the account that left.
-                if let marked = openedOn(session.pid), known.contains(marked) { session.accountId = marked }
+                if let marked = openedOn(session.pid)?.account, known.contains(marked) { session.accountId = marked }
                 out.append(session)
             }
         }

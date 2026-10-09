@@ -408,10 +408,10 @@ struct QueueAndAccountsTests {
         // The router's mark on the process wins over the folder: a session opened on the account that later left
         // `~/.claude` in the agents' switch still runs on it. A mark that is no queue account is ignored.
         let marked = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
-                                             defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in "principal" })
+                                             defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in (account: "principal", started: .distantPast) })
         #expect(marked.first?.accountId == "principal")
         let stranger = ClaudeSessionStore.load(accounts: [(id: "max", directory: b), (id: "principal", directory: a)],
-                                               defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in "sumiu" })
+                                               defaultDirectory: base.appendingPathComponent("vazia"), openedOn: { _ in (account: "sumiu", started: .distantPast) })
         #expect(stranger.first?.accountId == "max")
         #expect(ClaudeSessionStore.load(directory: a.appendingPathComponent("sessions"), accountId: "principal").first?.accountId == "principal")
     }

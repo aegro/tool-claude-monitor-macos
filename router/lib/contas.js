@@ -640,14 +640,29 @@ function textoDaTroca({ de, para, motivo }, nome = (id) => id, volta = null, ago
   return { titulo: `Trocou para ${nome(para)}`, texto };
 }
 
-// A hora da volta na notificação só sai de uma janela de uso conhecida (a mesma busca do
-// prazoPadrao, sem o palpite de 1h/6h): o prazo de esgotadas.json continua guiando a escolha,
-// mas um palpite não vira "Volta às" para quem lê o aviso.
+// A hora da volta na notificação só sai de uma janela de uso conhecida (a busca do prazoPadrao,
+// sem o palpite de 1h/6h): o prazo de esgotadas.json continua guiando a escolha, mas um palpite
+// não vira "Volta às" para quem lê o aviso. Um limite semanal de um modelo (seven_day_opus) usa
+// a janela daquele modelo, que renova em outra hora que a semanal geral.
+function janelaDoModelo(uso, base) {
+  const modelo = base.slice('seven_day_'.length).toLowerCase();
+  if (!modelo) return null;
+  // O formato antigo guarda a chave crua (seven_day_opus); o novo, a janela com escopo e o nome do
+  // modelo no rótulo ("Weekly Opus").
+  const casa = (j) =>
+    j.chave === base ||
+    String(j.chave || '').toLowerCase().endsWith(`_${modelo}`) ||
+    String(j.rotulo || '').toLowerCase() === `weekly ${modelo}`;
+  return (uso.janelas || []).find(casa) || null;
+}
+
 function voltaConhecida(id, motivo, agora = Date.now()) {
   const cache = lerJson(ARQ_USO, {})[id];
   const uso = cache && cache.uso;
   if (!uso) return null;
   const base = String(motivo || '').replace(/^agents /, '');
+  const doModelo = base.startsWith('seven_day_') ? janelaDoModelo(uso, base) : null;
+  if (doModelo && doModelo.renovaEm > agora) return doModelo.renovaEm;
   const janela = base === 'five_hour' ? uso.cinco : base.startsWith('seven_day') ? uso.sete : null;
   if (janela && janela.renovaEm > agora) return janela.renovaEm;
   const cheias = (uso.janelas || []).filter((j) => j.usado >= 98 && j.renovaEm > agora).map((j) => j.renovaEm);

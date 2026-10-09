@@ -129,6 +129,11 @@ const testes = {
     );
     assert.strictEqual(contas.voltaConhecida('comUso', 'five_hour', agora), cinco);
     assert.strictEqual(contas.voltaConhecida('comUso', 'agents seven_day', agora), semana);
+    // O limite semanal de um modelo volta quando a janela daquele modelo renova, não a semanal geral.
+    assert.strictEqual(contas.voltaConhecida('comUso', 'seven_day_opus', agora), cheia);
+    assert.strictEqual(contas.voltaConhecida('comUso', 'agents seven_day_opus', agora), cheia);
+    // Sem a janela do modelo no cache, fica a semanal geral.
+    assert.strictEqual(contas.voltaConhecida('comUso', 'seven_day_sonnet', agora), semana);
     assert.strictEqual(contas.voltaConhecida('comUso', 'rate_limit', agora), cheia);
     // Sem janela que explique o limite, o aviso fica sem hora em vez de mostrar o palpite de 1h.
     assert.strictEqual(contas.voltaConhecida('semJanelaCheia', 'limite', agora), null);

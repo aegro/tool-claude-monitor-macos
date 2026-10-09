@@ -376,4 +376,23 @@ struct QueueAndAccountsTests {
         #expect(Fmt.weekday(now.addingTimeInterval(10 * 86_400), now: now).contains("/"))
         #expect(!Fmt.weekday(now.addingTimeInterval(2 * 86_400), now: now).contains("/"))
     }
+
+    /// The drop line goes where the account lands: under the target when it comes from above, over it from below,
+    /// and nowhere for a drop that changes nothing or would empty the route.
+    @Test func linhaDoArrastoFicaOndeAContaCai() {
+        let ids = ["a", "b", "c", "d"]   // route a b c | reserve d
+        func land(_ id: String, on index: Int) -> AccountQueue.Landing? {
+            AccountQueue.landing(ids, reserveFrom: 3, id: id, on: index)
+        }
+        #expect(land("a", on: 2) == .init(below: true, changes: true))     // a under c: b c a
+        #expect(land("c", on: 0) == .init(below: false, changes: true))    // c over a: c a b
+        #expect(land("c", on: 3) == .init(below: true, changes: true))     // on the divider from above: head of the reserve
+        #expect(land("d", on: 3) == .init(below: false, changes: true))    // on the divider from below: end of the route
+        #expect(land("a", on: 0)?.changes == false)                        // on itself
+        #expect(land("d", on: 4)?.changes == false)
+        #expect(land("x", on: 0) == nil)
+        // The only account in the route cannot go to the reserve.
+        #expect(AccountQueue.landing(["a", "b"], reserveFrom: 1, id: "a", on: 1)?.changes == false)
+        #expect(AccountQueue.landing(["a", "b"], reserveFrom: 1, id: "b", on: 0) == .init(below: false, changes: true))
+    }
 }

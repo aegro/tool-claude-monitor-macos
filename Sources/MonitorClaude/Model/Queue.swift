@@ -99,6 +99,25 @@ struct AccountQueue: Equatable {
         return (route, reserve)
     }
 
+    /// Dropping `id` on the row (or the divider) at `index` of the combined list: on which edge of the target it
+    /// lands, and whether the drop changes anything. Coming from above, `moving` puts the account after the target
+    /// (at the head of the reserve, for the divider); from below, before it. A drop that keeps the order, or would
+    /// leave the route empty, changes nothing and is refused.
+    struct Landing: Equatable {
+        var below: Bool
+        var changes: Bool
+    }
+
+    static func landing(_ ids: [String], reserveFrom divider: Int, id: String, on index: Int) -> Landing? {
+        guard let from = ids.firstIndex(of: id) else { return nil }
+        let slot = from >= divider ? from + 1 : from
+        let split = min(max(divider, 0), ids.count)
+        let changes = moving(ids, reserveFrom: divider, id: id, to: index).map {
+            $0.route != Array(ids[..<split]) || $0.reserve != Array(ids[split...])
+        } ?? false
+        return Landing(below: slot < index, changes: changes)
+    }
+
     // MARK: words
 
     /// The sentence under the account name: time first (from the live outlook), then who comes next.

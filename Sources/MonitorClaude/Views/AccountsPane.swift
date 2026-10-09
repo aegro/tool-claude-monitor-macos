@@ -50,6 +50,13 @@ struct AccountsPane: View {
                         row(entry, index: queue.route.count + 1 + i, inUse: inUse, next: next, queue: queue)
                     }
                 }
+                // A drag dropped outside the list never reaches `performDrop`: the first move of the mouse with the
+                // button up ends it, so the row does not stay faded.
+                .onContinuousHover { _ in
+                    guard dragging != nil, NSEvent.pressedMouseButtons == 0 else { return }
+                    dragging = nil
+                    dropTarget = nil
+                }
                 addButton
             }
         }
@@ -100,12 +107,15 @@ struct AccountsPane: View {
             withAnimation(.easeOut(duration: 0.15)) { expanded = expanded == entry.id ? nil : entry.id }
         }
         .opacity(dragging == entry.id ? 0.45 : 1)
-        .overlay(alignment: .top) { insertionLine(visible: dropTarget == entry.id && dragging != entry.id) }
+        .overlay(alignment: landingEdge(index, queue: queue) == .top ? .top : .bottom) {
+            insertionLine(visible: dropTarget == entry.id, edge: landingEdge(index, queue: queue))
+        }
         .onDrag {
             dragging = entry.id
             return NSItemProvider(object: entry.id as NSString)
         }
         .onDrop(of: [UTType.text], delegate: QueueDrop(targetIndex: index, targetId: entry.id, monitor: monitor,
+                                                       allowed: moves(to: index, queue: queue),
                                                        dragging: $dragging, dropTarget: $dropTarget))
         .contextMenu { menu(entry, index: index, queue: queue) }
     }
@@ -149,15 +159,33 @@ struct AccountsPane: View {
                 .mask(HStack(spacing: 3) { ForEach(0..<80, id: \.self) { _ in Rectangle().frame(width: 3) } })
         }
         .contentShape(Rectangle())
-        .overlay(alignment: .top) { insertionLine(visible: dropTarget == "divider") }
+        .overlay(alignment: landingEdge(index, queue: queue) == .top ? .top : .bottom) {
+            insertionLine(visible: dropTarget == "divider", edge: landingEdge(index, queue: queue))
+        }
         .onDrop(of: [UTType.text], delegate: QueueDrop(targetIndex: index, targetId: "divider", monitor: monitor,
+                                                       allowed: moves(to: index, queue: queue),
                                                        dragging: $dragging, dropTarget: $dropTarget))
         .accessibilityElement(children: .combine)
     }
 
-    private func insertionLine(visible: Bool) -> some View {
-        Capsule().fill(Ink.ember).frame(height: 2).padding(.horizontal, 4).offset(y: -2)
+    private func insertionLine(visible: Bool, edge: VerticalEdge) -> some View {
+        Capsule().fill(Ink.ember).frame(height: 2).padding(.horizontal, 4).offset(y: edge == .top ? -2 : 2)
             .opacity(visible ? 1 : 0).allowsHitTesting(false)
+    }
+
+    /// Where the dragged account would land if dropped on `index`, and whether that changes the queue.
+    private func landing(_ index: Int, queue: AccountQueue) -> AccountQueue.Landing? {
+        guard let id = dragging else { return nil }
+        let route = queue.route.map(\.id)
+        return AccountQueue.landing(route + queue.reserve.map(\.id), reserveFrom: route.count, id: id, on: index)
+    }
+
+    private func landingEdge(_ index: Int, queue: AccountQueue) -> VerticalEdge {
+        landing(index, queue: queue)?.below == true ? .bottom : .top
+    }
+
+    private func moves(to index: Int, queue: AccountQueue) -> Bool {
+        landing(index, queue: queue)?.changes == true
     }
 
     private var addButton: some View {
@@ -198,27 +226,31 @@ struct AccountsPane: View {
 }
 
 /// Drops a dragged account at `targetIndex` of the combined list (route, divider, reserve), drawing the
-/// insertion line over the row it would land on while the drag hovers it.
+/// insertion line where it would land while the drag hovers the target. A drop that would change nothing, or
+/// empty the route, is refused instead of failing after the fact.
 private struct QueueDrop: DropDelegate {
     let targetIndex: Int
     let targetId: String
     let monitor: Monitor
+    let allowed: Bool
     @Binding var dragging: String?
     @Binding var dropTarget: String?
 
     func performDrop(info: DropInfo) -> Bool {
         dropTarget = nil
-        guard let id = dragging else { return false }
+        let id = dragging
         dragging = nil
+        guard let id, allowed else { return false }
         Task { @MainActor in await monitor.moveAccount(id, to: targetIndex) }
         return true
     }
 
     func dropEntered(info: DropInfo) {
+        guard allowed else { return }
         withAnimation(.easeOut(duration: 0.1)) { dropTarget = targetId }
     }
 
-    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: allowed ? .move : .forbidden) }
 
     func dropExited(info: DropInfo) {
         if dropTarget == targetId { withAnimation(.easeOut(duration: 0.1)) { dropTarget = nil } }

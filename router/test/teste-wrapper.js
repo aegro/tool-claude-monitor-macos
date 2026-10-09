@@ -145,6 +145,26 @@ const testes = {
     assert.strictEqual(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'), principal);
   },
 
+  sessaoQueSoMudaDePastaNaMesmaContaNaoEntraNaListaDeTrocas() {
+    const home = process.env.CLAUDE_AUTO_HOME;
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ notificar: false }));
+    const arquivo = path.join(home, '.estado', 'trocas.jsonl');
+    fs.rmSync(arquivo, { force: true });
+    const lidas = () => (fs.existsSync(arquivo) ? fs.readFileSync(arquivo, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : []);
+    try {
+      contas.registrarTroca({ de: 'max', para: 'max', motivo: 'saiu-do-claude', sessao: 's' });
+      contas.registrarTroca({ de: 'max', para: 'max', motivo: 'login-da-pasta-propria', sessao: 's' });
+      assert.deepStrictEqual(lidas(), []);
+      // A troca de teste com uma conta só continua na lista: é ela que testa o aviso.
+      contas.registrarTroca({ de: 'max', para: 'max', motivo: 'teste', sessao: 's' });
+      contas.registrarTroca({ de: 'max', para: 'aegro', motivo: 'five_hour', sessao: 's' });
+      assert.deepStrictEqual(lidas().map((t) => t.motivo), ['teste', 'five_hour']);
+    } finally {
+      fs.rmSync(arquivo, { force: true });
+      fs.writeFileSync(path.join(home, 'config.json'), '{}');
+    }
+  },
+
   primeiroArgumentoComOCaminhoDoClaudeViraOBinario() {
     const r = binarioDoWrapper(['/ext/resources/native-binary/claude', '--output-format', 'stream-json'], ehExecutavel);
     assert.strictEqual(r.bin, '/ext/resources/native-binary/claude');

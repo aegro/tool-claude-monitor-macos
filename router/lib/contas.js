@@ -749,6 +749,13 @@ function voltaConhecida(id, motivo, agora = Date.now()) {
 }
 
 function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
+  // A sessão que só mudou de pasta na mesma conta (voltou para a própria, ou para o ~/.claude) não trocou de conta:
+  // fica no log, fora da lista de trocas que o Monitor mostra, e sem aviso. A troca de teste com uma conta só
+  // (CLAUDE_AUTO_TESTE_MESMA_CONTA) é a exceção: ela existe para testar a lista e o aviso.
+  if (de === para && motivo !== 'teste') {
+    log(`sessão ${sessao || '-'} reaberta na mesma conta ${de} (${motivo})`);
+    return;
+  }
   const registro = { em: Date.now(), de, para, motivo, sessao: sessao || null, interrompidas, pid: process.pid };
   try {
     fs.mkdirSync(DIR_ESTADO, { recursive: true });
@@ -756,8 +763,6 @@ function registrarTroca({ de, para, motivo, sessao, interrompidas = 0 }) {
     fs.appendFileSync(ARQ_TROCAS, JSON.stringify(registro) + '\n');
   } catch {}
   log(`troca ${de} -> ${para} (${motivo}) sessão ${sessao || '-'}`);
-  // A sessão que só voltou para a pasta da própria conta não trocou de conta: nada a avisar.
-  if (de === para) return;
   const cfg = carregarConfig();
   const aviso = textoDaTroca({ de, para, motivo }, (id) => nomeDaConta(id, cfg), voltaConhecida(de, motivo));
   notificar(aviso.titulo, aviso.texto);

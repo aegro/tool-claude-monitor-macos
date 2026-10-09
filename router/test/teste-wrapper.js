@@ -83,12 +83,13 @@ const testes = {
     const home = process.env.CLAUDE_AUTO_HOME;
     fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ principal: 'max', contas: { max: {}, aegro: {} }, rota: ['max', 'aegro'] }));
     const bin = fs.mkdtempSync(path.join(raiz, 'sec-'));
-    fs.writeFileSync(path.join(bin, 'security'), '#!/bin/sh\nexit "${FAKE_SECURITY_STATUS:-0}"\n', { mode: 0o755 });
-    const antes = { PATH: process.env.PATH, status: process.env.FAKE_SECURITY_STATUS };
+    fs.writeFileSync(path.join(bin, 'security'), '#!/bin/sh\n[ -n "$FAKE_SECURITY_SLEEP" ] && exec sleep "$FAKE_SECURITY_SLEEP"\nexit "${FAKE_SECURITY_STATUS:-0}"\n', { mode: 0o755 });
+    const antes = { PATH: process.env.PATH, status: process.env.FAKE_SECURITY_STATUS, sleep: process.env.FAKE_SECURITY_SLEEP };
     process.env.PATH = `${bin}:${process.env.PATH}`;
     // No macOS o login da pasta própria é um item do Keychain (o `security` falso responde); fora dele, o arquivo.
     const credenciais = path.join(home, 'max', '.credentials.json');
     const login = (tem) => {
+      contas.esquecerLoginProprio();
       if (process.platform === 'darwin') process.env.FAKE_SECURITY_STATUS = tem ? '0' : '44';
       else if (tem) {
         fs.mkdirSync(path.dirname(credenciais), { recursive: true });
@@ -105,9 +106,25 @@ const testes = {
       assert.strictEqual(contas.envDaSessao('max', {}).CLAUDE_CONFIG_DIR, undefined);
       // Conta que não é a do ~/.claude: a pasta dela, como sempre.
       assert.strictEqual(contas.envDaSessao('aegro', {}).CLAUDE_CONFIG_DIR, path.join(home, 'aegro'));
+      if (process.platform === 'darwin') {
+        // A resposta do Keychain fica guardada pela sessão: o `security` não roda de novo a cada consulta.
+        login(true);
+        assert.strictEqual(contas.temLoginProprio('max'), true);
+        process.env.FAKE_SECURITY_STATUS = '44';
+        assert.strictEqual(contas.temLoginProprio('max'), true);
+        // Um Keychain que não responde em 2 s conta como sem login e não fica guardado.
+        contas.esquecerLoginProprio();
+        process.env.FAKE_SECURITY_STATUS = '0';
+        process.env.FAKE_SECURITY_SLEEP = '3';
+        assert.strictEqual(contas.temLoginProprio('max'), false);
+        delete process.env.FAKE_SECURITY_SLEEP;
+        assert.strictEqual(contas.temLoginProprio('max'), true);
+      }
     } finally {
+      contas.esquecerLoginProprio();
       process.env.PATH = antes.PATH;
       if (antes.status === undefined) delete process.env.FAKE_SECURITY_STATUS; else process.env.FAKE_SECURITY_STATUS = antes.status;
+      if (antes.sleep === undefined) delete process.env.FAKE_SECURITY_SLEEP; else process.env.FAKE_SECURITY_SLEEP = antes.sleep;
       fs.rmSync(credenciais, { force: true });
       fs.writeFileSync(path.join(home, 'config.json'), '{}');
     }

@@ -172,8 +172,9 @@ struct AccountsPane: View {
 
     /// Asked under the row, not in a dialog, which would close the menu bar panel.
     private func removalConfirmation(_ entry: AccountQueue.Entry) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tirar \(entry.label) da fila? A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta.")
+        let blocked = AccountQueue.removalBlocked(sessions: entry.sessionsInFolder)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(blocked ?? "Tirar \(entry.label) da fila? A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta.")
                 .font(Type.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -184,6 +185,7 @@ struct AccountsPane: View {
                     Task { await monitor.removeAccount(entry.id) }
                 }
                 .controlSize(.small).buttonStyle(.borderedProminent).tint(Ink.alarm)
+                .disabled(blocked != nil)
             }
         }
         .padding(10)

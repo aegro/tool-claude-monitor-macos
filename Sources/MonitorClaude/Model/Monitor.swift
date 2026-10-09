@@ -995,6 +995,7 @@ final class Monitor: ObservableObject {
                 agentsLogin: account.id == router.config.principal || router.agentsLogins.contains(account.id),
                 exhaustedUntil: router.exhausted[account.id].flatMap { $0 > now ? $0 : nil },
                 sessions: sessions.filter { $0.accountId == account.id }.count,
+                sessionsInFolder: sessions.filter { $0.folderAccountId == account.id }.count,
                 runsAgents: account.id == router.config.principal,
                 isLive: live,
                 loginIdle: router.idleLogins.contains(account.id),
@@ -1021,6 +1022,12 @@ final class Monitor: ObservableObject {
     /// Takes an account out of the queue (see `AccountRouter.discard`): for an entry that should not be there, such
     /// as a second login into the same account.
     func removeAccount(_ id: String) async {
+        // The account's folder goes to the Trash: never under a session still running with it as its config directory.
+        let running = sessions.filter { $0.folderAccountId == id }.count
+        guard running == 0 else {
+            actionError = AccountQueue.removalBlocked(sessions: running)
+            return
+        }
         await save { try AccountRouter.discard(id) }
         watchAgentsNow()
     }

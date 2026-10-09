@@ -429,12 +429,20 @@ struct QueueAndAccountsTests {
                                     defaultDirectory: padrao, openedOn: { _ in mark }).first
         }
         #expect(load(nil)?.accountId == "principal")
-        // Opened on max before the agents' switch moved the principal into `~/.claude`: it still runs on max.
+        // Opened on max before the agents' switch moved the principal into `~/.claude`: it still runs on max, and
+        // its file still lives in the principal's folder, which is what removing an account would trash.
         #expect(load((account: "max", started: antes))?.accountId == "max")
+        #expect(load((account: "max", started: antes))?.folderAccountId == "principal")
         // A mark that is no queue account is ignored, and so is the mark of a process younger than the session:
         // the pid was reused and the file is stale.
         #expect(load((account: "sumiu", started: antes))?.accountId == "principal")
         #expect(load((account: "max", started: Date()))?.accountId == "principal")
+    }
+
+    @Test func contaComSessaoNaPastaNaoSaiDaFila() {
+        #expect(AccountQueue.removalBlocked(sessions: 0) == nil)
+        #expect(AccountQueue.removalBlocked(sessions: 1)?.hasPrefix("1 sessão ainda roda") == true)
+        #expect(AccountQueue.removalBlocked(sessions: 3)?.hasPrefix("3 sessões ainda rodam") == true)
     }
 
     @Test func contaCujaPastaEUmAtalhoDoPadraoMantemAMarca() throws {

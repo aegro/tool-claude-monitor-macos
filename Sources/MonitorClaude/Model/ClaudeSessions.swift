@@ -17,6 +17,9 @@ struct ClaudeSession: Identifiable, Equatable {
     /// the process, when it names a queue account; otherwise, and without a mark, the account whose config directory
     /// holds the session file. nil for `~/.claude` when no router is set up.
     var accountId: String?
+    /// The account whose config directory holds the session file, whatever the mark says: removing that account
+    /// would send this folder to the Trash under the running session.
+    var folderAccountId: String?
 
     var id: pid_t { pid }
     var isBusy: Bool { status == "busy" }
@@ -104,7 +107,8 @@ enum ClaudeSessionStore {
                 jobId: d["jobId"] as? String,
                 startedAt: (d["startedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) },
                 updatedAt: (d["updatedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) },
-                accountId: accountId
+                accountId: accountId,
+                folderAccountId: accountId
             ))
         }
         return out

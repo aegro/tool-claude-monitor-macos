@@ -374,7 +374,9 @@ final class Monitor: ObservableObject {
         let desktopSeries = ClaudeDesktop.samplesByOrg()
         desktopOrgs = ClaudeDesktop.summarize(desktopSeries)
 
-        let identity = ClaudeConfig.activeAccount()
+        // The router's view of `~/.claude` when there is one: the file alone can name the wrong account right after
+        // the agents' switch (see `slotIdentity`).
+        let identity = AccountRouter.loadConfig().map { AccountRouter.slotIdentity(config: $0) } ?? ClaudeConfig.activeAccount()
         if identity?.key != lastAccountKey {
             cachedCreds = nil
             usage = nil
@@ -435,7 +437,7 @@ final class Monitor: ObservableObject {
         var refused: Set<String> = []
 
         for account in config.accounts {
-            let identity = AccountRouter.identity(for: account)
+            let identity = AccountRouter.identity(for: account, config: config)
             logins[account.id] = identity
             let stored = identity.flatMap { accounts.records[$0.key]?.snapshot }
             let routerRead = readings[account.id]
@@ -1004,6 +1006,13 @@ final class Monitor: ObservableObject {
         let q = accountQueue
         guard q.configured, !q.isSingle, let inUse = q.newSessions(), inUse != q.route.first?.id else { return nil }
         return q.entry(inUse)?.monogram
+    }
+
+    /// Takes an account out of the queue (see `AccountRouter.discard`): for an entry that should not be there, such
+    /// as a second login into the same account.
+    func removeAccount(_ id: String) async {
+        await save { try AccountRouter.discard(id) }
+        watchAgentsNow()
     }
 
     func moveAccount(_ id: String, to index: Int) async {

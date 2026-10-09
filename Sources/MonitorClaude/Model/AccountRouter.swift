@@ -369,12 +369,47 @@ enum AccountRouter {
         return "\(Keychain.service)-\(hex.prefix(8))"
     }
 
-    static func identity(for account: Account) -> AccountIdentity? {
-        let file = account.usesDefaultDirectory
-            ? ClaudeConfig.url
-            : account.directory.appendingPathComponent(".claude.json")
-        guard let data = try? Data(contentsOf: file) else { return nil }
+    static func identity(for account: Account, config: Config? = nil) -> AccountIdentity? {
+        guard !account.usesDefaultDirectory else {
+            return (config ?? loadConfig()).map { slotIdentity(config: $0) } ?? ClaudeConfig.activeAccount()
+        }
+        return folderIdentity(account)
+    }
+
+    private static func folderIdentity(_ account: Account) -> AccountIdentity? {
+        guard let data = try? Data(contentsOf: account.directory.appendingPathComponent(".claude.json")) else { return nil }
         return ClaudeConfig.parseActiveAccount(data)
+    }
+
+    static var savedLoginsDirectory: URL { home.appendingPathComponent(".estado/agentes") }
+
+    /// The login the router saved for `id` when it moved that account in or out of `~/.claude`; nil when there is
+    /// none, or the router marked it as no longer working.
+    static func savedLogin(_ id: String, in dir: URL = savedLoginsDirectory) -> AccountIdentity? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(id).json")),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["invalidoEm"] == nil
+        else { return nil }
+        return ClaudeConfig.parseActiveAccount(data)
+    }
+
+    /// Who is logged into `~/.claude`, the router's slot. `~/.claude.json` says it, but after the router moves
+    /// another account into the slot (the agents' switch), a Claude Code session still open rewrites that file with
+    /// the login it started with. The file then names an account that lives elsewhere in the queue, and the slot
+    /// account showed up as a copy of it: "Thomas (Max)" read as "Thomas (Aegro)". When the file names another
+    /// queue account and the router saved this slot account's own login, that saved login wins.
+    static func slotIdentity(config: Config) -> AccountIdentity? {
+        let others = config.accounts.filter { $0.id != config.principal }
+        var otherKeys = Set(others.compactMap { folderIdentity($0)?.key })
+        otherKeys.formUnion(others.compactMap { savedLogin($0.id)?.key })
+        return resolveSlotIdentity(declared: ClaudeConfig.activeAccount(), saved: savedLogin(config.principal),
+                                   otherKeys: otherKeys)
+    }
+
+    static func resolveSlotIdentity(declared: AccountIdentity?, saved: AccountIdentity?,
+                                    otherKeys: Set<String>) -> AccountIdentity? {
+        guard let declared, let saved, declared.key != saved.key, otherKeys.contains(declared.key) else { return declared }
+        return saved
     }
 
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {

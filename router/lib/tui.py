@@ -243,7 +243,7 @@ class Supervisor:
             return
         try:
             processo = subprocess.Popen(
-                [self.config["contas"], "_trocar", "--de", self.conta, "--motivo", motivo, "--sessao", sessao],
+                ["/bin/bash", self.config["contas"], "_trocar", "--de", self.conta, "--motivo", motivo, "--sessao", sessao],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=os.environ,
             )
             prazo = time.time() + 30

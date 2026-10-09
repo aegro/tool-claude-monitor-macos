@@ -414,6 +414,7 @@ function proxyEmProcesso(config) {
   const p = new Proxy([]);
   // Aberta no ~/.claude na conta "principal", que a troca dos agentes depois tirou de lá.
   p.conta = 'principal';
+  p.contaDaAbertura = 'principal';
   p.noClaudePadrao = true;
   return { contas, p };
 }
@@ -502,8 +503,29 @@ async function loginRecusadoNaPastaPropriaVoltaParaOClaudeSemMarcarAConta() {
   assert.deepStrictEqual(trocas[1], ['segunda', 'auth', true]);
 }
 
+async function semLoginProprioASessaoVoltaAContarComoDaSuaSemReabrir() {
+  const { contas, p } = proxyEmProcesso({ principal: 'segunda', contas: { principal: {}, segunda: {} }, rota: ['principal', 'segunda'] });
+  const trocas = [];
+  const consultadas = [];
+  p.trocar = async (t) => trocas.push([t.para, t.motivo]);
+  await comDubles(contas, {
+    log() {},
+    // Só a segunda tem login na pasta própria; a principal, em que a sessão abriu, não.
+    temLoginProprio: (id) => (consultadas.push(id), id === 'segunda'),
+  }, async () => {
+    // A segunda entrou no ~/.claude: sem login próprio, a sessão passa a contar como dela.
+    assert.strictEqual(await p.checarSlot({ principal: 'segunda' }), false);
+    assert.strictEqual(p.conta, 'segunda');
+    // A principal voltou: a sessão volta a contar como dela, sem reabrir na pasta da segunda.
+    assert.strictEqual(await p.checarSlot({ principal: 'principal' }), false);
+    assert.strictEqual(p.conta, 'principal');
+  });
+  assert.deepStrictEqual(trocas, []);
+  assert.deepStrictEqual(consultadas, ['principal']);
+}
+
 (async () => {
-  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior, limiteNaContaQueEntrouNoClaudeMarcaEssaConta, contaQueSaiuDoClaudeVoltaParaAPastaPropria, escolhaAMaoVemAntesDaVoltaParaAPastaPropria, loginRecusadoNaPastaPropriaVoltaParaOClaudeSemMarcarAConta];
+  const cenarios = [trocaForcadaNoMeioDoTurno, trocaPreventivaNoFimDoTurno, voltaParaAPreferidaEntreTurnos, naoVoltaAbaixoDoLimiteDeVoltaNemAntesDeUmMinuto, naoVoltaComTarefaEmSegundoPlano, sessaoAbertaVaiParaAContaEscolhidaNoFimDoTurno, contaEscolhidaQuaseSemFolgaNaoLevaASessao, pedidoDoHostDuranteATrocaChegaUmaVez, respostaAtrasadaDoProcessoAntigoChegaAoHost, soErroDaContaDisparaTroca, semOutraContaRepassaOErro, threadDoT3RetomaASessaoAnterior, limiteNaContaQueEntrouNoClaudeMarcaEssaConta, contaQueSaiuDoClaudeVoltaParaAPastaPropria, escolhaAMaoVemAntesDaVoltaParaAPastaPropria, loginRecusadoNaPastaPropriaVoltaParaOClaudeSemMarcarAConta, semLoginProprioASessaoVoltaAContarComoDaSuaSemReabrir];
   let falhas = 0;
   for (const cenario of cenarios) {
     try {

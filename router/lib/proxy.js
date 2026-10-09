@@ -92,6 +92,7 @@ class Proxy {
     this.hostEncerrou = false;
     this.encerrando = false;
     this.naPastaPropria = false;
+    this.contaDaAbertura = null;
     // Contas cujo login na pasta própria foi recusado nesta sessão: ela volta a abrir no ~/.claude.
     this.loginProprioRecusado = new Set();
   }
@@ -136,6 +137,8 @@ class Proxy {
     this.noClaudePadrao = !env.CLAUDE_CONFIG_DIR;
     // A conta do ~/.claude aberta na pasta própria (envDaConta nunca põe CLAUDE_CONFIG_DIR para ela).
     this.naPastaPropria = Boolean(env.CLAUDE_CONFIG_DIR) && contas.usaDirPadrao(this.conta);
+    // A conta em que esta abertura foi feita: `this.conta` segue a do ~/.claude quando a sessão não tem para onde ir.
+    this.contaDaAbertura = this.conta;
     const filho = spawn(contas.resolverClaude(), args, {
       env,
       stdio: ['pipe', 'pipe', 'inherit'],
@@ -527,17 +530,24 @@ class Proxy {
     return principal || this.conta;
   }
 
-  // A troca dos agentes tirou do ~/.claude a conta desta sessão: o Claude Code aberto lá passa a gastar a que
-  // entrou. No fim de um turno, sem tarefa em segundo plano, a sessão volta para a própria conta, na pasta dela;
-  // sem login próprio, ela passa a contar como da conta que agora está no ~/.claude, que é a que ela gasta.
+  // A troca dos agentes tirou do ~/.claude a conta em que esta sessão abriu: o Claude Code aberto lá passa a gastar
+  // a que entrou. No fim de um turno, sem tarefa em segundo plano, a sessão volta para a própria conta, na pasta
+  // dela; sem login próprio, ela passa a contar como da conta que agora está no ~/.claude, que é a que ela gasta, e
+  // volta a contar como da sua quando ela voltar para o ~/.claude, sem reabrir.
   async checarSlot(cfg) {
-    if (!this.noClaudePadrao || !cfg.principal || cfg.principal === this.conta) return false;
+    if (!this.noClaudePadrao || !cfg.principal) return false;
+    const dona = this.contaDaAbertura || this.conta;
+    if (cfg.principal === dona || cfg.principal === this.conta) {
+      if (this.conta !== cfg.principal) contas.log(`stream: ${dona} voltou ao ~/.claude; a sessão volta a contar como dela`);
+      this.conta = cfg.principal;
+      return false;
+    }
     if (this.trocando || this.avaliando || this.emTurno || this.tarefas.size || this.encerrando) return false;
-    if (!this.loginProprioRecusado.has(this.conta) && contas.temLoginProprio(this.conta, cfg)) {
-      await this.trocar({ para: this.conta, motivo: 'saiu-do-claude', forcada: false, continuar: false });
+    if (!this.loginProprioRecusado.has(dona) && contas.temLoginProprio(dona, cfg)) {
+      await this.trocar({ para: dona, motivo: 'saiu-do-claude', forcada: false, continuar: false });
       return true;
     }
-    contas.log(`stream: ${this.conta} saiu do ~/.claude sem login próprio; a sessão segue em ${cfg.principal}`);
+    contas.log(`stream: ${dona} saiu do ~/.claude sem login próprio; a sessão segue em ${cfg.principal}`);
     this.conta = cfg.principal;
     return false;
   }

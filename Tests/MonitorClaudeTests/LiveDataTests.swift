@@ -223,6 +223,13 @@ struct LiveDataTests {
         #expect(slow.interrupted)
         #expect(!slow.ok)
         #expect(Date().timeIntervalSince(started) < 10)
+        // A command that catches SIGTERM and exits 0 still ran out of time.
+        let trapped = await Blocking.run {
+            AccountRouter.run(URL(fileURLWithPath: "/bin/sh"), ["-c", "trap 'exit 0' TERM; sleep 30 & wait"], timeout: 0.3)
+        }
+        #expect(trapped.status == 0)
+        #expect(trapped.interrupted)
+        #expect(!trapped.ok)
         let quick = await Blocking.run { AccountRouter.run(URL(fileURLWithPath: "/usr/bin/false"), [], timeout: 5) }
         #expect(!quick.interrupted)
         #expect(quick.status == 1)

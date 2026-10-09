@@ -557,7 +557,7 @@ enum AccountRouter {
         var status: Int32
         var output: String
         var error: String
-        /// Ended by a signal (the time limit, typically) rather than exiting on its own.
+        /// Stopped by the time limit, or ended by a signal, rather than exiting on its own.
         var interrupted = false
         var ok: Bool { status == 0 && !interrupted }
     }
@@ -596,7 +596,11 @@ enum AccountRouter {
             return CommandResult(status: 127, output: "", error: error.localizedDescription)
         }
         let pid = process.processIdentifier
+        // Set when the limit stops the command, whatever its exit looks like: one that catches SIGTERM and exits 0
+        // still ran out of time, and its output is not an answer.
+        var timedOut = false
         if exited.wait(timeout: .now() + timeout) == .timedOut {
+            timedOut = process.isRunning
             // Remembered, because once `pid` exits its children belong to launchd and can no longer be found
             // under it; whatever ignored SIGTERM gets SIGKILL with the parent.
             let children = terminateDescendants(of: pid)
@@ -618,7 +622,7 @@ enum AccountRouter {
         return CommandResult(status: process.terminationStatus,
                              output: String(decoding: output.finish(waiting: 2), as: UTF8.self),
                              error: String(decoding: errors.finish(waiting: 2), as: UTF8.self),
-                             interrupted: process.terminationReason == .uncaughtSignal)
+                             interrupted: timedOut || process.terminationReason == .uncaughtSignal)
     }
 
     /// Kills, two seconds on, the children of a timed-out command that ignored SIGTERM after the command itself

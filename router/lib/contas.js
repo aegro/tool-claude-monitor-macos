@@ -606,6 +606,8 @@ function motivoLegivel(motivo) {
   if (base.startsWith('seven_day')) return 'bateu o limite da semana';
   if (base === 'limite' || base === 'rate_limit') return 'bateu o limite';
   if (base === 'auth') return 'pediu login de novo';
+  if (base === 'cobranca') return 'deu erro de cobrança';
+  if (base === 'conta_suspensa') return 'teve a conta suspensa';
   if (base === 'preventiva') return 'estava quase no limite';
   if (base === 'ao abrir') return 'estava sem folga quando os agentes abriram';
   if (base === 'manual') return 'foi trocada à mão';

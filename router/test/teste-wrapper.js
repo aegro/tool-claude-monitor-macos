@@ -103,6 +103,8 @@ const testes = {
     assert.strictEqual(texto('agents seven_day_opus'), 'a bateu o limite da semana. Volta às 16:00. Os agentes seguiram junto.');
     assert.strictEqual(texto('manual'), 'a foi trocada à mão.');
     assert.strictEqual(texto('auth'), 'a pediu login de novo.');
+    assert.strictEqual(texto('cobranca'), 'a deu erro de cobrança.');
+    assert.strictEqual(texto('agents conta_suspensa'), 'a teve a conta suspensa. Os agentes seguiram junto.');
     assert.strictEqual(texto('agents preventiva'), 'a estava quase no limite. Os agentes seguiram junto.');
   },
 

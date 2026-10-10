@@ -130,7 +130,7 @@ struct PanelView: View {
         monitor.settingsTab = .accounts
         openSettingsAction()
         NSApp.activate(ignoringOtherApps: true)
-        if !alreadyOpen, let anchor { PanelWindow.placeSettings(at: anchor) }
+        PanelWindow.revealSettings(at: alreadyOpen ? nil : anchor)
     }
 
     /// The gear and ⌘,: the settings page of the panel, kept on the page it is on. It does not touch

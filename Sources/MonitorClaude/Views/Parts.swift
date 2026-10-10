@@ -360,9 +360,7 @@ struct WindowSizer: NSViewRepresentable {
 enum PanelWindow {
     static weak var current: NSWindow?
 
-    /// Puts the settings window under the menu bar, its top right corner on the panel's (the panel closes as the
-    /// window takes the focus, so the window takes its place). Retries briefly: SwiftUI creates the window a moment
-    /// after it is asked for.
+    /// The settings window ("Contas e logins…"), once SwiftUI has created it.
     static var settingsWindow: NSWindow? {
         NSApp.windows.first { $0.identifier?.rawValue.contains("Settings") == true && $0 !== current }
     }
@@ -374,14 +372,46 @@ enum PanelWindow {
         return (panel.frame, (panel.screen ?? NSScreen.main)?.visibleFrame ?? .zero)
     }
 
-    static func placeSettings(at anchor: (frame: NSRect, visible: NSRect), attempt: Int = 0) {
+    /// Brings the settings window up in the panel's place: under the panel's corner when `anchor` is given (a
+    /// window already open keeps where it is), in front, and with the panel put away. The panel does not always
+    /// close by itself: when the activation is refused (another app keeps the focus, as with a click from
+    /// Accessibility), it stayed over the window and hid most of it (10/10). Retries briefly: SwiftUI creates the
+    /// window a moment after it is asked for.
+    static func revealSettings(at anchor: (frame: NSRect, visible: NSRect)?, attempt: Int = 0) {
         guard let settings = settingsWindow, settings.isVisible else {
             if attempt < 20 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { placeSettings(at: anchor, attempt: attempt + 1) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { revealSettings(at: anchor, attempt: attempt + 1) }
             }
             return
         }
-        settings.setFrameOrigin(settingsOrigin(anchor: anchor.frame, size: settings.frame.size, visible: anchor.visible))
+        if let anchor {
+            settings.setFrameOrigin(settingsOrigin(anchor: anchor.frame, size: settings.frame.size, visible: anchor.visible))
+        }
+        settings.makeKeyAndOrderFront(nil)
+        settings.makeFirstResponder(nil)
+        if let panel = current, panel !== settings, panel.isVisible { dismissPanel(panel) }
+    }
+
+    /// Closes the panel the way a click on the menu bar icon does. `orderOut` alone hides the window but leaves
+    /// the MenuBarExtra thinking it is open, and the next click on the icon only "closed" it: two clicks to open.
+    private static func dismissPanel(_ panel: NSWindow) {
+        if let button = statusButton() {
+            button.performClick(nil)
+        } else {
+            panel.close()
+        }
+    }
+
+    private static func statusButton() -> NSStatusBarButton? {
+        func find(_ view: NSView) -> NSStatusBarButton? {
+            if let button = view as? NSStatusBarButton { return button }
+            for sub in view.subviews { if let found = find(sub) { return found } }
+            return nil
+        }
+        for window in NSApp.windows where String(describing: type(of: window)).contains("StatusBar") {
+            if let content = window.contentView, let button = find(content) { return button }
+        }
+        return nil
     }
 
     /// The window's top right corner on the panel's, kept inside the visible part of the screen.

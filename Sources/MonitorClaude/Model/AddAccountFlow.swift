@@ -334,6 +334,18 @@ final class AddAccountFlow: ObservableObject, Identifiable {
         needsCode = false
         if let file = urlFile { try? FileManager.default.removeItem(at: file) }
         urlFile = nil
+        if status == Self.loginOfAnotherAccount, !agents, let conflict = Self.conflict(in: transcript) {
+            // The sign-in went through, but to another account of the queue, and the router took it back (signed the
+            // folder out, or, in ~/.claude, left it there with the error): the same screen as a duplicate caught
+            // here, with who signed in and "Autorizar de novo".
+            phase = .idle
+            identity = conflict.identity
+            duplicateOf = conflict.account.flatMap { other in
+                AccountRouter.loadConfig()?.accounts.first(where: { $0.id == other })?.label ?? other
+            } ?? "outra conta da fila"
+            step = .connected
+            return
+        }
         guard status == 0 else {
             if status == 15 || status == 143 { phase = .idle; return }
             phase = .failed(Self.failureLine(transcript).map { "O login não terminou: \($0)" } ?? "O login não terminou.")
@@ -383,6 +395,32 @@ final class AddAccountFlow: ObservableObject, Identifiable {
     }
 
     // MARK: helpers
+
+    /// The router's exit when the sign-in landed on another account of the queue (`claude-accounts login`).
+    static let loginOfAnotherAccount: Int32 = 3
+
+    /// What the router's `conflict: {json}` line says: the account of the queue the sign-in belongs to (nil when the
+    /// login is simply not this account's) and who signed in. Nil without that line, so an exit 3 of `claude auth
+    /// login` itself still reads as a login that did not finish.
+    static func conflict(in transcript: String) -> (account: String?, identity: AccountIdentity?)? {
+        for line in transcript.split(whereSeparator: \.isNewline).reversed() {
+            let text = line.trimmingCharacters(in: .whitespaces)
+            guard text.hasPrefix("conflict: ") else { continue }
+            guard let object = try? JSONSerialization.jsonObject(with: Data(text.dropFirst("conflict: ".count).utf8)),
+                  let fields = object as? [String: Any]
+            else { return nil }
+            let identity = (fields["accountUuid"] as? String).map {
+                AccountIdentity(accountUuid: $0,
+                                organizationUuid: fields["organizationUuid"] as? String,
+                                email: fields["emailAddress"] as? String,
+                                organizationName: fields["organizationName"] as? String,
+                                displayName: fields["displayName"] as? String,
+                                organizationType: fields["organizationType"] as? String)
+            }
+            return (fields["account"] as? String, identity)
+        }
+        return nil
+    }
 
     /// The first sign-in address in `text`, only on Anthropic's hosts (`claude.com`, `claude.ai`, `anthropic.com`).
     static func loginURL(in text: String) -> URL? {

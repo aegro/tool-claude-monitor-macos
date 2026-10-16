@@ -14,6 +14,7 @@ const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
   add <id> [--name N] [--reserve]
                                create ~/.claude-accounts/<id> with links to ~/.claude
   login <id>                   log the account in (opens the browser)
+  login <id> --own-folder      log in the folder where the ~/.claude account's VS Code sessions open
   login <id> --agents          separate login used by claude agents when this account takes over
   agents [use <id>]            which account the background agents run on; switch it by hand
   sync                         redo links and copy MCP servers and project trust
@@ -34,6 +35,8 @@ const SINONIMOS = {
   rodar: 'run',
 };
 const PAPEIS = { rota: 'route', reserva: 'reserve' };
+// O login entrou, mas é o de outra conta: o Monitor distingue isso de um login que não terminou.
+const SAIDA_LOGIN_DE_OUTRA_CONTA = 3;
 
 function opcao(args, nomes, padrao = null) {
   for (const nome of [].concat(nomes)) {
@@ -98,9 +101,18 @@ async function status() {
 }
 
 function avisarDuplicadas() {
-  for (const { email, ids } of contas.contasDuplicadas()) {
-    console.log(`\nwarning: ${ids.join(' and ')} are logged into the same account (${email}), so switching between them changes nothing.`);
+  const cfg = contas.carregarConfig();
+  for (const { email, organizacao, ids } of contas.contasDuplicadas(cfg)) {
+    console.log(`\nwarning: ${ids.join(' and ')} are logged into the same account (${contas.rotuloDoLoginDaPasta({ email, organizacao })}), so switching between them changes nothing.`);
     console.log('log one of them into another account with claude-accounts login <id>; if the browser is already signed in, finish the sign-in in a private window.');
+  }
+  for (const id of Object.keys(cfg.contas)) {
+    const outra = contas.usaDirPadrao(id, cfg)
+      ? contas.temLoginProprio(id, cfg) && contas.loginProprioDeOutraConta(id, cfg)
+      : contas.loginDeOutraContaDaFila(id, cfg);
+    if (!outra) continue;
+    console.log(`\nwarning: ${contas.dirPropria(id, cfg)}, the folder of ${id}, is signed in to ${contas.rotuloDoLoginDaPasta(outra)}, not to ${id}; no session opens there until it is fixed.`);
+    console.log(`fix it with ${contas.comandoParaRefazerLoginProprio(id)} and pick the right organization on the sign-in page.`);
   }
 }
 
@@ -151,17 +163,39 @@ async function statusDosAgentes() {
   console.log(`\n${lista.length} agents, ${paradas.length} stopped by a limit${paradas.length ? `: ${paradas.map((p) => p.nome).join(', ')}` : ''}`);
 }
 
+// O login do terminal da conta, ou, com --own-folder, o da pasta própria da conta do ~/.claude (onde as sessões do VS
+// Code dela abrem). Um login que caiu em outra conta não fica: o mesmo e-mail em duas organizações entra sem aviso na
+// que o navegador já usa, e a sessão gastaria uma conta com o nome da outra. Fora do ~/.claude ele sai na hora; no
+// ~/.claude, que é o do terminal e o dos agentes, fica e o erro diz como refazer.
 function entrar(id, args) {
-  contas.prepararConta(id);
-  const filho = spawn(contas.resolverClaude(), ['auth', 'login', ...args], { env: contas.envDaConta(id), stdio: 'inherit' });
+  const cfg = contas.carregarConfig();
+  const naPropria = args.includes('--own-folder');
+  const resto = args.filter((a) => a !== '--own-folder');
+  const env = naPropria && contas.usaDirPadrao(id, cfg)
+    ? { ...process.env, CLAUDE_AUTO_CONTA: id, CLAUDE_CONFIG_DIR: contas.dirPropria(id, cfg) }
+    : contas.envDaConta(id, process.env, cfg);
+  contas.prepararSessao(id, env, cfg);
+  const filho = spawn(contas.resolverClaude(), ['auth', 'login', ...resto], { env, stdio: 'inherit' });
   process.on('SIGINT', () => {});
   filho.on('exit', (codigo) => {
-    if (codigo === 0) {
-      const { email } = contas.identidade(id);
-      console.log(`${id} is logged in as ${email || 'unknown'}`);
+    if (codigo !== 0) process.exit(codigo ?? 1);
+    const dir = env.CLAUDE_CONFIG_DIR || contas.DIR_PRINCIPAL;
+    const conflito = contas.conflitoDoLogin(id, dir);
+    if (!conflito) {
+      console.log(`${id} is logged in as ${contas.rotuloDoLoginDaPasta(contas.loginDaPasta(dir)) || 'unknown'}`);
       avisarDuplicadas();
+      process.exit(0);
     }
-    process.exit(codigo ?? 1);
+    const refazer = naPropria ? contas.comandoParaRefazerLoginProprio(id) : `claude-accounts login ${id}`;
+    // A linha `conflict:` é para o assistente do Monitor, que mostra quem entrou e a conta repetida e oferece autorizar
+    // de novo. Ela sai antes do logout, que apaga o login do .claude.json da pasta.
+    console.log(`conflict: ${JSON.stringify({ account: conflito.outra, ...(conflito.login.conta || {}) })}`);
+    const fim = () => {
+      process.stderr.write(`claude-accounts: ${conflito.texto}; ${env.CLAUDE_CONFIG_DIR ? 'signed out of it. ' : ''}Run ${refazer} again and pick the right organization on the sign-in page.\n`);
+      process.exit(SAIDA_LOGIN_DE_OUTRA_CONTA);
+    };
+    if (!env.CLAUDE_CONFIG_DIR) return fim();
+    spawn(contas.resolverClaude(), ['auth', 'logout'], { env, stdio: 'ignore' }).on('exit', fim).on('error', fim);
   });
 }
 
@@ -223,7 +257,10 @@ async function main() {
       adicionar(args);
       break;
     case 'login':
-      if (args.includes('--agents')) entrarParaAgentes(exigirConta(args[0]), args.slice(1).filter((a) => a !== '--agents'));
+      if (args.includes('--agents') && args.includes('--own-folder')) {
+        process.stderr.write('claude-accounts: --agents and --own-folder do not go together\n');
+        process.exit(2);
+      } else if (args.includes('--agents')) entrarParaAgentes(exigirConta(args[0]), args.slice(1).filter((a) => a !== '--agents'));
       else entrar(exigirConta(args[0]), args.slice(1));
       break;
     case 'agents':

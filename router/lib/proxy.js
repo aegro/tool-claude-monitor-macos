@@ -139,6 +139,8 @@ class Proxy {
     // Aberta no ~/.claude (a conta não tem login na pasta própria): a troca dos agentes pode mudar a conta por
     // baixo dela, e `checarSlot` acompanha.
     this.noClaudePadrao = !env.CLAUDE_CONFIG_DIR;
+    // A pasta cujo login esta sessão gasta, para os números ao vivo levarem o login de lá.
+    this.dirDaSessao = env.CLAUDE_CONFIG_DIR || null;
     // A conta do ~/.claude aberta na pasta própria (envDaConta nunca põe CLAUDE_CONFIG_DIR para ela).
     this.naPastaPropria = Boolean(env.CLAUDE_CONFIG_DIR) && contas.usaDirPadrao(this.conta, cfg);
     // A conta em que esta abertura foi feita: `this.conta` segue a do ~/.claude quando a sessão não tem para onde ir.
@@ -235,7 +237,7 @@ class Proxy {
 
     const emTurnoAntes = this.emTurno;
     this.rastrear(msg);
-    if (msg.type === 'rate_limit_event' && this.conta) contas.registrarLimiteAoVivo(this.contaQueGasta(), msg.rate_limit_info);
+    if (msg.type === 'rate_limit_event' && this.conta) contas.registrarLimiteAoVivo(this.contaQueGasta(), msg.rate_limit_info, Date.now(), this.dirDaSessao);
 
     if (this.retido) {
       this.retido.push(linha);
@@ -577,6 +579,9 @@ class Proxy {
     if (contas.lerEsgotadas()[dona]) return 'esgotada';
     const cfg = contas.carregarConfig();
     if (!contas.temLoginProprio(dona, cfg, { fresco: true })) return 'sem login próprio';
+    // Só o login de outra conta da fila segura a sessão: o guardado pela troca dos agentes pode ter ficado velho
+    // depois de um login novo e certo na pasta.
+    if (contas.loginDeOutraContaDaFila(dona, cfg)) return 'com o login de outra conta da fila na pasta própria';
     const folga = contas.folgaDe(await contas.lerUso(dona));
     if (folga != null && folga < cfg.limites.preventiva) return `com folga de ${folga}%`;
     return null;

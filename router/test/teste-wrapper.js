@@ -25,6 +25,66 @@ function binarioFalso(nome, corpo) {
   return arquivo;
 }
 
+// Um HOME de mentira com a principal no ~/.claude (Aegro) e o mesmo e-mail numa Max: cada `rodar` é um processo à
+// parte com esse HOME, o `security` falso dizendo que a pasta própria tem login, e `contas` carregado.
+function mundoComDuasOrganizacoes() {
+  const home = fs.mkdtempSync(path.join(raiz, 'orgs-'));
+  const accounts = path.join(home, '.claude-accounts');
+  const propria = path.join(accounts, 'principal');
+  const bin = path.join(home, 'bin');
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.mkdirSync(propria, { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'security'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // O `claude` falso: o login grava o oauthAccount pedido na pasta da sessão; o logout anota de que pasta saiu.
+  const saidas = path.join(home, 'logouts.txt');
+  const claude = path.join(bin, 'claude-falso');
+  fs.writeFileSync(claude, `#!/usr/bin/env node
+const fs = require('fs'), path = require('path');
+const dir = process.env.CLAUDE_CONFIG_DIR;
+const arquivo = dir ? path.join(dir, '.claude.json') : path.join(process.env.HOME, '.claude.json');
+if (process.argv[3] === 'login') {
+  const atual = fs.existsSync(arquivo) ? JSON.parse(fs.readFileSync(arquivo, 'utf8')) : {};
+  fs.writeFileSync(arquivo, JSON.stringify({ ...atual, oauthAccount: JSON.parse(process.env.FAKE_LOGIN) }));
+} else if (process.argv[3] === 'logout') {
+  fs.appendFileSync(${JSON.stringify(saidas)}, (dir || '~/.claude') + '\\n');
+}
+`, { mode: 0o755 });
+  const aegro = { accountUuid: 'u1', organizationUuid: 'org-aegro', organizationName: 'Aegro', emailAddress: 'a@exemplo.com' };
+  const max = { accountUuid: 'u1', organizationUuid: 'org-max', organizationName: 'Max', emailAddress: 'a@exemplo.com' };
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: aegro }));
+  const env = { ...process.env, HOME: home, CLAUDE_AUTO_HOME: accounts, CLAUDE_AUTO_CLAUDE_BIN: claude, PATH: `${bin}:${process.env.PATH}` };
+  const m = {
+    home, accounts, propria, aegro, max,
+    config(cfg) {
+      fs.writeFileSync(path.join(accounts, 'config.json'), JSON.stringify({ notificar: false, ...cfg }));
+    },
+    logar(dir, conta) {
+      fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify(conta ? { oauthAccount: conta } : {}));
+    },
+    rodar(codigo) {
+      const r = spawnSync(process.execPath, ['-e', `const contas = require(${JSON.stringify(path.join(__dirname, '../lib/contas'))});\n${codigo}`], { env, encoding: 'utf8' });
+      assert.strictEqual(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout.trim().split('\n').pop());
+    },
+    entrar(args, conta) {
+      return spawnSync(process.execPath, [path.join(__dirname, '../lib/claude-accounts.js'), 'login', ...args], {
+        env: { ...env, FAKE_LOGIN: JSON.stringify(conta) },
+        encoding: 'utf8',
+      });
+    },
+    saidas() {
+      return fs.existsSync(saidas) ? fs.readFileSync(saidas, 'utf8').trim().split('\n').filter(Boolean) : [];
+    },
+    log() {
+      const arquivo = path.join(accounts, '.estado', 'claude-auto.log');
+      return fs.existsSync(arquivo) ? fs.readFileSync(arquivo, 'utf8').split('\n') : [];
+    },
+  };
+  m.config({ principal: 'principal', contas: { principal: {}, max: {} }, rota: ['principal', 'max'] });
+  return m;
+}
+
 const testes = {
   limiteAoVivoGravaAPorcentagemDeCadaJanelaPorConta() {
     const agora = 1791500000000;
@@ -90,6 +150,9 @@ const testes = {
     process.env.PATH = `${bin}:${process.env.PATH}`;
     // No macOS o login da pasta própria é um item do Keychain (o `security` falso responde); fora dele, o arquivo.
     const credenciais = path.join(home, 'max', '.credentials.json');
+    // Sem login anotado na pasta própria, o ~/.claude.json de quem roda o teste não entra na conta.
+    fs.mkdirSync(path.join(home, 'max'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'max', '.claude.json'), '{}');
     const login = (tem) => {
       contas.esquecerLoginProprio();
       if (process.platform === 'darwin') process.env.FAKE_SECURITY_STATUS = tem ? '0' : '44';
@@ -142,6 +205,101 @@ const testes = {
       fs.rmSync(credenciais, { force: true });
       fs.writeFileSync(path.join(home, 'config.json'), '{}');
     }
+  },
+
+  pastaPropriaComLoginDeOutraContaNaoRecebeSessaoNemNumeros() {
+    const m = mundoComDuasOrganizacoes();
+    // A pasta própria da principal tem o login da Max (o mesmo e-mail, em outra organização): a sessão fica no
+    // ~/.claude, e o status da conta diz por quê.
+    m.logar(m.propria, m.max);
+    let r = m.rodar(`
+      const env = contas.envDaSessao('principal', {});
+      console.log(JSON.stringify({ dir: env.CLAUDE_CONFIG_DIR || null, outra: contas.loginProprioDeOutraConta('principal') }));`);
+    assert.strictEqual(r.dir, null);
+    assert.strictEqual(r.outra.chave, 'u1:org-max');
+    assert.strictEqual(r.outra.organizacao, 'Max');
+    // Um aviso só, no log, por mais sessões que abram.
+    m.rodar(`contas.envDaSessao('principal', {}); contas.envDaSessao('principal', {}); console.log('null');`);
+    assert.strictEqual(m.log().filter((l) => l.includes('tem o login de outra conta')).length, 1);
+    // Com o login dela, a sessão abre na pasta própria, como antes; e sem login legível lá, também.
+    m.logar(m.propria, m.aegro);
+    r = m.rodar(`console.log(JSON.stringify(contas.envDaSessao('principal', {}).CLAUDE_CONFIG_DIR || null));`);
+    assert.strictEqual(r, m.propria);
+    m.logar(m.propria, null);
+    r = m.rodar(`console.log(JSON.stringify(contas.envDaSessao('principal', {}).CLAUDE_CONFIG_DIR || null));`);
+    assert.strictEqual(r, m.propria);
+    // Os números ao vivo levam o login da pasta em que a sessão roda, não o da conta: o Monitor deixa de fora os da
+    // Max gravados no arquivo da principal.
+    m.logar(m.propria, m.max);
+    r = m.rodar(`
+      const info = { status: 'allowed', rateLimitType: 'seven_day', utilization: 0.85, resetsAt: 1792508400 };
+      console.log(JSON.stringify([contas.registrarLimiteAoVivo('principal', info, 1, ${JSON.stringify(m.propria)}).conta,
+        contas.registrarLimiteAoVivo('principal', info, 1).conta]));`);
+    assert.deepStrictEqual(r, ['u1:org-max', 'u1:org-aegro']);
+    // Pasta sem login anotado: os números levam o login da conta, como antes, em vez de nenhum.
+    m.logar(m.propria, null);
+    r = m.rodar(`console.log(JSON.stringify(contas.registrarLimiteAoVivo('principal', { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.1 }, 1, ${JSON.stringify(m.propria)}).conta));`);
+    assert.strictEqual(r, 'u1:org-aegro');
+  },
+
+  contaForaDoClaudeComLoginDeOutraContaDaFilaSaiDaEscolha() {
+    const m = mundoComDuasOrganizacoes();
+    // A troca dos agentes pôs a Max no ~/.claude e guardou o login da principal (Aegro). A pasta da principal, onde ela
+    // abre agora, ficou com o login da Max: escolher a principal gastaria a Max.
+    m.config({ principal: 'max', contas: { principal: {}, max: {} }, rota: ['principal', 'max'] });
+    fs.writeFileSync(path.join(m.home, '.claude.json'), JSON.stringify({ oauthAccount: m.max }));
+    fs.mkdirSync(path.join(m.accounts, '.estado', 'agentes'), { recursive: true });
+    fs.writeFileSync(path.join(m.accounts, '.estado', 'agentes', 'principal.json'), JSON.stringify({ oauthAccount: m.aegro, chave: 'u1:org-aegro' }));
+    m.logar(m.propria, m.max);
+    let r = m.rodar(`console.log(JSON.stringify(contas.loginDeOutraContaDaFila('principal')));`);
+    assert.strictEqual(r.chave, 'u1:org-max');
+    // A conta do ~/.claude não entra nessa regra (quem decide é envDaSessao), e um login certo libera a principal.
+    assert.strictEqual(m.rodar(`console.log(JSON.stringify(contas.loginDeOutraContaDaFila('max')));`), null);
+    m.logar(m.propria, m.aegro);
+    assert.strictEqual(m.rodar(`console.log(JSON.stringify(contas.loginDeOutraContaDaFila('principal')));`), null);
+  },
+
+  loginQueCaiEmOutraContaEhRecusadoEDesfeito() {
+    const m = mundoComDuasOrganizacoes();
+    const extra = path.join(m.accounts, 'max');
+    fs.mkdirSync(extra, { recursive: true });
+    fs.writeFileSync(path.join(extra, '.claude.json'), JSON.stringify({ oauthAccount: m.max }));
+    m.config({ principal: 'principal', contas: { principal: {}, max: {}, compare: {} }, rota: ['principal', 'max', 'compare'] });
+    // A conta nova entra na organização da Max: o login sai da pasta dela e o Monitor recebe a conta repetida.
+    let r = m.entrar(['compare'], m.max);
+    assert.strictEqual(r.status, 3, r.stderr);
+    const conflito = JSON.parse(r.stdout.match(/^conflict: (.*)$/m)[1]);
+    assert.deepStrictEqual([conflito.account, conflito.organizationName, conflito.emailAddress], ['max', 'Max', 'a@exemplo.com']);
+    assert.match(r.stderr, /which is max \(max\); signed out of it\. Run claude-accounts login compare again/);
+    assert.deepStrictEqual(m.saidas(), [path.join(m.accounts, 'compare')]);
+    // A pasta própria da principal com a Max: recusado, e na pasta própria, não no ~/.claude.
+    r = m.entrar(['principal', '--own-folder'], m.max);
+    assert.strictEqual(r.status, 3, r.stderr);
+    assert.match(r.stderr, /Run claude-accounts login principal --own-folder again/);
+    assert.deepStrictEqual(m.saidas(), [path.join(m.accounts, 'compare'), m.propria]);
+    // Uma organização que não é de nenhuma conta, mas não é a da principal: na pasta própria dela, também não serve.
+    r = m.entrar(['principal', '--own-folder'], { accountUuid: 'u1', organizationUuid: 'org-9', organizationName: 'Nove' });
+    assert.strictEqual(r.status, 3, r.stderr);
+    assert.strictEqual(JSON.parse(r.stdout.match(/^conflict: (.*)$/m)[1]).account, null);
+    assert.match(r.stderr, /but principal is a@exemplo\.com, Aegro in ~\/\.claude/);
+    assert.strictEqual(m.saidas().length, 3);
+    // Uma conta fora da fila não conta como outra: o login dela pode se repetir.
+    m.config({ principal: 'principal', contas: { principal: {}, max: {}, compare: {} }, rota: ['principal', 'compare'] });
+    r = m.entrar(['compare'], m.max);
+    assert.strictEqual(r.status, 0, r.stderr);
+    m.config({ principal: 'principal', contas: { principal: {}, max: {}, compare: {} }, rota: ['principal', 'max', 'compare'] });
+    r = m.entrar(['principal', '--own-folder', '--agents'], m.aegro);
+    assert.strictEqual(r.status, 2);
+    // O login certo fica, e diz a organização.
+    r = m.entrar(['principal', '--own-folder'], m.aegro);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /principal is logged in as a@exemplo\.com, Aegro/);
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(m.propria, '.claude.json'), 'utf8')).oauthAccount.organizationUuid, 'org-aegro');
+    // No ~/.claude (o do terminal e dos agentes) o login errado fica, sem logout, e o erro diz como refazer.
+    r = m.entrar(['principal'], m.max);
+    assert.strictEqual(r.status, 3, r.stderr);
+    assert.doesNotMatch(r.stderr, /signed out/);
+    assert.strictEqual(m.saidas().length, 3);
   },
 
   pastaPropriaDaContaDoClaudeRecebeOQueUmaContaExtraRecebe() {

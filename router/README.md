@@ -13,6 +13,13 @@ claude-accounts status | pick | switches | release <id> | sync | env <id> | run 
 claude-accounts on | off      # o mesmo botão de Troca automática do Monitor
 ```
 
+As sessões de stream (VS Code, T3) da conta de `~/.claude` abrem na pasta própria dela, `~/.claude-accounts/<id>`, quando ali há login: assim a troca dos agentes, que muda o login de `~/.claude`, não leva a sessão aberta junto. Esse login se faz com `claude-accounts login <id> --own-folder`.
+
+**O login tem que ser da conta.** O mesmo e-mail em duas organizações (a Team da empresa e uma Max pessoal, por exemplo) entra sem aviso na organização que o navegador já usa. Por isso:
+
+- `claude-accounts login` confere quem entrou. Se é o login de outra conta da config, ou, na pasta própria da conta de `~/.claude`, não é o login dela, o comando sai com código 3, imprime uma linha `conflict:` com um JSON (a conta repetida em `account`, ou `null`, e o `oauthAccount` de quem entrou) e faz logout da pasta, menos de `~/.claude`, que é o login do terminal e dos agentes: ali o login fica e o erro diz como refazer. Só contam as contas da fila (rota e reserva). O assistente do Monitor mostra a conta repetida e oferece autorizar de novo.
+- Uma pasta própria que já tem o login de outra conta não recebe sessão: a conta de `~/.claude` abre no `~/.claude`, avisa no log e numa notificação por dia, e `claude-accounts status` mostra o conserto. Fora de `~/.claude`, a conta cujo login na pasta é o de outra conta da fila (e não o que a troca dos agentes guardou para ela) sai da escolha até o login ser refeito.
+
 Config em `~/.claude-accounts/config.json`:
 
 | campo | padrão | uso |
@@ -46,7 +53,7 @@ Folga é 100% menos o maior uso entre as janelas de 5h e de 7 dias. Conta que ba
 - **`claude agents`.** Veja a seção abaixo.
 - **`-p`** só escolhe a conta ao abrir.
 
-Em stream-json, cada `rate_limit_event` que o `claude` emite (os números de limite lidos dos cabeçalhos da resposta) vai para `~/.claude-accounts/.estado/ao-vivo/<conta>.json`, com `usado` em porcentagem e `renovaEm` em ms por janela (`five_hour`, `seven_day`) e o login em `conta` (`accountUuid:organizationUuid`). O arquivo traz só as janelas do último evento, todas com a hora dele: o Monitor junta cada uma à última leitura completa, que guarda as outras, e deixa de fora números gravados com outro login. Ele lê esses arquivos antes de consultar o `/usage`.
+Em stream-json, cada `rate_limit_event` que o `claude` emite (os números de limite lidos dos cabeçalhos da resposta) vai para `~/.claude-accounts/.estado/ao-vivo/<conta>.json`, com `usado` em porcentagem e `renovaEm` em ms por janela (`five_hour`, `seven_day`) e o login em `conta` (`accountUuid:organizationUuid`), o da pasta em que a sessão roda. O arquivo traz só as janelas do último evento, todas com a hora dele: o Monitor junta cada uma à última leitura completa, que guarda as outras, e deixa de fora números gravados com outro login. Ele lê esses arquivos antes de consultar o `/usage`.
 
 Cada troca vai para `~/.claude-accounts/.estado/trocas.jsonl`, para o log `claude-auto.log` e vira notificação, com o nome das contas, o motivo e a hora em que a anterior volta: “Trocou para Thomas (Max)” e “Thomas (Aegro) bateu o limite de 5h. Volta às 18:59.” A volta para a preferida diz “Voltou para …”, e a troca dos agentes acrescenta “Os agentes seguiram junto.”
 

@@ -8,6 +8,8 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 
+require('./ambiente-limpo');
+
 // O Proxy e as contas carregados neste processo leem e gravam aqui, nunca no ~/.claude-accounts de quem roda.
 const HOME_EM_PROCESSO = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-auto-proxy-'));
 process.env.CLAUDE_AUTO_HOME = HOME_EM_PROCESSO;

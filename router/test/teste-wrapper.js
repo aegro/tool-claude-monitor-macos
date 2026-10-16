@@ -6,6 +6,8 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+require('./ambiente-limpo');
+
 const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-auto-wrapper-'));
 process.env.CLAUDE_AUTO_HOME = path.join(raiz, 'contas');
 fs.mkdirSync(process.env.CLAUDE_AUTO_HOME, { recursive: true });

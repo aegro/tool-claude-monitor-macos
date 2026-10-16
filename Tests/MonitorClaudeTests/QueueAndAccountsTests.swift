@@ -376,6 +376,23 @@ struct QueueAndAccountsTests {
         #expect(AddAccountFlow.failureLine("Opening browser to sign in…\nPaste code here if prompted > ") == nil)
     }
 
+    @MainActor @Test func contaRepetidaVemDaLinhaDeConflitoDoRoteador() throws {
+        // `claude-accounts login` saindo com 3: o login caiu em outra conta da fila e foi desfeito.
+        let transcript = "Opening browser to sign in…\n"
+            + #"conflict: {"account":"max","accountUuid":"u1","organizationUuid":"org-max","emailAddress":"a@exemplo.com","organizationName":"Max"}"#
+            + "\nclaude-accounts: this sign-in went to a@exemplo.com, Max, which is Thomas (Max) (max); signed out of it.\n"
+        #expect(AddAccountFlow.loginOfAnotherAccount == 3)
+        let conflict = try #require(AddAccountFlow.conflict(in: transcript))
+        #expect(conflict.account == "max")
+        #expect(conflict.identity?.key == "u1:org-max")
+        #expect(conflict.identity?.organizationName == "Max")
+        // Not another account of the queue, just not this one's login.
+        #expect(AddAccountFlow.conflict(in: #"conflict: {"account":null}"#)?.account == nil)
+        #expect(AddAccountFlow.conflict(in: #"conflict: {"account":null}"#)?.identity == nil)
+        // No conflict line: an exit 3 of the login itself.
+        #expect(AddAccountFlow.conflict(in: "claude-accounts: login cancelled\n") == nil)
+    }
+
     @MainActor @Test func nomePadraoGanhaOPlanoQuandoBateComOutraConta() {
         #expect(AddAccountFlow.defaultName(label: "Thomas", plan: "max", taken: ["Thomas (Aegro)"]) == "Thomas (Max)")
         #expect(AddAccountFlow.defaultName(label: "Squad Compare", plan: "max", taken: ["Thomas (Aegro)"]) == "Squad Compare")

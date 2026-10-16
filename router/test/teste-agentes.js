@@ -5,6 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+require('./ambiente-limpo');
+
 const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-auto-agentes-'));
 process.env.CLAUDE_AUTO_HOME = path.join(raiz, 'contas');
 process.env.CLAUDE_AUTO_SLOT_DIR = path.join(raiz, 'slot');

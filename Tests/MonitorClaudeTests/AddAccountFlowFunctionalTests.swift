@@ -31,6 +31,8 @@ struct AddAccountFlowFunctionalTests {
         unsetenv("FAKE_NO_BROWSER")
         unsetenv("FAKE_ADD_FAIL")
         unsetenv("FAKE_ADD_DELAY")
+        unsetenv("FAKE_LOGIN_CONFLICT")
+        unsetenv("FAKE_LOGIN_EXIT")
         AddAccountFlow.manualAfter = 5
     }
 
@@ -185,6 +187,31 @@ struct AddAccountFlowFunctionalTests {
         #expect(flow.step == .authorize && flow.identity == nil)
     }
 
+    @Test func loginRecusadoPeloRoteadorPorSerDeOutraContaVoltaAoPassoDeAutorizar() async throws {
+        // The router caught the duplicate itself (exit 3) and signed the new folder out: same screen as above.
+        setenv("FAKE_LOGIN_CONFLICT", "principal", 1)
+        let flow = newFlow(opened: Box([]))
+        await flow.choose(nil)
+        flow.authorize(incognito: false)
+        try touch("callback")
+        #expect(await until { flow.step == .connected })
+        #expect(flow.duplicateOf == "Thomas (Aegro)")
+        #expect(flow.identity?.email == "nova@exemplo.com")
+        #expect(flow.phase == .idle)
+        flow.retryLogin()
+        #expect(flow.step == .authorize)
+    }
+
+    @Test func saida3SemLinhaDeConflitoEhLoginQueNaoTerminou() async throws {
+        setenv("FAKE_LOGIN_EXIT", "3", 1)
+        let flow = newFlow(opened: Box([]))
+        await flow.choose(nil)
+        flow.authorize(incognito: false)
+        try touch("callback")
+        #expect(await until { if case .failed = flow.phase { return true }; return false })
+        #expect(flow.duplicateOf == nil)
+    }
+
     @Test func cancelarDuranteACriacaoApagaAContaQuandoElaTermina() async throws {
         setenv("FAKE_ADD_DELAY", "0.5", 1)
         let flow = newFlow(opened: Box([]))
@@ -276,6 +303,12 @@ struct AddAccountFlowFunctionalTests {
     [ -f "$FAKE_DIR/callback" ] || [ -f "$FAKE_DIR/codigo" ] || { echo "Login timed out" >&2; exit 1; }
     printf '{"oauthAccount": {"accountUuid": "u-nova", "organizationUuid": "o-nova", "emailAddress": "nova@exemplo.com", "organizationName": "Nova", "organizationType": "claude_max"}}' > "$home/$id/.claude.json"
     echo "Login successful."
+    if [ -n "$FAKE_LOGIN_EXIT" ]; then echo "OAuth error: something" >&2; exit "$FAKE_LOGIN_EXIT"; fi
+    if [ -n "$FAKE_LOGIN_CONFLICT" ]; then
+      printf 'conflict: {"account":"%s","accountUuid":"u-nova","organizationUuid":"o-nova","emailAddress":"nova@exemplo.com","organizationName":"Nova"}\n' "$FAKE_LOGIN_CONFLICT"
+      echo "claude-accounts: this sign-in went to nova@exemplo.com, Nova, which is $FAKE_LOGIN_CONFLICT; signed out of it." >&2
+      exit 3
+    fi
     """#
 }
 

@@ -275,10 +275,91 @@ function esquecerLoginProprio() {
 // O ambiente de uma sessão de stream (VS Code, T3). Ela abre na pasta própria da conta sempre que ali há login,
 // mesmo quando a conta é a do ~/.claude: a troca dos agentes troca o login do ~/.claude, e uma sessão aberta lá
 // relê o Keychain e passa a gastar a conta que entrou, com o nome da que saiu (09/10: sessões da Max gastando a
-// Squad Compare). Sem login próprio, fica no ~/.claude, como antes.
+// Squad Compare). Sem login próprio, fica no ~/.claude, como antes. Com o login de outra conta na pasta própria,
+// também: abrir lá gastaria a outra com o nome desta.
 function envDaSessao(id, base = process.env, cfg = carregarConfig()) {
   if (!usaDirPadrao(id, cfg) || !temLoginProprio(id, cfg)) return envDaConta(id, base, cfg);
+  const outra = loginProprioDeOutraConta(id, cfg);
+  if (outra) {
+    avisarLoginProprioDeOutraConta(id, outra, cfg);
+    return envDaConta(id, base, cfg);
+  }
   return { ...base, CLAUDE_AUTO_CONTA: id, CLAUDE_CONFIG_DIR: dirPropria(id, cfg) };
+}
+
+// O login que o Claude Code anotou numa pasta (o `oauthAccount` do .claude.json dela, gravado no login). O do
+// ~/.claude mora fora dele, no ~/.claude.json.
+function loginDaPasta(dir) {
+  const resolvida = path.resolve(dir);
+  const arquivo = resolvida === path.resolve(DIR_PRINCIPAL) ? ARQ_CONFIG_PRINCIPAL : path.join(resolvida, '.claude.json');
+  const conta = (lerJson(arquivo, {}) || {}).oauthAccount || null;
+  const login = { email: (conta && conta.emailAddress) || null, organizacao: (conta && conta.organizationName) || null };
+  return { ...login, chave: chaveDaConta(conta), conta };
+}
+
+// "e-mail, organização" de um login, para as mensagens; sem nenhum dos dois, a chave.
+function rotuloDoLoginDaPasta(login) {
+  return [login.email, login.organizacao].filter(Boolean).join(', ') || login.chave || null;
+}
+
+// As contas da fila (rota e reserva) além de `id`: só elas contam como "outra conta" para um login. Uma conta que
+// saiu da fila e ficou em `contas` não recebe sessão, então um login igual ao dela não atrapalha ninguém.
+function outrasDaFila(id, cfg) {
+  return [...new Set([...cfg.rota, ...cfg.reserva])].filter((outro) => outro !== id);
+}
+
+// Por que o login que acabou de entrar na pasta `dir` não serve para a conta `id`, ou null quando serve: ele é o de
+// outra conta da fila (trocar entre as duas não mudaria nada, e os números de uma apareceriam como da outra), ou,
+// na pasta própria da conta do ~/.claude, não é o login dela.
+function conflitoDoLogin(id, dir, cfg = carregarConfig()) {
+  const login = loginDaPasta(dir);
+  if (!login.chave) return null;
+  const onde = rotuloDoLoginDaPasta(login);
+  const outra = outrasDaFila(id, cfg).find((outro) => identidade(outro, cfg).chave === login.chave);
+  if (outra) return { login, outra, texto: `this sign-in went to ${onde}, which is ${nomeDaConta(outra, cfg)} (${outra})` };
+  if (usaDirPadrao(id, cfg) && path.resolve(dir) === path.resolve(dirPropria(id, cfg))) {
+    const esperada = identidade(id, cfg);
+    if (esperada.chave && esperada.chave !== login.chave) {
+      const dela = rotuloDoLoginDaPasta(esperada);
+      return { login, outra: null, texto: `this sign-in went to ${onde}, but ${id} is ${dela} in ~/.claude` };
+    }
+  }
+  return null;
+}
+
+// O login da pasta própria quando ele não é o da conta, ou null. O mesmo e-mail em duas organizações (a Team da
+// empresa e a Max pessoal) passa pelo login sem aviso: o navegador já logado escolhe a organização dele, e a pasta
+// própria da principal ficou na Max por uma semana (09–16/10), com as sessões gastando a Max e os números ao vivo
+// dela aparecendo como da principal. A conta do ~/.claude é quem está lá; fora dele, a que já esteve lá é o login que
+// a troca dos agentes guardou ao tirá-la. Pasta ou conta sem login legível não prova nada.
+function loginProprioDeOutraConta(id, cfg = carregarConfig()) {
+  const propria = loginDaPasta(dirPropria(id, cfg));
+  const esperada = usaDirPadrao(id, cfg) ? identidade(id, cfg).chave : chaveDaConta(loginGuardadoDaConta(id));
+  return propria.chave && esperada && propria.chave !== esperada ? propria : null;
+}
+
+// Uma notificação por conta a cada 24 h: cada sessão aberta passa por aqui, e o conserto é um login só.
+const INTERVALO_DO_AVISO_DE_LOGIN_MS = 24 * 3600 * 1000;
+function avisarLoginProprioDeOutraConta(id, outra, cfg = carregarConfig()) {
+  const arquivo = path.join(DIR_ESTADO, 'avisos.json');
+  const chave = `login-proprio-de-outra-conta ${id}`;
+  let avisar = false;
+  try {
+    atualizarJson(arquivo, (avisos) => {
+      if (Date.now() - (avisos[chave] || 0) < INTERVALO_DO_AVISO_DE_LOGIN_MS) return null;
+      avisar = true;
+      return { ...avisos, [chave]: Date.now() };
+    });
+  } catch {}
+  if (!avisar) return false;
+  const onde = rotuloDoLoginDaPasta(outra);
+  log(`sessão: a pasta própria de ${id} (${dirPropria(id, cfg)}) tem o login de outra conta (${onde}); as sessões ficam no ~/.claude até ${comandoParaRefazerLoginProprio(id)}`);
+  notificar('Claude: wrong login in the account folder', `${nomeDaConta(id, cfg)}: its folder is signed in to ${onde}. Sessions stay in ~/.claude; run ${comandoParaRefazerLoginProprio(id)}.`);
+  return true;
+}
+
+function comandoParaRefazerLoginProprio(id) {
+  return `claude-accounts login ${id} --own-folder`;
 }
 
 function log(mensagem) {
@@ -468,7 +549,7 @@ function contasDuplicadas(cfg = carregarConfig()) {
   for (const id of Object.keys(cfg.contas)) {
     const ident = identidade(id, cfg);
     if (!ident.chave) continue;
-    const grupo = grupos.get(ident.chave) || { email: ident.email, ids: [] };
+    const grupo = grupos.get(ident.chave) || { email: ident.email, organizacao: ident.organizacao, ids: [] };
     grupo.ids.push(id);
     grupos.set(ident.chave, grupo);
   }
@@ -625,8 +706,18 @@ async function avaliarContas({ maxIdadeMs } = {}) {
     sonda: sondas[i],
     folga: folgaDe(sondas[i]),
     esgotada: esgotadas[id] || null,
-    logada: !sondas[i].semLogin,
+    logada: !sondas[i].semLogin && !loginDeOutraContaDaFila(id, cfg),
   }));
+}
+
+// Fora do ~/.claude, a conta abre na pasta própria, com o login que estiver lá: se ele não é o que a troca dos agentes
+// guardou para ela e é o de outra conta da fila, abrir nela gastaria a outra com o nome desta. Até o login ser
+// refeito, ela fica de fora da escolha. Na conta do ~/.claude, quem decide é envDaSessao.
+function loginDeOutraContaDaFila(id, cfg = carregarConfig()) {
+  if (usaDirPadrao(id, cfg)) return null;
+  const outra = loginProprioDeOutraConta(id, cfg);
+  if (!outra) return null;
+  return outrasDaFila(id, cfg).some((o) => identidade(o, cfg).chave === outra.chave) ? outra : null;
 }
 
 function decidir(candidatos, { excluir = [] } = {}) {
@@ -850,16 +941,22 @@ function python3() {
 // O login de cada conta, relido no máximo uma vez por minuto: o evento chega a cada resposta e o login quase nunca
 // muda. Se mudar, por um minuto os números saem com o login anterior, e o Monitor os deixa de fora.
 const loginsLidos = new Map();
-function loginDaConta(id) {
-  const lido = loginsLidos.get(id);
+function loginLidoHaPouco(chaveDoCache, ler) {
+  const lido = loginsLidos.get(chaveDoCache);
   if (lido && Date.now() - lido.em < 60000) return lido.chave;
   let chave = null;
-  try { chave = identidade(id).chave; } catch {}
-  loginsLidos.set(id, { chave, em: Date.now() });
+  try { chave = ler(); } catch {}
+  loginsLidos.set(chaveDoCache, { chave, em: Date.now() });
   return chave;
 }
 
-function registrarLimiteAoVivo(id, info, agora = Date.now()) {
+function loginDaConta(id) {
+  return loginLidoHaPouco(`conta ${id}`, () => identidade(id).chave);
+}
+
+// `dir` é a pasta em que a sessão roda (o CLAUDE_CONFIG_DIR dela), quando ela tem uma: os números são do login de lá,
+// que na pasta própria da conta do ~/.claude pode não ser o da conta, e é com ele que o Monitor confere o arquivo.
+function registrarLimiteAoVivo(id, info, agora = Date.now(), dir = null) {
   if (!id || !info || typeof info !== 'object') return null;
   const janelas = {};
   const anotar = (chave, utilizacao, renova) => {
@@ -876,7 +973,9 @@ function registrarLimiteAoVivo(id, info, agora = Date.now()) {
   if (!Object.keys(janelas).length) return null;
   // Só as janelas deste evento, todas com a hora dele: o Monitor junta cada uma à última leitura completa, que
   // guarda as outras. Repetir aqui uma janela de um evento antigo a faria parecer nova.
-  const registro = { em: agora, conta: loginDaConta(id), status: info.status || null, janelas };
+  // Pasta sem login anotado: vale o da conta, como antes.
+  const conta = (dir && loginLidoHaPouco(`pasta ${path.resolve(dir)}`, () => loginDaPasta(dir).chave)) || loginDaConta(id);
+  const registro = { em: agora, conta, status: info.status || null, janelas };
   try {
     fs.mkdirSync(DIR_AO_VIVO, { recursive: true });
     escreverJson(path.join(DIR_AO_VIVO, `${id}.json`), registro);
@@ -887,6 +986,12 @@ function registrarLimiteAoVivo(id, info, agora = Date.now()) {
 module.exports = {
   envDaSessao,
   temLoginProprio,
+  loginDaPasta,
+  rotuloDoLoginDaPasta,
+  comandoParaRefazerLoginProprio,
+  loginProprioDeOutraConta,
+  loginDeOutraContaDaFila,
+  conflitoDoLogin,
   esquecerLoginProprio,
   dirPropria,
   contaDoDirPadrao,

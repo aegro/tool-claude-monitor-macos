@@ -4,6 +4,10 @@ import AppKit
 /// The "Adicionar conta" assistant: what used to be `claude-accounts add`, `login` and `login --agents` in a
 /// terminal. The router stays the owner of every change; the assistant only runs its commands, captures the login
 /// address so the person can choose the browser, and reads back who logged in before saving anything else.
+///
+/// Nothing is created until the person asks for the login: choosing an account only names it. The account the login
+/// needs is created pending (`add --pending`), out of the queue, and only enters it at "Concluir"; one left behind by
+/// an assistant closed some other way is removed by the Monitor (`discardPending`).
 @MainActor
 final class AddAccountFlow: ObservableObject, Identifiable {
     enum Step: Equatable { case choose, authorize, connected, agents, place, done }
@@ -105,36 +109,48 @@ final class AddAccountFlow: ObservableObject, Identifiable {
 
     // MARK: steps
 
-    func choose(_ suggestion: Suggestion?) async {
-        // A double-click or a repeated Enter can call this again before the sheet disables its buttons; a second
-        // `add` with the same id would fail and overwrite the phase of the one that worked.
-        if case .working = phase { return }
+    /// Names the account and moves on to the login. Nothing is written yet: an assistant closed here leaves nothing.
+    func choose(_ suggestion: Suggestion?) {
         guard accountId == nil, !cancelled else { return }
         let config = AccountRouter.loadConfig()
         let taken = config?.accounts.map(\.label) ?? []
         let base = suggestion.map { Self.defaultName(label: $0.label, plan: $0.plan, taken: taken) } ?? "Nova conta"
         name = base
         monogram = AccountRouter.monogram(for: base)
-        let id = AccountRouter.slug(for: base, taken: Set(config?.accounts.map(\.id) ?? []))
-        phase = .working("Preparando a conta…")
-        let result = await AccountRouter.runAccounts(["add", id, "--name", base])
-        if cancelled {
-            // The sheet closed while `add` ran: nobody will finish this account, so it does not stay behind.
-            if result.ok { try? AccountRouter.discard(id) }
-            return
-        }
-        guard result.ok else {
-            phase = .failed(Self.firstLine(result.error) ?? "Não deu para criar a conta.")
-            return
-        }
-        accountId = id
-        created = true
+        // Pending accounts count as taken: one left by an assistant that has not been cleaned up yet keeps its id.
+        let ids = (config?.accounts ?? []) + (config?.pending ?? [])
+        accountId = AccountRouter.slug(for: base, taken: Set(ids.map(\.id)))
         phase = .idle
         step = .authorize
     }
 
-    func authorize(incognito: Bool) {
+    /// Creates the account the login needs, pending, the first time the person asks for the login. False when it
+    /// could not be created or the assistant was closed meanwhile.
+    private func create() async -> Bool {
+        guard !existing, !created else { return !cancelled }
+        guard let id = accountId else { return false }
+        phase = .working("Preparando a conta…")
+        let result = await AccountRouter.runAccounts(["add", id, "--name", name, "--pending"])
+        if cancelled {
+            // The sheet closed while `add` ran: nobody will finish this account, so it does not stay behind.
+            if result.ok { try? AccountRouter.discard(id) }
+            return false
+        }
+        guard result.ok else {
+            phase = .failed(Self.firstLine(result.error) ?? "Não deu para criar a conta.")
+            return false
+        }
+        created = true
+        phase = .idle
+        return true
+    }
+
+    func authorize(incognito: Bool) async {
+        // A double-click or a repeated Enter can call this again while `add` runs; a second `add` would overwrite the
+        // phase of the one that worked.
+        if case .working("Preparando a conta…") = phase { return }
         self.incognito = incognito
+        guard await create() else { return }
         startLogin(agents: false)
     }
 
@@ -150,7 +166,8 @@ final class AddAccountFlow: ObservableObject, Identifiable {
     }
 
     func confirmConnected() {
-        step = agentsRunning > 0 || AccountRouter.loadConfig()?.hasExtraAccounts == true ? .agents : .place
+        // A new account is always an extra one, pending or not; re-authorizing asks only when there are extras.
+        step = !existing || agentsRunning > 0 || AccountRouter.loadConfig()?.hasExtraAccounts == true ? .agents : .place
     }
 
     func retryLogin() {
@@ -170,7 +187,7 @@ final class AddAccountFlow: ObservableObject, Identifiable {
                 var reserveIds = config.reserve.map(\.id).filter { $0 != id }
                 if reserve { reserveIds.append(id) } else { route.append(id) }
                 if route.isEmpty, let first = reserveIds.first { route = [first]; reserveIds.removeFirst() }
-                try AccountRouter.saveQueue(route: route, reserve: reserveIds, strategy: config.strategy)
+                try AccountRouter.saveQueue(route: route, reserve: reserveIds, strategy: config.strategy, admitting: id)
             }
             if enableSwitching {
                 if !AccountRouter.commandsInstalled, let bin = AccountRouter.bundledCommands {
@@ -352,7 +369,9 @@ final class AddAccountFlow: ObservableObject, Identifiable {
             return
         }
         phase = .idle
-        guard let id = accountId, let account = AccountRouter.loadConfig()?.accounts.first(where: { $0.id == id }) else {
+        let config = AccountRouter.loadConfig()
+        guard let id = accountId, let account = ((config?.accounts ?? []) + (config?.pending ?? [])).first(where: { $0.id == id })
+        else {
             phase = .failed("A conta sumiu da config durante o login.")
             return
         }
@@ -513,7 +532,7 @@ extension AccountRouter {
     /// Monitor could not read is still a login. The account in `~/.claude` is not removed, and the route never ends
     /// up empty (see `queue(removing:)`).
     static func discard(_ id: String) throws {
-        guard let config = loadConfig(), let account = config.accounts.first(where: { $0.id == id }),
+        guard let config = loadConfig(), let account = (config.accounts + config.pending).first(where: { $0.id == id }),
               !account.usesDefaultDirectory, id != config.principal
         else { return }
         try updateConfig(at: configURL) { root in
@@ -537,6 +556,15 @@ extension AccountRouter {
             try fm.trashItem(at: account.directory, resultingItemURL: nil)
         } catch {
             throw FolderNotTrashed(path: (account.directory.path as NSString).abbreviatingWithTildeInPath, reason: error.localizedDescription)
+        }
+    }
+
+    /// Removes the accounts an assistant left pending, other than `keep` (the one an open assistant is still using):
+    /// out of the queue and with nobody left to finish them. Runs when the Monitor starts and whenever an assistant
+    /// closes, so an assistant closed in the middle, or a Monitor that quit during a login, leaves nothing behind.
+    static func discardPending(except keep: String? = nil) {
+        for account in loadConfig()?.pending ?? [] where account.id != keep {
+            try? discard(account.id)
         }
     }
 

@@ -155,6 +155,8 @@ final class Monitor: ObservableObject {
         retime()
         tickFast()
         Task {
+            // No assistant is open yet: an account one left pending (the Monitor quit during a login) goes now.
+            await Blocking.run { Self.discardPending() }
             await refreshUsage(force: true)
             await scanLedger()
         }
@@ -281,8 +283,8 @@ final class Monitor: ObservableObject {
 
     /// A preview window (and a `--render` screenshot) shares the real accounts folder with the running app: it must
     /// not switch agents or publish the burn rate, or two Monitors would drive the same router.
-    static let readOnly = isReadOnly(arguments: CommandLine.arguments,
-                                     environment: ProcessInfo.processInfo.environment)
+    nonisolated static let readOnly = isReadOnly(arguments: CommandLine.arguments,
+                                                 environment: ProcessInfo.processInfo.environment)
 
     nonisolated static func isReadOnly(arguments: [String], environment: [String: String]) -> Bool {
         arguments.contains { $0 == "--preview" || $0.hasPrefix("--preview=") || $0.hasPrefix("--render=") }
@@ -1150,6 +1152,7 @@ final class Monitor: ObservableObject {
 
     func startAddAccount() {
         accountFlow?.cancel()
+        Self.discardPending()
         let flow = AddAccountFlow(store: accounts, desktop: desktopOrgs,
                                   agentsRunning: sessions.filter(\.isBackground).count)
         flow.onFinish = { [weak self] in Task { await self?.refreshUsage(force: true); await self?.refreshAccessIfDue(force: true) } }
@@ -1167,9 +1170,18 @@ final class Monitor: ObservableObject {
         settingsTab = .accounts
     }
 
+    /// However the assistant closes (Cancelar, the window's close button, a finished account), what it left pending
+    /// goes. The queue in the panel never listed it, so there is nothing to read again.
     func closeAccountFlow() {
         accountFlow?.cancel()
         accountFlow = nil
+        Self.discardPending()
+    }
+
+    /// `AccountRouter.discardPending`, except in a preview or a `--render`, which must not touch the real config.
+    nonisolated private static func discardPending() {
+        guard !readOnly else { return }
+        AccountRouter.discardPending()
     }
 
     /// Runs what an access item offers. Returns true when the settings window should come forward (the

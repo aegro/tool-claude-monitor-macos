@@ -149,6 +149,7 @@ struct AccountSettingsRow: View {
     @ObservedObject var monitor: Monitor
     @State private var name = ""
     @State private var monogram = ""
+    @State private var confirmingRemoval = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -202,12 +203,28 @@ struct AccountSettingsRow: View {
                         }
                         .help(entry.role == .route ? "Mover para a reserva" : "Mover para a rota")
                         .disabled(entry.role == .route && queue.route.count <= 1)
+                        // The principal lives in ~/.claude and cannot leave the queue; its slot stays, so the
+                        // buttons of every row line up.
+                        Button { confirmingRemoval = true } label: { Image(systemName: "trash") }
+                            .foregroundStyle(.secondary)
+                            .help("Remover da fila…")
+                            .opacity(entry.id == queue.principal ? 0 : 1)
+                            .disabled(entry.id == queue.principal)
                     }
                     .buttonStyle(.borderless)
                 }
             }
         }
         .padding(.vertical, 2)
+        .confirmationDialog("Tirar \(entry.label) da fila?", isPresented: $confirmingRemoval) {
+            if AccountQueue.removalBlocked(sessions: entry.sessionsInFolder) == nil {
+                Button("Remover", role: .destructive) { Task { await monitor.removeAccount(entry.id) } }
+            }
+            Button("Cancelar", role: .cancel) {}
+        } message: {
+            Text(AccountQueue.removalBlocked(sessions: entry.sessionsInFolder)
+                 ?? "A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta.")
+        }
         .onAppear {
             name = entry.label
             monogram = entry.monogram

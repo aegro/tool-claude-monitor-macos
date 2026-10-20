@@ -3,7 +3,9 @@ import CryptoKit
 
 enum AccountRouter {
     struct Account: Equatable {
-        enum Role: String { case route, reserve }
+        /// `pending`: created by the "Adicionar conta" assistant and not finished yet (`pendente` in the config).
+        /// It stays out of the queue, so no session opens there and the panel does not list it.
+        enum Role: String { case route, reserve, pending }
 
         var id: String
         var label: String
@@ -25,6 +27,8 @@ enum AccountRouter {
         /// Whether the principal lives in `~/.claude` (no `dir` of its own). Only then is `~/.claude` the router's
         /// slot, and only then does `slotIdentity` apply its rule.
         var principalUsesDefaultDirectory: Bool = true
+        /// Accounts the assistant created and has not finished: in `contas`, out of the queue.
+        var pending: [Account] = []
 
         var hasExtraAccounts: Bool { accounts.contains { !$0.usesDefaultDirectory } }
         var route: [Account] { accounts.filter { $0.role == .route } }
@@ -175,6 +179,9 @@ enum AccountRouter {
                 monogram: given.isEmpty ? monogram(for: label) : String(given.prefix(2)).uppercased())
         }
 
+        let pending = entries.keys.sorted().filter { id in
+            !route.contains(id) && !reserve.contains(id) && (entries[id] as? [String: Any])?["pendente"] as? Bool == true
+        }
         let preferred = (root["preferida"] as? String).flatMap { route.contains($0) || reserve.contains($0) ? $0 : nil }
         let pinned = (root["fixada"] as? String).flatMap { route.contains($0) || reserve.contains($0) ? $0 : nil }
 
@@ -185,7 +192,8 @@ enum AccountRouter {
             reserveBelow: reserveBelow,
             preferred: preferred,
             pinned: pinned,
-            principalUsesDefaultDirectory: ((entries[principal] as? [String: Any])?["dir"] as? String) == nil)
+            principalUsesDefaultDirectory: ((entries[principal] as? [String: Any])?["dir"] as? String) == nil,
+            pending: pending.filter { $0 != principal }.map { account($0, .pending) })
     }
 
     struct UnreadableConfig: LocalizedError {
@@ -204,12 +212,21 @@ enum AccountRouter {
 
     /// Writes the queue the way the router reads it: `rota` above the divider, `reserva` below it, and the
     /// head of the route as `preferida` when the rule is to follow the order.
-    static func saveQueue(route: [String], reserve: [String], strategy: Strategy, at url: URL = configURL) throws {
+    /// `admitting` is a pending account entering the queue in this same write: it loses its `pendente` mark here, so
+    /// it is never in the queue and still pending, nor out of it and no longer pending.
+    static func saveQueue(route: [String], reserve: [String], strategy: Strategy, admitting: String? = nil,
+                          at url: URL = configURL) throws {
         guard !route.isEmpty else { throw EmptyRoute() }
         try updateConfig(at: url) { root in
             root["rota"] = route
             root["reserva"] = reserve
             root["preferida"] = strategy == .order ? route[0] : nil
+            if let admitting, var contas = root["contas"] as? [String: Any],
+               var entry = contas[admitting] as? [String: Any] {
+                entry.removeValue(forKey: "pendente")
+                contas[admitting] = entry
+                root["contas"] = contas
+            }
         }
     }
 

@@ -70,11 +70,19 @@ struct AddAccountFlowFunctionalTests {
     @Test func criaAbreOEnderecoAutomaticoLeQuemEntrouEColocaNaReserva() async throws {
         let opened = Box<[(URL, Bool)]>([])
         let flow = newFlow(opened: opened)
-        await flow.choose(nil)
+        flow.choose(nil)
         #expect(flow.step == .authorize)
         #expect(flow.accountId == "nova-conta")
+        // Choosing only names the account: nothing is written until the login is asked for.
+        #expect((try readConfig()["contas"] as? [String: Any])?["nova-conta"] == nil)
 
-        flow.authorize(incognito: true)
+        await flow.authorize(incognito: true)
+        // Created for the login, but pending: out of the queue, so no session opens there before "Concluir".
+        let pending = try readConfig()
+        #expect(((pending["contas"] as? [String: Any])?["nova-conta"] as? [String: Any])?["pendente"] as? Bool == true)
+        #expect(pending["rota"] as? [String] == ["principal"])
+        #expect(AccountRouter.loadConfig()?.pending.map(\.id) == ["nova-conta"])
+        #expect(AccountRouter.loadConfig()?.accounts.map(\.id) == ["principal"])
         #expect(await until { !opened.value.isEmpty })
         // The automatic address, the one that comes back by itself, never the manual one printed on the terminal.
         #expect(opened.value.map(\.0.absoluteString) == [Self.automatic])
@@ -103,6 +111,41 @@ struct AddAccountFlowFunctionalTests {
         let entry = (root["contas"] as? [String: Any])?["nova-conta"] as? [String: Any]
         #expect(entry?["nome"] as? String == "Squad Compare")
         #expect(entry?["sigla"] as? String == "SC")
+        #expect(entry?["pendente"] == nil)
+        #expect(AccountRouter.loadConfig()?.pending.isEmpty == true)
+    }
+
+    @Test func escolherEFecharSemAutorizarNaoDeixaConta() async throws {
+        let before = try Data(contentsOf: config)
+        let flow = newFlow(opened: Box([]))
+        flow.choose(nil)
+        #expect(flow.step == .authorize)
+        flow.cancel()
+        #expect(try Data(contentsOf: config) == before)
+        #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent("nova-conta").path))
+    }
+
+    @Test func contaPendenteLargadaSaiEAAbertaFica() async throws {
+        // Two pending accounts: one an assistant left behind (the Monitor quit during its login), one an open
+        // assistant is still using.
+        try Data(#"""
+        { "contas": { "principal": { "nome": "Thomas (Aegro)", "dir": "\#(home.path)/principal" },
+                      "largada": { "nome": "Nova conta", "pendente": true },
+                      "aberta": { "nome": "Outra", "pendente": true },
+                      "max": { "nome": "Max" } },
+          "rota": ["principal", "max"], "ativo": true }
+        """#.utf8).write(to: config)
+        for id in ["largada", "aberta", "max"] {
+            try FileManager.default.createDirectory(at: home.appendingPathComponent(id), withIntermediateDirectories: true)
+        }
+        #expect(AccountRouter.loadConfig()?.pending.map(\.id) == ["aberta", "largada"])
+        AccountRouter.discardPending(except: "aberta")
+        let contas = try #require(try readConfig()["contas"] as? [String: Any])
+        #expect(Set(contas.keys) == ["principal", "aberta", "max"])
+        #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent("largada").path))
+        #expect(FileManager.default.fileExists(atPath: home.appendingPathComponent("aberta").path))
+        #expect(FileManager.default.fileExists(atPath: home.appendingPathComponent("max").path))
+        #expect(try readConfig()["rota"] as? [String] == ["principal", "max"])
     }
 
     @Test func semBrowserCapturadoAbreAPaginaManualEMandaOCodigo() async throws {
@@ -110,8 +153,8 @@ struct AddAccountFlowFunctionalTests {
         AddAccountFlow.manualAfter = 0.3
         let opened = Box<[(URL, Bool)]>([])
         let flow = newFlow(opened: opened)
-        await flow.choose(nil)
-        flow.authorize(incognito: false)
+        flow.choose(nil)
+        await flow.authorize(incognito: false)
         #expect(await until { flow.needsCode })
         #expect(opened.value.map(\.0.absoluteString) == [Self.manual])
 
@@ -132,7 +175,8 @@ struct AddAccountFlowFunctionalTests {
     @Test func cancelarEncerraOLoginInteiroEApagaAContaCriada() async throws {
         let opened = Box<[(URL, Bool)]>([])
         let flow = newFlow(opened: opened)
-        await flow.choose(nil)
+        flow.choose(nil)
+        await flow.authorize(incognito: false)
         let dir = home.appendingPathComponent("nova-conta")
         #expect(FileManager.default.fileExists(atPath: dir.path))
         // A link to a folder outside the account, like the router's links to ~/.claude: it must survive.
@@ -141,7 +185,6 @@ struct AddAccountFlowFunctionalTests {
         try Data("fica".utf8).write(to: shared.appendingPathComponent("arquivo"))
         try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("projects"), withDestinationURL: shared)
 
-        flow.authorize(incognito: false)
         let pidFile = base.appendingPathComponent("login.pid")
         #expect(await until { FileManager.default.fileExists(atPath: pidFile.path) })
         let pid = pid_t(try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
@@ -160,11 +203,11 @@ struct AddAccountFlowFunctionalTests {
     @Test func tentarDeNovoNaoHerdaOFimDaTentativaAnterior() async throws {
         let opened = Box<[(URL, Bool)]>([])
         let flow = newFlow(opened: opened)
-        await flow.choose(nil)
-        flow.authorize(incognito: false)
+        flow.choose(nil)
+        await flow.authorize(incognito: false)
         #expect(await until { opened.value.count == 1 })
         // A second click starts over: the first login is stopped and its exit is ignored.
-        flow.authorize(incognito: false)
+        await flow.authorize(incognito: false)
         #expect(await until { opened.value.count == 2 })
         try? await Task.sleep(nanoseconds: 600_000_000)
         #expect(flow.phase == .working("Esperando você autorizar…"))
@@ -178,8 +221,8 @@ struct AddAccountFlowFunctionalTests {
             .write(to: home.appendingPathComponent("principal/.claude.json"))
         let opened = Box<[(URL, Bool)]>([])
         let flow = newFlow(opened: opened)
-        await flow.choose(nil)
-        flow.authorize(incognito: false)
+        flow.choose(nil)
+        await flow.authorize(incognito: false)
         try touch("callback")
         #expect(await until { flow.step == .connected })
         #expect(flow.duplicateOf == "Thomas (Aegro)")
@@ -191,8 +234,8 @@ struct AddAccountFlowFunctionalTests {
         // The router caught the duplicate itself (exit 3) and signed the new folder out: same screen as above.
         setenv("FAKE_LOGIN_CONFLICT", "principal", 1)
         let flow = newFlow(opened: Box([]))
-        await flow.choose(nil)
-        flow.authorize(incognito: false)
+        flow.choose(nil)
+        await flow.authorize(incognito: false)
         try touch("callback")
         #expect(await until { flow.step == .connected })
         #expect(flow.duplicateOf == "Thomas (Aegro)")
@@ -205,8 +248,8 @@ struct AddAccountFlowFunctionalTests {
     @Test func saida3SemLinhaDeConflitoEhLoginQueNaoTerminou() async throws {
         setenv("FAKE_LOGIN_EXIT", "3", 1)
         let flow = newFlow(opened: Box([]))
-        await flow.choose(nil)
-        flow.authorize(incognito: false)
+        flow.choose(nil)
+        await flow.authorize(incognito: false)
         try touch("callback")
         #expect(await until { if case .failed = flow.phase { return true }; return false })
         #expect(flow.duplicateOf == nil)
@@ -215,31 +258,36 @@ struct AddAccountFlowFunctionalTests {
     @Test func cancelarDuranteACriacaoApagaAContaQuandoElaTermina() async throws {
         setenv("FAKE_ADD_DELAY", "0.5", 1)
         let flow = newFlow(opened: Box([]))
-        let choosing = Task { await flow.choose(nil) }
+        flow.choose(nil)
+        let creating = Task { await flow.authorize(incognito: false) }
         #expect(await until { flow.phase == .working("Preparando a conta…") })
         flow.cancel()
-        await choosing.value
+        await creating.value
         #expect((try readConfig()["contas"] as? [String: Any])?["nova-conta"] == nil)
         #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent("nova-conta").path))
-        #expect(flow.step == .choose)
+        #expect(!FileManager.default.fileExists(atPath: base.appendingPathComponent("login.pid").path))
     }
 
-    @Test func segundoCliqueEmEscolherNaoRodaOutraCriacao() async throws {
+    @Test func segundoCliqueEmAutorizarNaoRodaOutraCriacao() async throws {
         setenv("FAKE_ADD_DELAY", "0.3", 1)
         let flow = newFlow(opened: Box([]))
-        let first = Task { await flow.choose(nil) }
+        flow.choose(nil)
+        let first = Task { await flow.authorize(incognito: false) }
         #expect(await until { flow.phase == .working("Preparando a conta…") })
-        await flow.choose(nil)
+        await flow.authorize(incognito: false)
         await first.value
         #expect(flow.accountId == "nova-conta")
-        #expect(flow.step == .authorize && flow.phase == .idle)
+        #expect(try String(contentsOf: base.appendingPathComponent("adds"), encoding: .utf8) == "nova-conta\n")
+        #expect(flow.phase == .working("Esperando você autorizar…"))
+        flow.cancel()
     }
 
     @Test func erroDoRoteadorApareceEmUmaLinha() async throws {
         setenv("FAKE_ADD_FAIL", "account nova-conta already exists", 1)
         let flow = newFlow(opened: Box([]))
-        await flow.choose(nil)
-        #expect(flow.step == .choose)
+        flow.choose(nil)
+        await flow.authorize(incognito: false)
+        #expect(flow.step == .authorize)
         #expect(flow.phase == .failed("account nova-conta already exists"))
     }
 
@@ -255,15 +303,17 @@ struct AddAccountFlowFunctionalTests {
       add)
         id="$1"; shift
         name="$id"; [ "$1" = "--name" ] && name="$2"
+        pending=0; case " $* " in *" --pending "*) pending=1 ;; esac
         if [ -n "$FAKE_ADD_FAIL" ]; then echo "claude-accounts: $FAKE_ADD_FAIL" >&2; exit 1; fi
         [ -n "$FAKE_ADD_DELAY" ] && sleep "$FAKE_ADD_DELAY"
+        echo "$id" >> "$FAKE_DIR/adds"
         mkdir -p "$home/$id"
-        /usr/bin/python3 -I - "$home/config.json" "$id" "$name" <<'EOF'
+        /usr/bin/python3 -I - "$home/config.json" "$id" "$name" "$pending" <<'EOF'
     import json, sys, os
-    path, id, name = sys.argv[1:]
+    path, id, name, pending = sys.argv[1:]
     cfg = json.load(open(path)) if os.path.exists(path) else {}
-    cfg.setdefault("contas", {})[id] = {"nome": name}
-    cfg["rota"] = [c for c in cfg.get("rota", []) if c != id] + [id]
+    cfg.setdefault("contas", {})[id] = {"nome": name, "pendente": True} if pending == "1" else {"nome": name}
+    cfg["rota"] = [c for c in cfg.get("rota", []) if c != id] + ([] if pending == "1" else [id])
     json.dump(cfg, open(path, "w"))
     EOF
         echo "added $id" ;;

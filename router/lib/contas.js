@@ -547,6 +547,8 @@ function rotuloDoLogin(id, email, sonda) {
 function contasDuplicadas(cfg = carregarConfig()) {
   const grupos = new Map();
   for (const id of Object.keys(cfg.contas)) {
+    // Uma conta pendente ainda não está na fila: o assistente do Monitor mostra a repetida ele mesmo.
+    if (cfg.contas[id].pendente) continue;
     const ident = identidade(id, cfg);
     if (!ident.chave) continue;
     const grupo = grupos.get(ident.chave) || { email: ident.email, organizacao: ident.organizacao, ids: [] };

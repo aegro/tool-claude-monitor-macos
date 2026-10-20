@@ -7,11 +7,13 @@ Roteador de contas do Claude Code que vem dentro do Monitor Claude. Escolhe a co
 `~/.claude` é a conta principal (o id dela fica em `principal` na config). Cada conta extra mora em `~/.claude-accounts/<id>` e roda com `CLAUDE_CONFIG_DIR` apontando para lá. Ficam na conta só a identidade (`.claude.json`), a credencial no Keychain (`Claude Code-credentials-<sha256(dir)[:8]>`) e os caches da org. Settings, hooks, skills, plugins, memória e transcrições são links para `~/.claude`; MCPs e a confiança dos projetos são copiados da principal a cada abertura.
 
 ```bash
-claude-accounts add <id> [--name N] [--reserve]
+claude-accounts add <id> [--name N] [--reserve | --pending]
 claude-accounts login <id>
 claude-accounts status | pick | switches | release <id> | sync | env <id> | run <id>
 claude-accounts on | off      # o mesmo botão de Troca automática do Monitor
 ```
+
+`add --pending` é o que o assistente do Monitor usa: cria a conta (o login precisa da pasta) marcada `pendente` e fora da rota e da reserva, então nenhuma sessão abre nela. Ela entra na fila quando o assistente conclui; uma pendente que ficou para trás (assistente fechado no meio, Monitor encerrado durante o login) o Monitor apaga ao abrir e a cada assistente fechado.
 
 As sessões de stream (VS Code, T3) da conta de `~/.claude` abrem na pasta própria dela, `~/.claude-accounts/<id>`, quando ali há login: assim a troca dos agentes, que muda o login de `~/.claude`, não leva a sessão aberta junto. Esse login se faz com `claude-accounts login <id> --own-folder`.
 

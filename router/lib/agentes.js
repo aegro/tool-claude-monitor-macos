@@ -204,7 +204,8 @@ function marcarLoginInvalido(id, motivo) {
 
 function contaDaChave(chave, cfg = contas.carregarConfig()) {
   if (!chave) return null;
-  const ids = Object.keys(cfg.contas);
+  // Uma conta pendente não está na fila: o slot dos agentes nunca é dela, mesmo com o login repetido de outra.
+  const ids = Object.keys(cfg.contas).filter((id) => !cfg.contas[id].pendente);
   const guardada = ids.find((id) => (loginGuardado(id) || {}).chave === chave);
   if (guardada) return guardada;
   return ids.find((id) => !contas.usaDirPadrao(id, cfg) && contas.identidade(id, cfg).chave === chave) || null;

@@ -47,6 +47,8 @@ final class AddAccountFlow: ObservableObject, Identifiable {
     let existing: Bool
     let agentsRunning: Int
     private var created = false
+    /// True while `add --pending` runs: a second click on the login must not start another one.
+    private var creating = false
     /// Set by `cancel()`; an `add` still running when the sheet closes removes its account when it returns.
     private var cancelled = false
     private var login: Process?
@@ -130,7 +132,9 @@ final class AddAccountFlow: ObservableObject, Identifiable {
         guard !existing, !created else { return !cancelled }
         guard let id = accountId else { return false }
         phase = .working("Preparando a conta…")
+        creating = true
         let result = await AccountRouter.runAccounts(["add", id, "--name", name, "--pending"])
+        creating = false
         if cancelled {
             // The sheet closed while `add` ran: nobody will finish this account, so it does not stay behind.
             if result.ok { try? AccountRouter.discard(id) }
@@ -148,7 +152,7 @@ final class AddAccountFlow: ObservableObject, Identifiable {
     func authorize(incognito: Bool) async {
         // A double-click or a repeated Enter can call this again while `add` runs; a second `add` would overwrite the
         // phase of the one that worked.
-        if case .working("Preparando a conta…") = phase { return }
+        if creating { return }
         self.incognito = incognito
         guard await create() else { return }
         startLogin(agents: false)
@@ -549,6 +553,11 @@ extension AccountRouter {
             if root["fixada"] as? String == id { root["fixada"] = nil }
         }
         let fm = FileManager.default
+        if account.role == .pending {
+            // Never in the queue, so nothing to bring back: its agents login (the assistant's "agents" step) must not
+            // be inherited by a later account that gets the same id.
+            try? fm.removeItem(at: agentsLoginsDirectory.appendingPathComponent("\(id).json"))
+        }
         guard fm.fileExists(atPath: account.directory.path) else { return }
         // The account is already out of the config, which is what the router reads: a folder that stays behind is
         // never used again, but the person is told where it is instead of believing it went to the Trash.

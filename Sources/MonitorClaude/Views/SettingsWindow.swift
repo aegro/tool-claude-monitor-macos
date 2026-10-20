@@ -223,7 +223,7 @@ struct AccountSettingsRow: View {
             Button("Cancelar", role: .cancel) {}
         } message: {
             Text(AccountQueue.removalBlocked(sessions: entry.sessionsInFolder)
-                 ?? "A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta.")
+                 ?? AccountQueue.removalConsequence)
         }
         .onAppear {
             name = entry.label

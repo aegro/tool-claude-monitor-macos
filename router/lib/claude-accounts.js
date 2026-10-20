@@ -209,7 +209,7 @@ function ligar(ativo) {
 function adicionar(args) {
   const id = args[0];
   if (!id || !/^[a-z0-9][a-z0-9._-]*$/.test(id) || id === contas.principal()) {
-    process.stderr.write('usage: claude-accounts add <id> [--name N] [--reserve]  (lowercase id, no spaces)\n');
+    process.stderr.write('usage: claude-accounts add <id> [--name N] [--reserve | --pending]  (lowercase id, no spaces)\n');
     process.exit(2);
   }
   // Pendente: a conta que o assistente do Monitor cria antes do login fica fora da fila (nenhuma sessão abre nela) até

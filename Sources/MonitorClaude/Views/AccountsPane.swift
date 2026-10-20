@@ -184,7 +184,7 @@ struct AccountsPane: View {
     private func removalConfirmation(_ entry: AccountQueue.Entry) -> some View {
         let blocked = AccountQueue.removalBlocked(sessions: entry.sessionsInFolder)
         return VStack(alignment: .leading, spacing: 8) {
-            Text(blocked ?? "Tirar \(entry.label) da fila? A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta.")
+            Text(blocked ?? "Tirar \(entry.label) da fila? \(AccountQueue.removalConsequence)")
                 .font(Type.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {

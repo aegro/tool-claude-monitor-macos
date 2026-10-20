@@ -302,6 +302,31 @@ const testes = {
     assert.strictEqual(m.saidas().length, 3);
   },
 
+  contaPendenteFicaForaDaFilaAteSerConcluida() {
+    const m = mundoComDuasOrganizacoes();
+    const adicionar = (...args) => {
+      const r = spawnSync(process.execPath, [path.join(__dirname, '../lib/claude-accounts.js'), 'add', ...args], {
+        env: { ...process.env, HOME: m.home, CLAUDE_AUTO_HOME: m.accounts },
+        encoding: 'utf8',
+      });
+      assert.strictEqual(r.status, 0, r.stderr);
+      return JSON.parse(fs.readFileSync(path.join(m.accounts, 'config.json'), 'utf8'));
+    };
+    m.config({ principal: 'principal', contas: { principal: {}, max: {} }, rota: ['principal', 'max'], reserva: [] });
+    // O assistente cria a conta antes do login: ela existe (o login precisa da pasta), mas nenhuma sessão abre nela.
+    let cfg = adicionar('nova', '--name', 'Nova conta', '--pending');
+    assert.deepStrictEqual(cfg.contas.nova, { nome: 'Nova conta', pendente: true });
+    assert.deepStrictEqual([cfg.rota, cfg.reserva], [['principal', 'max'], []]);
+    assert.ok(fs.existsSync(path.join(m.accounts, 'nova')));
+    // Uma conta pendente com o login de outra da fila não vira aviso de repetida: o assistente mostra isso ele mesmo.
+    m.logar(path.join(m.accounts, 'nova'), m.aegro);
+    assert.deepStrictEqual(m.rodar(`console.log(JSON.stringify(contas.contasDuplicadas()));`), []);
+    // Um add sem --pending põe na fila e tira a marca, como antes.
+    cfg = adicionar('nova', '--reserve');
+    assert.deepStrictEqual(cfg.contas.nova, { nome: 'Nova conta' });
+    assert.deepStrictEqual([cfg.rota, cfg.reserva], [['principal', 'max'], ['nova']]);
+  },
+
   pastaPropriaDaContaDoClaudeRecebeOQueUmaContaExtraRecebe() {
     // Num processo à parte, com um HOME falso: o ~/.claude e o ~/.claude.json lidos aqui são de mentira.
     const home = fs.mkdtempSync(path.join(raiz, 'home-'));

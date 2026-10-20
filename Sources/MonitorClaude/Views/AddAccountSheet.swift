@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// The assistant's steps. Each one says what is about to happen in one sentence; the commands it runs are the
-/// router's own (`claude-accounts add`, `login`, `login --agents`).
+/// router's own (`claude-accounts add --pending`, `login`, `login --agents`).
 struct AddAccountSheet: View {
     @ObservedObject var flow: AddAccountFlow
     var close: () -> Void
@@ -72,7 +72,7 @@ struct AddAccountSheet: View {
                                 Text(s.detail).font(Type.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button("Adicionar") { Task { await flow.choose(s) } }
+                            Button("Adicionar") { flow.choose(s) }
                                 .disabled(isWorking)
                         }
                         .padding(10)
@@ -82,7 +82,7 @@ struct AddAccountSheet: View {
                 }
             }
             .frame(maxHeight: 210)
-            Button("Outra conta…") { Task { await flow.choose(nil) } }
+            Button("Outra conta…") { flow.choose(nil) }
                 .buttonStyle(.link)
                 .disabled(isWorking)
             working
@@ -95,11 +95,11 @@ struct AddAccountSheet: View {
             Text("A página de login do Claude abre no navegador. Se ele já estiver logado em outra conta, use a janela anônima e entre com a conta certa.")
                 .font(Type.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
-                Button("Abrir no navegador") { flow.authorize(incognito: false) }
+                Button("Abrir no navegador") { Task { await flow.authorize(incognito: false) } }
                     .buttonStyle(.borderedProminent)
                     .disabled(isWorking)
                 if let browser = AddAccountFlow.privateBrowser {
-                    Button("Janela anônima do \(browser.app.replacingOccurrences(of: "Google ", with: ""))") { flow.authorize(incognito: true) }
+                    Button("Janela anônima do \(browser.app.replacingOccurrences(of: "Google ", with: ""))") { Task { await flow.authorize(incognito: true) } }
                         .disabled(isWorking)
                 }
             }

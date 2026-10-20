@@ -53,6 +53,9 @@ struct AccountQueue: Equatable {
         }
     }
 
+    /// What removing an account does, said the same way wherever the removal is confirmed.
+    static let removalConsequence = "A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta."
+
     var route: [Entry] { entries.filter { $0.role == .route } }
     var reserve: [Entry] { entries.filter { $0.role == .reserve } }
     var isSingle: Bool { entries.count <= 1 }

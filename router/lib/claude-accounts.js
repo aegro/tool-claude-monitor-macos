@@ -11,8 +11,9 @@ const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
   pick [--json]                account the router would use now
   status                       headroom and windows of each account
   on | off                     turn switching on or off (same as the Monitor Claude toggle)
-  add <id> [--name N] [--reserve]
+  add <id> [--name N] [--reserve | --pending]
                                create ~/.claude-accounts/<id> with links to ~/.claude
+                               (--pending: outside the queue until the Monitor's assistant finishes it)
   login <id>                   log the account in (opens the browser)
   login <id> --own-folder      log in the folder where the ~/.claude account's VS Code sessions open
   login <id> --agents          separate login used by claude agents when this account takes over
@@ -107,6 +108,7 @@ function avisarDuplicadas() {
     console.log('log one of them into another account with claude-accounts login <id>; if the browser is already signed in, finish the sign-in in a private window.');
   }
   for (const id of Object.keys(cfg.contas)) {
+    if (cfg.contas[id].pendente) continue;
     const outra = contas.usaDirPadrao(id, cfg)
       ? contas.temLoginProprio(id, cfg) && contas.loginProprioDeOutraConta(id, cfg)
       : contas.loginDeOutraContaDaFila(id, cfg);
@@ -207,15 +209,20 @@ function ligar(ativo) {
 function adicionar(args) {
   const id = args[0];
   if (!id || !/^[a-z0-9][a-z0-9._-]*$/.test(id) || id === contas.principal()) {
-    process.stderr.write('usage: claude-accounts add <id> [--name N] [--reserve]  (lowercase id, no spaces)\n');
+    process.stderr.write('usage: claude-accounts add <id> [--name N] [--reserve | --pending]  (lowercase id, no spaces)\n');
     process.exit(2);
   }
+  // Pendente: a conta que o assistente do Monitor cria antes do login fica fora da fila (nenhuma sessão abre nela) até
+  // ele concluir; um assistente largado no meio não deixa conta para trás, e o Monitor apaga as pendentes que achar.
+  const pendente = args.includes('--pending');
   contas.atualizarConfig((salvo, atual) => {
     const nome = opcao(args, ['--name', '--nome'], (atual.contas[id] || {}).nome || id);
     const rota = atual.rota.filter((c) => c !== id);
     const reserva = atual.reserva.filter((c) => c !== id);
-    (args.includes('--reserve') || args.includes('--reserva') ? reserva : rota).push(id);
-    return { ...salvo, contas: { ...atual.contas, [id]: { ...(atual.contas[id] || {}), nome } }, rota, reserva };
+    const { pendente: _, ...antes } = atual.contas[id] || {};
+    if (!pendente) (args.includes('--reserve') || args.includes('--reserva') ? reserva : rota).push(id);
+    const conta = pendente ? { ...antes, nome, pendente: true } : { ...antes, nome };
+    return { ...salvo, contas: { ...atual.contas, [id]: conta }, rota, reserva };
   });
   const cfg = contas.carregarConfig();
   contas.prepararConta(id);

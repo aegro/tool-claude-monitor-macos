@@ -301,7 +301,8 @@ final class Monitor: ObservableObject {
         // On a GCD thread, not the cooperative pool: the router's check can take a while.
         DispatchQueue.global(qos: .utility).async { [weak self] in
             AccountRouter.watchAgents()
-            Task { @MainActor in self?.finishAgentsWatch() }
+            let agents = AccountRouter.loadConfig().flatMap { AccountRouter.agentsAccount(config: $0) }
+            Task { @MainActor in self?.finishAgentsWatch(agents: agents) }
         }
     }
 
@@ -320,8 +321,11 @@ final class Monitor: ObservableObject {
         try? AccountRouter.publish(rate)
     }
 
-    private func finishAgentsWatch() {
+    /// The watch is what moves the agents ahead of their limit: when it did, the menu bar follows them now instead of
+    /// at the next usage poll, minutes later.
+    private func finishAgentsWatch(agents: String?) {
         watchingAgents = false
+        if agents != router?.agentsAccount { Task { await refreshUsage(force: true) } }
         if lastAgentsWatch == nil { watchAgentsIfDue() }
     }
 
@@ -505,6 +509,7 @@ final class Monitor: ObservableObject {
             available: available,
             exhausted: exhausted,
             agentsLogins: Set(config.accounts.map(\.id).filter(AccountRouter.hasAgentsLogin)),
+            agentsAccount: AccountRouter.agentsAccount(config: config),
             switches: AccountRouter.switches(limit: 20),
             idleLogins: idle,
             keychainRefused: refused)
@@ -1002,19 +1007,19 @@ final class Monitor: ObservableObject {
                 exhaustedUntil: router.exhausted[account.id].flatMap { $0 > now ? $0 : nil },
                 sessions: sessions.filter { $0.accountId == account.id }.count,
                 sessionsInFolder: sessions.filter { $0.folderAccountId == account.id }.count,
-                runsAgents: account.id == router.config.principal,
+                runsAgents: account.id == router.agentsAccount,
                 isLive: live,
                 loginIdle: router.idleLogins.contains(account.id),
                 loginRefused: router.keychainRefused.contains(account.id))
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
                             reserveBelow: router.config.reserveBelow, configured: true,
-                            principal: router.config.principal, pinned: router.config.pinned)
+                            principal: router.config.principal, pinned: router.config.pinned,
+                            agents: router.agentsAccount)
     }
 
-    /// The 5h window the menu bar shows, and whether it is current: the account new sessions open on, which is the
-    /// one its monogram names. Before, the number came from the account in `~/.claude` whatever the queue said, so
-    /// after choosing another account the menu bar kept showing the old one's percentage.
+    /// The 5h window the menu bar shows, and whether it is current: the account of `AccountQueue.menuBarAccount`, which
+    /// is the one its monogram names.
     struct MenuBarReading {
         var window: LimitWindow?
         var current: Bool
@@ -1032,7 +1037,7 @@ final class Monitor: ObservableObject {
 
     var menuBarSession: MenuBarReading {
         let q = accountQueue
-        guard q.configured, !q.isSingle, let id = q.newSessions(), let entry = q.entry(id),
+        guard q.configured, !q.isSingle, let id = q.menuBarAccount(), let entry = q.entry(id),
               !entry.isLive else {
             return MenuBarReading(window: usage?.session, current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
         }
@@ -1041,11 +1046,11 @@ final class Monitor: ObservableObject {
         return MenuBarReading(window: entry.snapshot?.session, current: fresh, seenAt: seen, isLive: false)
     }
 
-    /// The monogram the menu bar shows: only when new sessions are not opening on the head of the queue.
+    /// The monogram the menu bar shows: only when the account its number is about is not the head of the queue.
     var menuBarMonogram: String? {
         let q = accountQueue
-        guard q.configured, !q.isSingle, let inUse = q.newSessions(), inUse != q.route.first?.id else { return nil }
-        return q.entry(inUse)?.monogram
+        guard q.configured, !q.isSingle, let shown = q.menuBarAccount(), shown != q.route.first?.id else { return nil }
+        return q.entry(shown)?.monogram
     }
 
     /// New sessions open on `id` from now on, above the rule; nil goes back to the rule.

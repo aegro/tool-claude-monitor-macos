@@ -456,6 +456,39 @@ enum AccountRouter {
         return saved
     }
 
+    /// The queue account the agents of `claude agents` run on, read like the router's `contaNoSlot`: the login in
+    /// `~/.claude.json` matched against the login the router saved for each account, then against each account's own
+    /// folder. With no match, the principal while the router never saved its login, since it never left the slot.
+    static func agentsAccount(config: Config, in dir: URL = savedLoginsDirectory) -> String? {
+        let ids = config.accounts.map(\.id)
+        return resolveAgentsAccount(
+            declared: ClaudeConfig.activeAccount()?.key,
+            accounts: ids,
+            saved: Dictionary(uniqueKeysWithValues: ids.compactMap { id in savedLoginKey(id, in: dir).map { (id, $0) } }),
+            folders: Dictionary(uniqueKeysWithValues: config.accounts.filter { !$0.usesDefaultDirectory }
+                .compactMap { a in folderIdentity(a).map { (a.id, $0.key) } }),
+            principal: config.principal)
+    }
+
+    static func resolveAgentsAccount(declared: String?, accounts: [String], saved: [String: String],
+                                     folders: [String: String], principal: String) -> String? {
+        if let declared {
+            if let id = accounts.first(where: { saved[$0] == declared }) { return id }
+            if let id = accounts.first(where: { folders[$0] == declared }) { return id }
+        }
+        return saved[principal] == nil && accounts.contains(principal) ? principal : nil
+    }
+
+    /// Whose login the router saved for `id`, even one it marked as no longer working: it still names the account.
+    static func savedLoginKey(_ id: String, in dir: URL = savedLoginsDirectory) -> String? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(id).json")) else { return nil }
+        if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let key = root["chave"] as? String, !key.isEmpty {
+            return key
+        }
+        return ClaudeConfig.parseActiveAccount(data)?.key
+    }
+
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {
         try? Keychain.credentials(service: keychainService(for: account), timeout: timeout)
     }
@@ -878,6 +911,8 @@ struct RouterState: Equatable {
     var available: Set<String> = []
     var exhausted: [String: Date] = [:]
     var agentsLogins: Set<String> = []
+    /// The account the agents of `claude agents` run on now (`AccountRouter.agentsAccount`).
+    var agentsAccount: String?
     var switches: [AccountRouter.Switch] = []
     /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while, and only a
     /// session renews it (the Monitor never does). Their numbers stay as last read until then.

@@ -257,4 +257,32 @@ struct LiveDataTests {
         #expect(AccountRouter.savedLogin("velha", in: dir) == nil)
         #expect(AccountRouter.savedLogin("nada", in: dir) == nil)
     }
+
+    /// Like the router's `contaNoSlot`: the login in `~/.claude.json` names the account by the login saved for it, then
+    /// by its own folder, and with neither the principal stands only while the router never saved a login for it.
+    @Test func contaDosAgentesVemDoLoginNoSlotComoNoRoteador() throws {
+        let ids = ["gabriel", "financeiro", "financeiro2"]
+        let saved = ["gabriel": "u1:org-g", "financeiro2": "u3:org-f2"]
+        let folders = ["financeiro": "u2:org-f", "financeiro2": "u3:org-f2"]
+        func agents(_ declared: String?, saved: [String: String] = saved) -> String? {
+            AccountRouter.resolveAgentsAccount(declared: declared, accounts: ids, saved: saved, folders: folders,
+                                               principal: "gabriel")
+        }
+        #expect(agents("u3:org-f2") == "financeiro2")
+        #expect(agents("u1:org-g") == "gabriel")
+        #expect(agents("u2:org-f") == "financeiro")
+        #expect(agents("u9:org-x") == nil)
+        #expect(agents(nil) == nil)
+        #expect(agents("u9:org-x", saved: ["financeiro2": "u3:org-f2"]) == "gabriel")
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-agentes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(#"{"oauthAccount": {"accountUuid": "u1", "organizationUuid": "org-g"}, "chave": "u1:org-g"}"#.utf8)
+            .write(to: dir.appendingPathComponent("gabriel.json"))
+        try Data(#"{"oauthAccount": {"accountUuid": "u2"}, "invalidoEm": 1}"#.utf8).write(to: dir.appendingPathComponent("velha.json"))
+        #expect(AccountRouter.savedLoginKey("gabriel", in: dir) == "u1:org-g")
+        #expect(AccountRouter.savedLoginKey("velha", in: dir) == "u2")
+        #expect(AccountRouter.savedLoginKey("nada", in: dir) == nil)
+    }
 }

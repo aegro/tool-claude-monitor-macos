@@ -48,7 +48,7 @@ struct MenuBarLabel: View {
             },
             gauge: showLimit && window == nil,
             number: window.map { "\(Int($0.utilization.rounded()))" },
-            // Off the head of the queue, the menu bar says which account new sessions open on.
+            // Off the head of the queue, the menu bar says which account the number is about.
             monogram: showLimit ? monitor.menuBarMonogram : nil,
             cpu: showCPU ? "\(Int(monitor.system.cpuPercent.rounded()))%" : nil,
             tint: Self.tint(alarmed(reading), window: window),

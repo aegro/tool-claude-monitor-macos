@@ -321,11 +321,12 @@ final class Monitor: ObservableObject {
         try? AccountRouter.publish(rate)
     }
 
-    /// The watch is what moves the agents ahead of their limit: when it did, the menu bar follows them now instead of
-    /// at the next usage poll, minutes later.
     private func finishAgentsWatch(agents: String?) {
         watchingAgents = false
-        if agents != router?.agentsAccount { Task { await refreshUsage(force: true) } }
+        if router != nil, agents != router?.agentsAccount {
+            router?.agentsAccount = agents
+            Task { await refreshUsage(force: true) }
+        }
         if lastAgentsWatch == nil { watchAgentsIfDue() }
     }
 

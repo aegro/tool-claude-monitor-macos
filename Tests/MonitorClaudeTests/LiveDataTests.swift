@@ -280,9 +280,12 @@ struct LiveDataTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         try Data(#"{"oauthAccount": {"accountUuid": "u1", "organizationUuid": "org-g"}, "chave": "u1:org-g"}"#.utf8)
             .write(to: dir.appendingPathComponent("gabriel.json"))
-        try Data(#"{"oauthAccount": {"accountUuid": "u2"}, "invalidoEm": 1}"#.utf8).write(to: dir.appendingPathComponent("velha.json"))
+        try Data(#"{"oauthAccount": {"accountUuid": "u2"}, "chave": "u2", "invalidoEm": 1}"#.utf8)
+            .write(to: dir.appendingPathComponent("velha.json"))
+        try Data(#"{"oauthAccount": {"accountUuid": "u3"}, "chave": null}"#.utf8).write(to: dir.appendingPathComponent("semchave.json"))
         #expect(AccountRouter.savedLoginKey("gabriel", in: dir) == "u1:org-g")
         #expect(AccountRouter.savedLoginKey("velha", in: dir) == "u2")
+        #expect(AccountRouter.savedLoginKey("semchave", in: dir) == nil)
         #expect(AccountRouter.savedLoginKey("nada", in: dir) == nil)
     }
 }

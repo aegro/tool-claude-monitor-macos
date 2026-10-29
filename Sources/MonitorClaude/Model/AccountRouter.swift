@@ -479,14 +479,13 @@ enum AccountRouter {
         return saved[principal] == nil && accounts.contains(principal) ? principal : nil
     }
 
-    /// Whose login the router saved for `id`, even one it marked as no longer working: it still names the account.
+    /// The `chave` the router saved for `id`, even on a login it marked as no longer working: it still names the account.
     static func savedLoginKey(_ id: String, in dir: URL = savedLoginsDirectory) -> String? {
-        guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(id).json")) else { return nil }
-        if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let key = root["chave"] as? String, !key.isEmpty {
-            return key
-        }
-        return ClaudeConfig.parseActiveAccount(data)?.key
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(id).json")),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let key = root["chave"] as? String, !key.isEmpty
+        else { return nil }
+        return key
     }
 
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {

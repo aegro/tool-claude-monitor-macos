@@ -42,8 +42,7 @@ struct AccountQueue: Equatable {
     var principal: String?
     /// Chosen by hand to take new sessions, above the rule (see `AccountRouter.Config.pinned`).
     var pinned: String?
-    /// The account the agents of `claude agents` run on now (see `AccountRouter.agentsAccount`): the router moves
-    /// them on its own, ahead of new sessions, so the two can differ.
+    /// The account the agents of `claude agents` run on now (see `AccountRouter.agentsAccount`).
     var agents: String?
 
     /// Why an account cannot leave the queue now, or nil when it can: its folder would go to the Trash under
@@ -97,9 +96,7 @@ struct AccountQueue: Equatable {
     }
 
     /// The account the menu bar is about: the one chosen by hand while new sessions still open there, else the one the
-    /// agents run on, where the work is spent. New sessions stay on the preferred account down to its last points
-    /// while the router has already moved the agents away for the pace, and the menu bar showed that account's 97 %
-    /// as if it were still the one in use.
+    /// agents run on.
     func menuBarAccount(now: Date = Date()) -> String? {
         let opens = newSessions(now: now)
         if let pinned, opens == pinned { return pinned }

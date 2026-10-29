@@ -203,36 +203,36 @@ struct QueueAndAccountsTests {
     /// The router moved the agents off the preferred account for the pace while it still had the reserve's 3 points:
     /// new sessions stay there, and the menu bar showed its 97 % with the agents already spending the next account.
     @Test func barraDeMenuSegueOsAgentesQuandoORoteadorOsTiraDaPreferida() {
-        let q = AccountQueue(entries: [entry("gabriel", used: 97), entry("financeiro", used: 93),
-                                       entry("financeiro2", used: 2)],
-                             strategy: .order, enabled: true, reserveBelow: 3, configured: true, agents: "financeiro2")
-        #expect(q.newSessions() == "gabriel")
-        #expect(q.menuBarAccount() == "financeiro2")
+        let q = AccountQueue(entries: [entry("aegro", used: 97), entry("max", used: 93),
+                                       entry("time", used: 2)],
+                             strategy: .order, enabled: true, reserveBelow: 3, configured: true, agents: "time")
+        #expect(q.newSessions() == "aegro")
+        #expect(q.menuBarAccount() == "time")
 
         let together = AccountQueue(entries: q.entries, strategy: .order, enabled: true, reserveBelow: 3,
-                                    configured: true, agents: "gabriel")
-        #expect(together.menuBarAccount() == "gabriel")
+                                    configured: true, agents: "aegro")
+        #expect(together.menuBarAccount() == "aegro")
     }
 
     @Test func barraDeMenuMostraAContaEscolhidaEnquantoAsSessoesAbremNela() {
-        let pinned = AccountQueue(entries: [entry("gabriel", used: 10), entry("financeiro2", used: 2)],
-                                  strategy: .order, enabled: true, configured: true, pinned: "financeiro2", agents: "gabriel")
-        #expect(pinned.menuBarAccount() == "financeiro2")
+        let pinned = AccountQueue(entries: [entry("aegro", used: 10), entry("time", used: 2)],
+                                  strategy: .order, enabled: true, configured: true, pinned: "time", agents: "aegro")
+        #expect(pinned.menuBarAccount() == "time")
 
-        let pinnedOut = AccountQueue(entries: [entry("gabriel", used: 10), entry("financeiro2", used: 100)],
-                                     strategy: .order, enabled: true, configured: true, pinned: "financeiro2",
-                                     agents: "gabriel")
-        #expect(pinnedOut.newSessions() == "gabriel")
-        #expect(pinnedOut.menuBarAccount() == "gabriel")
+        let pinnedOut = AccountQueue(entries: [entry("aegro", used: 10), entry("time", used: 100)],
+                                     strategy: .order, enabled: true, configured: true, pinned: "time",
+                                     agents: "aegro")
+        #expect(pinnedOut.newSessions() == "aegro")
+        #expect(pinnedOut.menuBarAccount() == "aegro")
     }
 
     @Test func semContaDosAgentesNaFilaABarraFicaComAsSessoesNovas() {
-        let unknown = AccountQueue(entries: [entry("gabriel", used: 40), entry("financeiro2", used: 2)],
+        let unknown = AccountQueue(entries: [entry("aegro", used: 40), entry("time", used: 2)],
                                    strategy: .order, enabled: true, configured: true)
-        #expect(unknown.menuBarAccount() == "gabriel")
+        #expect(unknown.menuBarAccount() == "aegro")
         let gone = AccountQueue(entries: unknown.entries, strategy: .order, enabled: true, configured: true,
                                 agents: "sumiu")
-        #expect(gone.menuBarAccount() == "gabriel")
+        #expect(gone.menuBarAccount() == "aegro")
     }
 
     @Test func trocaDesligadaAbreNaPrincipalSemProxima() {

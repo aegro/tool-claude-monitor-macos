@@ -113,9 +113,9 @@ struct FocusAndRefreshTests {
                              configured: true, agents: "financeiro2")
         #expect(q.newSessions() == "financeiro")
         #expect(q.focus() == "financeiro2")
-        #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Os agentes rodam na")
+        #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Agentes e sessões em segundo plano rodam na")
         #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions())
-                == "Sessões novas do terminal abrem na Financeiro, a primeira da fila com folga. Os agentes só trocam de conta quando esta bate o limite.")
+                == "Cada claude novo no terminal abre na Financeiro, a primeira da fila com folga. Os agentes ficam na Financeiro2 até ela chegar no limite e só então trocam.")
     }
 
     @Test func juntosNãoHáSegundaLinha() {
@@ -129,7 +129,7 @@ struct FocusAndRefreshTests {
                              configured: true, pinned: "financeiro", agents: "financeiro2")
         #expect(q.focus() == "financeiro")
         #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Você escolheu: sessões novas abrem na")
-        #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions()) == "Os agentes seguem na Financeiro2.")
+        #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions()) == "Os agentes continuam na Financeiro2 até ela chegar no limite.")
     }
 
     @Test func próximaDosAgentesSóEntreContasComLoginDeAgentes() {

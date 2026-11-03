@@ -162,7 +162,7 @@ struct AccountQueue: Equatable {
     static func focusCaption(queue: AccountQueue, focus: String?) -> String {
         guard queue.configured, !queue.isSingle else { return "As sessões abrem na" }
         if queue.enabled, let pinned = queue.pinned, pinned == focus { return "Você escolheu: sessões novas abrem na" }
-        if let agents = queue.agents, agents == focus { return "Os agentes rodam na" }
+        if let agents = queue.agents, agents == focus { return "Agentes e sessões em segundo plano rodam na" }
         return queue.enabled ? "Sessões novas abrem na" : "As sessões abrem na"
     }
 
@@ -172,10 +172,11 @@ struct AccountQueue: Equatable {
         guard queue.configured, !queue.isSingle else { return nil }
         if let terminal, terminal != focus, let entry = queue.entry(terminal) {
             let rule = queue.strategy == .headroom ? "a de mais folga agora" : "a primeira da fila com folga"
-            return "Sessões novas do terminal abrem na \(entry.label), \(rule). Os agentes só trocam de conta quando esta bate o limite."
+            let stay = focus.flatMap { queue.entry($0) }.map { "Os agentes ficam na \($0.label) até ela chegar no limite e só então trocam." }
+            return (["Cada claude novo no terminal abre na \(entry.label), \(rule)."] + [stay].compactMap { $0 }).joined(separator: " ")
         }
         if let agents = queue.agents, agents != focus, let entry = queue.entry(agents) {
-            return "Os agentes seguem na \(entry.label)."
+            return "Os agentes continuam na \(entry.label) até ela chegar no limite."
         }
         return nil
     }

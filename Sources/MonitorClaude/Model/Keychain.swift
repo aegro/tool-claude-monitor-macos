@@ -13,6 +13,13 @@ enum Keychain {
         var expiresAt: Date?
         var subscriptionType: String?
         var scopes: [String]
+        var rateLimitTier: String?
+
+        /// The plan as Anthropic names it now: Max 20x became Ultra (30-10-2026), and the token still says "max".
+        var plan: String? {
+            if subscriptionType == "max", rateLimitTier?.contains("max_20x") == true { return "ultra" }
+            return subscriptionType
+        }
 
         var isExpired: Bool {
             guard let expiresAt else { return false }
@@ -142,7 +149,8 @@ enum Keychain {
             accessToken: token,
             expiresAt: expires,
             subscriptionType: node["subscriptionType"] as? String,
-            scopes: (node["scopes"] as? [String]) ?? []
+            scopes: (node["scopes"] as? [String]) ?? [],
+            rateLimitTier: node["rateLimitTier"] as? String
         )
     }
 }

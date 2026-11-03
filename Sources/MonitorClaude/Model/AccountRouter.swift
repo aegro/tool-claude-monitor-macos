@@ -956,6 +956,8 @@ struct RouterState: Equatable {
     /// until then.
     var idleLogins: Set<String> = []
     var refreshes: [String: AccountRouter.LoginRefresh] = [:]
+    /// Each account's plan from its own login (`Keychain.Credentials.plan`).
+    var plans: [String: String] = [:]
     /// Accounts whose Keychain read waits for "Ler de novo": macOS asked to let it through and got no, or no answer.
     var keychainRefused: Set<String> = []
 

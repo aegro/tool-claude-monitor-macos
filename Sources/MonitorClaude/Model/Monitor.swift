@@ -499,7 +499,7 @@ final class Monitor: ObservableObject {
                 lastProbe[probeKey] = snap.fetchedAt
                 if let identity {
                     accounts.record(uuid: identity.key, label: identity.label,
-                                    plan: creds.subscriptionType ?? identity.planFallback,
+                                    plan: creds.plan ?? identity.planFallback,
                                     snapshot: snap, at: snap.fetchedAt)
                     read.insert(identity.key)
                 }
@@ -530,6 +530,7 @@ final class Monitor: ObservableObject {
             switches: AccountRouter.switches(limit: 20),
             idleLogins: idle,
             refreshes: AccountRouter.refreshes(),
+            plans: credsById.compactMapValues(\.plan),
             keychainRefused: refused)
     }
 
@@ -639,7 +640,7 @@ final class Monitor: ObservableObject {
 
             if let id = identity {
                 accounts.record(uuid: id.key, label: id.label,
-                                plan: creds.subscriptionType ?? id.planFallback,
+                                plan: creds.plan ?? id.planFallback,
                                 snapshot: snap, at: snap.fetchedAt)
             }
         } catch {
@@ -1024,7 +1025,7 @@ final class Monitor: ObservableObject {
             let snapshot = candidates.max { $0.fetchedAt < $1.fetchedAt }
             return AccountQueue.Entry(
                 id: account.id, label: account.label, monogram: account.monogram, role: account.role,
-                plan: identity.flatMap { accounts.records[$0.key]?.plan ?? $0.planFallback },
+                plan: router.plans[account.id] ?? identity.flatMap { accounts.records[$0.key]?.plan ?? $0.planFallback },
                 email: identity?.email, organization: identity?.organizationDisplay,
                 snapshot: snapshot, hasLogin: router.available.contains(account.id),
                 agentsLogin: account.id == router.config.principal || router.agentsLogins.contains(account.id),

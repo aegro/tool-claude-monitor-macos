@@ -7,6 +7,18 @@ import Testing
 /// "formato inesperado", which is a lie for the first one and sends you looking for a corrupt
 /// file that is not there.
 struct KeychainParseTests {
+    @Test func max20xApareceComoUltra() throws {
+        let ultra = try Keychain.parse(["claudeAiOauth": ["accessToken": "t", "subscriptionType": "max",
+                                                          "rateLimitTier": "default_claude_max_20x"]])
+        #expect(ultra.plan == "ultra")
+        let max5 = try Keychain.parse(["claudeAiOauth": ["accessToken": "t", "subscriptionType": "max",
+                                                         "rateLimitTier": "default_claude_max_5x"]])
+        #expect(max5.plan == "max")
+        let team = try Keychain.parse(["claudeAiOauth": ["accessToken": "t", "subscriptionType": "team",
+                                                         "rateLimitTier": "default_claude_max_5x"]])
+        #expect(team.plan == "team")
+    }
+
     @Test func lêASessãoDaContaAninhadaEmClaudeAiOauth() throws {
         let creds = try Keychain.parse([
             "claudeAiOauth": [
@@ -19,6 +31,7 @@ struct KeychainParseTests {
 
         #expect(creds.accessToken == "sk-ant-oat01-exemplo")
         #expect(creds.subscriptionType == "max")
+        #expect(creds.plan == "max")
         #expect(creds.scopes == ["user:inference", "user:profile"])
         #expect(creds.expiresAt == Date(timeIntervalSince1970: 1_784_918_018.681))
     }

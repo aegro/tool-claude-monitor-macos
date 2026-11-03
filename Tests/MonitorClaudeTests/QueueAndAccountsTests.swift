@@ -207,32 +207,32 @@ struct QueueAndAccountsTests {
                                        entry("time", used: 2)],
                              strategy: .order, enabled: true, reserveBelow: 3, configured: true, agents: "time")
         #expect(q.newSessions() == "aegro")
-        #expect(q.menuBarAccount() == "time")
+        #expect(q.focus() == "time")
 
         let together = AccountQueue(entries: q.entries, strategy: .order, enabled: true, reserveBelow: 3,
                                     configured: true, agents: "aegro")
-        #expect(together.menuBarAccount() == "aegro")
+        #expect(together.focus() == "aegro")
     }
 
     @Test func barraDeMenuMostraAContaEscolhidaEnquantoAsSessoesAbremNela() {
         let pinned = AccountQueue(entries: [entry("aegro", used: 10), entry("time", used: 2)],
                                   strategy: .order, enabled: true, configured: true, pinned: "time", agents: "aegro")
-        #expect(pinned.menuBarAccount() == "time")
+        #expect(pinned.focus() == "time")
 
         let pinnedOut = AccountQueue(entries: [entry("aegro", used: 10), entry("time", used: 100)],
                                      strategy: .order, enabled: true, configured: true, pinned: "time",
                                      agents: "aegro")
         #expect(pinnedOut.newSessions() == "aegro")
-        #expect(pinnedOut.menuBarAccount() == "aegro")
+        #expect(pinnedOut.focus() == "aegro")
     }
 
     @Test func semContaDosAgentesNaFilaABarraFicaComAsSessoesNovas() {
         let unknown = AccountQueue(entries: [entry("aegro", used: 40), entry("time", used: 2)],
                                    strategy: .order, enabled: true, configured: true)
-        #expect(unknown.menuBarAccount() == "aegro")
+        #expect(unknown.focus() == "aegro")
         let gone = AccountQueue(entries: unknown.entries, strategy: .order, enabled: true, configured: true,
                                 agents: "sumiu")
-        #expect(gone.menuBarAccount() == "aegro")
+        #expect(gone.focus() == "aegro")
     }
 
     @Test func trocaDesligadaAbreNaPrincipalSemProxima() {
@@ -361,11 +361,13 @@ struct QueueAndAccountsTests {
         let q = AccountQueue(entries: [entry("aegro", used: 33, live: true), entry("max", used: 0),
                                        entry("compare", .reserve, used: 46)],
                              strategy: .order, enabled: true, configured: true)
-        let safe = AccountQueue.statusLine(queue: q, inUse: "aegro", outlook: .safe(rate: 17, reset: 2 * 3600), now: now)
+        let fiveHour = snapshot(session: 33, weekly: 33).session!
+        let safe = AccountQueue.statusLine(queue: q, inUse: "aegro", outlook: .safe(rate: 17, reset: 2 * 3600, window: fiveHour), now: now)
         #expect(safe.hasPrefix("Dá para ir até o reset das \(Fmt.clock(now.addingTimeInterval(7200)))."))
         #expect(safe.hasSuffix("Se bater o limite, segue na Max."))
         let cap = AccountQueue.statusLine(queue: q, inUse: "aegro",
-                                          outlook: .willHitCap(exhaustIn: 1800, reset: 7200, rate: 45, minutes: 30, aheadOfPace: true),
+                                          outlook: .willHitCap(exhaustIn: 1800, reset: 7200, rate: 45, minutes: 30, aheadOfPace: true,
+                                                               window: fiveHour),
                                           now: now)
         #expect(cap.hasPrefix("No ritmo atual, acaba às \(Fmt.clock(now.addingTimeInterval(1800)))"))
 

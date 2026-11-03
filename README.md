@@ -52,9 +52,9 @@ Na primeira vez, o `codesign` pede a chave privada do certificado de dev (**Semp
 
 ## O que o painel mostra
 
-O ícone na barra de menu traz a porcentagem da janela de 5h. Um ponto laranja aparece quando algo na aba **Acessos** precisa de você, e a sigla de uma conta aparece ao lado quando as sessões novas não estão abrindo na primeira da fila. Clique para abrir o painel, que tem três abas:
+O ícone na barra de menu traz a porcentagem da janela de 5h da conta em que os agentes rodam, ou a da semana quando a conta não tem limite de 5h (conta Ultra verificada); a dica do ícone diz qual das duas é. Um ponto laranja aparece quando algo na aba **Acessos** precisa de você, e a sigla da conta aparece ao lado quando ela não é a primeira da fila. Clique para abrir o painel, que tem três abas:
 
-- **Contas**: em que conta as sessões novas abrem, até quando ela aguenta no ritmo atual e quem assume se o limite bater. Embaixo vem a fila, com as janelas de 5h e da semana de cada conta, o marcador do ritmo que a janela sustenta e quando cada uma renova. Passar do marcador significa gastar adiantado. Arraste uma conta para mudar a ordem; abaixo da linha **Reserva** ficam as que só entram quando as outras acabarem. Clique numa conta (a setinha à direita) para ver o detalhe dos limites e, embaixo dele, **Usar esta agora**: as sessões novas passam a abrir nela, fora da regra da fila, até você clicar em **Voltar à regra** ou ela ficar sem folga (aí a regra decide de novo). No mesmo lugar, **Remover da fila…** tira uma conta (em **Contas e logins…**, é a lixeira de cada conta): a pasta vai para o Lixo e o login fica no Keychain. A conta de `~/.claude` não sai da fila. Números lidos há mais de 15 minutos dizem quando foram lidos.
+- **Contas**: em que conta os agentes rodam, até quando ela aguenta no ritmo atual e quem assume se o limite bater; quando as sessões novas do terminal abrem em outra conta, uma segunda linha diz qual (o `claude agents` não segue a regra do terminal). Embaixo vem a fila, com as janelas de 5h (só nas contas que têm) e da semana de cada conta, o marcador do ritmo que a janela sustenta e quando cada uma renova. Passar do marcador significa gastar adiantado. Arraste uma conta para mudar a ordem; abaixo da linha **Reserva** ficam as que só entram quando as outras acabarem. Clique numa conta (a setinha à direita) para ver o detalhe dos limites e, embaixo dele, **Usar esta agora**: as sessões novas passam a abrir nela, fora da regra da fila, até você clicar em **Voltar à regra** ou ela ficar sem folga (aí a regra decide de novo). No mesmo lugar, **Remover da fila…** tira uma conta (em **Contas e logins…**, é a lixeira de cada conta): a pasta vai para o Lixo e o login fica no Keychain. A conta de `~/.claude` não sai da fila. Números lidos há mais de 15 minutos dizem quando foram lidos.
 - **Sessões**: cada sessão do Claude com a conta em que roda, CPU, memória, tokens (estimativa local) e tudo o que ela abriu, aninhado embaixo dela, inclusive processos reparentados para o launchd que outros monitores mostram soltos. Os Chrome abertos por uma sessão aparecem dentro dela, com o nome do perfil. **Encerrar** derruba um processo, uma subárvore ou a sessão inteira; `⌥` força (SIGKILL).
 - **Acessos**: o que precisa de você para o Claude Code seguir funcionando. Entram o login do terminal, as contas sem login, o login dos agentes, os conectores que pedem login *e* que você usou nos últimos 7 dias, versões novas do Claude Code e do Monitor no Homebrew e, com o painel de prontidão do workspace instalado, gcloud, AWS, GitHub e Docker. Conector que pede login sem ter sido usado fica quieto, num resumo.
 
@@ -109,6 +109,8 @@ Isso é deliberado. A Anthropic rotaciona o refresh token a cada uso, então doi
 
 O app relê o Keychain quando o token está perto de vencer, momento em que o CLI já gravou um novo, e usa o token fresco. Se ele estiver vencido e o `claude` não roda há algumas horas, o painel avisa que a sessão expirou até você rodar o `claude` uma vez.
 
+Conta extra parada é outro caso: veja abaixo como o roteador faz o próprio CLI renová-la.
+
 ### Números ao vivo, sem gastar consulta
 
 O endpoint `/api/oauth/usage` tem limite apertado e responde 429 com facilidade: o Claude Code, o roteador e o Monitor consultam com o mesmo login. Por isso o Monitor usa, primeiro, o que já chegou de graça:
@@ -118,7 +120,7 @@ O endpoint `/api/oauth/usage` tem limite apertado e responde 429 com facilidade:
 - **A leitura do roteador** (`.estado/uso.json`), quando é mais nova que a do Monitor.
 - Depois de um 429, o Monitor espera o `Retry-After` que o servidor mandou (ou um tempo que dobra a cada 429 seguido) e respeita a pausa que o roteador já recebeu, em vez de consultar de novo e esticar a pausa. O rodapé diz até quando. Durante a pausa, números ao vivo mais novos que a última leitura entram mesmo assim, com a idade deles no rodapé.
 
-Conta extra que ficou horas sem sessão fica com o login vencido. Só uma sessão renova o login (o Monitor nunca renova), então os números dela esperam a próxima sessão, e o painel diz isso na linha da conta.
+Conta extra que ficou horas sem sessão fica com o login vencido. O Monitor nunca renova token, mas o roteador, na checagem de cada 30 s, faz o próprio Claude Code renovar: roda `claude -p /usage` (comando local, não gasta modelo) com `CLAUDE_CONFIG_DIR` na pasta da conta, só quando nenhum processo `claude` usa aquela pasta, no máximo uma vez a cada 30 minutos por conta. Assim quem gira o refresh token é sempre o CLI, sem um segundo cliente sobre a mesma família. Com processo vivo na pasta, quem renova é o CLI de lá. O resultado fica em `.estado/renovacoes.json`, e a linha da conta diz o que houve e, se falhou, o que fazer. `claude-accounts refresh [<id>]` faz o mesmo na hora.
 
 ### Quando o login do terminal morre, o app do Claude assume
 

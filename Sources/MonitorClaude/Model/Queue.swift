@@ -23,8 +23,10 @@ struct AccountQueue: Equatable {
         var runsAgents = false
         /// This entry is the account whose numbers the Monitor reads live.
         var isLive = false
-        /// Its token expired for lack of use: the numbers wait for the next session on it.
+        /// Its token expired for lack of use: the numbers wait for the router to renew it (`refresh` says how that went).
         var loginIdle = false
+        /// The router's last renewal of this account's expired login, if any.
+        var refresh: AccountRouter.LoginRefresh?
         /// macOS was asked to let its login be read and refused (or nobody answered): "Ler de novo" asks again.
         var loginRefused = false
 
@@ -95,9 +97,9 @@ struct AccountQueue: Equatable {
         return pick(excluding: [], now: now)
     }
 
-    /// The account the menu bar is about: the one chosen by hand while new sessions still open there, else the one the
-    /// agents run on.
-    func menuBarAccount(now: Date = Date()) -> String? {
+    /// The account the widget is about (menu bar, top of the Contas tab, highlighted row, freshness footer): the one
+    /// chosen by hand while new sessions still open there, else the one the agents run on.
+    func focus(now: Date = Date()) -> String? {
         let opens = newSessions(now: now)
         if let pinned, opens == pinned { return pinned }
         return agents.flatMap { id in entries.contains { $0.id == id } ? id : nil } ?? opens
@@ -151,6 +153,37 @@ struct AccountQueue: Equatable {
 
     // MARK: words
 
+    /// The caption over the account the widget is about.
+    static func focusCaption(queue: AccountQueue, focus: String?) -> String {
+        guard queue.configured, !queue.isSingle else { return "As sessões abrem na" }
+        if queue.enabled, let pinned = queue.pinned, pinned == focus { return "Você escolheu: sessões novas abrem na" }
+        if let agents = queue.agents, agents == focus { return "Os agentes rodam na" }
+        return queue.enabled ? "Sessões novas abrem na" : "As sessões abrem na"
+    }
+
+    /// The other account in use, when there is one: the terminal's new sessions, or the agents while a hand-picked
+    /// account takes the headline. `claude agents` does not follow the terminal's rule, so the two can differ.
+    static func terminalNote(queue: AccountQueue, focus: String?, terminal: String?) -> String? {
+        guard queue.configured, !queue.isSingle else { return nil }
+        if let terminal, terminal != focus, let entry = queue.entry(terminal) {
+            return "Sessões novas do terminal abrem na \(entry.label): os agentes não seguem a regra do terminal."
+        }
+        if let agents = queue.agents, agents != focus, let entry = queue.entry(agents) {
+            return "Os agentes seguem na \(entry.label)."
+        }
+        return nil
+    }
+
+    /// Why an account with an expired login has no fresh numbers, and what to do about it.
+    static func idleReason(_ refresh: AccountRouter.LoginRefresh?, id: String) -> String {
+        switch refresh?.outcome {
+        case nil: return "login vencido, o roteador renova em instantes"
+        case .renewed: return "login renovado, lendo de novo"
+        case .inUse: return "login vencido, renova na próxima resposta da sessão aberta nela"
+        case .failed(let why): return "o login venceu e não renovou (\(why)): rode claude-accounts login \(id)"
+        }
+    }
+
     /// The sentence under the account name: time first (from the live outlook), then who comes next.
     static func statusLine(queue: AccountQueue, inUse: String?, outlook: Monitor.Outlook?, now: Date = Date()) -> String {
         var parts: [String] = []
@@ -159,10 +192,18 @@ struct AccountQueue: Equatable {
                 parts.append("Esgotada até \(Fmt.clock(until)).")
             } else if entry.isLive, let outlook {
                 switch outlook {
-                case .safe(_, let reset):
-                    parts.append("Dá para ir até o reset das \(Fmt.clock(now.addingTimeInterval(reset))).")
-                case .willHitCap(let exhaust, let reset, _, _, _):
-                    parts.append("No ritmo atual, acaba às \(Fmt.clock(now.addingTimeInterval(exhaust))); renova às \(Fmt.clock(now.addingTimeInterval(reset))).")
+                case .safe(_, let reset, let window):
+                    let at = now.addingTimeInterval(reset)
+                    parts.append(window.isSession ? "Dá para ir até o reset das \(Fmt.clock(at))."
+                                                  : "Dá para ir até o reset da semana, \(Fmt.weekday(at, now: now)).")
+                case .willHitCap(let exhaust, let reset, _, _, _, let window):
+                    let ends = now.addingTimeInterval(exhaust), renews = now.addingTimeInterval(reset)
+                    if window.isSession {
+                        parts.append("No ritmo atual, acaba às \(Fmt.clock(ends)); renova às \(Fmt.clock(renews)).")
+                    } else {
+                        let endsText = Calendar.current.isDate(ends, inSameDayAs: now) ? "às \(Fmt.clock(ends))" : Fmt.weekday(ends, now: now)
+                        parts.append("No ritmo atual, a semana acaba \(endsText); renova \(Fmt.weekday(renews, now: now)).")
+                    }
                 case .measuring:
                     parts.append("Medindo o ritmo desta janela.")
                 case .idle:

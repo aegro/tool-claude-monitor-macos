@@ -84,6 +84,7 @@ enum AccountRouter {
     static var switchesURL: URL { home.appendingPathComponent(".estado/trocas.jsonl") }
     static var exhaustedURL: URL { home.appendingPathComponent(".estado/esgotadas.json") }
     static var slotBurnRateURL: URL { home.appendingPathComponent(".estado/ritmo.json") }
+    static var refreshesURL: URL { home.appendingPathComponent(".estado/renovacoes.json") }
     static var defaultConfigDirectory: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude")
     }
@@ -615,6 +616,42 @@ enum AccountRouter {
         return merging(live, into: full)
     }
 
+    /// The router's last renewal of an expired login, per account (`claude-accounts refresh`, also run by `_vigiar`).
+    struct LoginRefresh: Equatable {
+        enum Outcome: Equatable {
+            case renewed
+            /// A `claude` process runs with the account's folder: the CLI there renews it, and a second client is
+            /// never started on the same login.
+            case inUse
+            case failed(String)
+        }
+        var at: Date
+        var outcome: Outcome
+    }
+
+    static func refreshes() -> [String: LoginRefresh] {
+        guard let data = try? Data(contentsOf: refreshesURL) else { return [:] }
+        return parseRefreshes(data)
+    }
+
+    static func parseRefreshes(_ data: Data) -> [String: LoginRefresh] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        var result: [String: LoginRefresh] = [:]
+        for (id, value) in root {
+            guard let entry = value as? [String: Any], let ms = (entry["em"] as? NSNumber)?.doubleValue,
+                  let kind = entry["resultado"] as? String
+            else { continue }
+            let outcome: LoginRefresh.Outcome
+            switch kind {
+            case "renovado": outcome = .renewed
+            case "em-uso": outcome = .inUse
+            default: outcome = .failed((entry["erro"] as? String) ?? kind)
+            }
+            result[id] = LoginRefresh(at: Date(timeIntervalSince1970: ms / 1000), outcome: outcome)
+        }
+        return result
+    }
+
     static func exhausted(now: Date = Date()) -> [String: Date] {
         guard let data = try? Data(contentsOf: exhaustedURL) else { return [:] }
         return parseExhausted(data, now: now)
@@ -807,8 +844,9 @@ enum AccountRouter {
 
     static func slotBurnRate(account: String, snapshot: UsageSnapshot, session: BurnRate?, weekly: BurnRate?,
                              now: Date = Date()) -> SlotBurnRate? {
-        let weeklyBinds = used(snapshot.weekly, now: now) > used(snapshot.session, now: now)
-        guard let window = weeklyBinds ? snapshot.weekly : snapshot.session,
+        let fiveHour = snapshot.fiveHour(now: now)
+        let weeklyBinds = fiveHour == nil || used(snapshot.weekly, now: now) > used(fiveHour, now: now)
+        guard let window = weeklyBinds ? snapshot.weekly : fiveHour,
               let burn = weeklyBinds ? weekly : session,
               burn.percentPerHour.isFinite
         else { return nil }
@@ -913,9 +951,11 @@ struct RouterState: Equatable {
     /// The account the agents of `claude agents` run on now (`AccountRouter.agentsAccount`).
     var agentsAccount: String?
     var switches: [AccountRouter.Switch] = []
-    /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while, and only a
-    /// session renews it (the Monitor never does). Their numbers stay as last read until then.
+    /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while. The Monitor never
+    /// renews a token itself; the router has the official CLI do it (`refreshes`). Their numbers stay as last read
+    /// until then.
     var idleLogins: Set<String> = []
+    var refreshes: [String: AccountRouter.LoginRefresh] = [:]
     /// Accounts whose Keychain read waits for "Ler de novo": macOS asked to let it through and got no, or no answer.
     var keychainRefused: Set<String> = []
 

@@ -273,11 +273,11 @@ struct PanelView: View {
         .padding(.vertical, 8)
     }
 
-    /// When the numbers of the account in use were read, and a quiet retry. Grey while they are recent or the
-    /// server only asked for a pause; red once they are half an hour old.
+    /// When the numbers of the account in use (the agents', `AccountQueue.focus`) were read, and a quiet retry. Grey
+    /// while they are recent or the server only asked for a pause; red once they are half an hour old.
     private var freshness: some View {
         let queue = monitor.accountQueue
-        let seen = queue.entry(queue.newSessions())?.snapshot?.fetchedAt
+        let seen = queue.entry(queue.focus())?.snapshot?.fetchedAt
             ?? queue.entries.compactMap { $0.snapshot?.fetchedAt }.max() ?? monitor.liveSeenAt
         let age = seen.map { Date().timeIntervalSince($0) } ?? 0
         let current = age <= max(300, settings.usageIntervalSeconds * 2.5)

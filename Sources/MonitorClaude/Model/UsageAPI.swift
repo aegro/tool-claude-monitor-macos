@@ -50,6 +50,9 @@ struct LimitWindow: Equatable, Identifiable, Codable {
         return utilization / target
     }
 
+    /// How the panel names the window in a sentence: "5h" or "semana".
+    var shortName: String { isSession ? "5h" : "semana" }
+
     var timeToReset: TimeInterval? { resetsAt.map { max(0, $0.timeIntervalSinceNow) } }
     func hasReset(at now: Date = Date()) -> Bool { resetsAt.map { $0 <= now } ?? false }
     var isCritical: Bool { utilization >= 90 || severity == "critical" }
@@ -92,6 +95,17 @@ struct UsageSnapshot: Equatable, Codable {
     var session: LimitWindow? { windows.first(where: \.isSession) }
     var weekly: LimitWindow? { windows.first { LimitWindow.weeklyAllKeys.contains($0.key) } }
     var scoped: [LimitWindow] { windows.filter { $0.key.hasPrefix("weekly_scoped") } }
+
+    /// The 5h window while this account has one. A verified Ultra account has none (the API sends `five_hour: null`
+    /// and no `session` limit), and a 5h window past its reset is a leftover of an older read, not a limit the
+    /// account still has: an account that lost the 5h limit must not keep showing the last one it had.
+    func fiveHour(now: Date = Date()) -> LimitWindow? {
+        guard let session, !session.hasReset(at: now) else { return nil }
+        return session
+    }
+
+    /// The window the headline number is about: the 5h one while the account has it, else the weekly one.
+    func headline(now: Date = Date()) -> LimitWindow? { fiveHour(now: now) ?? weekly }
 }
 
 /// Decoded by hand, and from an extension so the memberwise initialiser survives: `accounts.json`

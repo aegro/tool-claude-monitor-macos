@@ -17,11 +17,12 @@ struct AccountsPane: View {
 
     var body: some View {
         let queue = monitor.accountQueue
-        let inUse = queue.newSessions()
+        let inUse = queue.focus()
         let next = queue.next(after: inUse)
+        let terminal = queue.newSessions()
 
         VStack(alignment: .leading, spacing: 12) {
-            status(queue: queue, inUse: inUse)
+            status(queue: queue, inUse: inUse, terminal: terminal)
 
             if let error = monitor.actionError {
                 NoteBox(text: error, tone: Ink.alarm, icon: "exclamationmark.triangle")
@@ -33,7 +34,7 @@ struct AccountsPane: View {
 
             if queue.isSingle {
                 if let entry = queue.entries.first {
-                    row(entry, index: 0, inUse: inUse, next: nil, queue: queue)
+                    row(entry, index: 0, inUse: inUse, next: nil, terminal: nil, queue: queue)
                 }
                 // Adding an account rewrites the config: not while it does not read.
                 if monitor.routerConfigProblem == nil { invite }
@@ -45,11 +46,11 @@ struct AccountsPane: View {
                 }
                 VStack(spacing: 3) {
                     ForEach(Array(queue.route.enumerated()), id: \.element.id) { i, entry in
-                        row(entry, index: i, inUse: inUse, next: next, queue: queue)
+                        row(entry, index: i, inUse: inUse, next: next, terminal: terminal, queue: queue)
                     }
                     divider(index: queue.route.count, queue: queue)
                     ForEach(Array(queue.reserve.enumerated()), id: \.element.id) { i, entry in
-                        row(entry, index: queue.route.count + 1 + i, inUse: inUse, next: next, queue: queue)
+                        row(entry, index: queue.route.count + 1 + i, inUse: inUse, next: next, terminal: terminal, queue: queue)
                     }
                 }
                 // A drag dropped outside the list never reaches `performDrop`: the first move of the mouse with the
@@ -67,19 +68,25 @@ struct AccountsPane: View {
     // MARK: status
 
     @ViewBuilder
-    private func status(queue: AccountQueue, inUse: String?) -> some View {
+    private func status(queue: AccountQueue, inUse: String?, terminal: String?) -> some View {
         let entry = queue.entry(inUse)
-        let byHand = queue.enabled && queue.pinned != nil && queue.pinned == inUse
         VStack(alignment: .leading, spacing: 6) {
             StatusBlock(
-                caption: queue.isSingle || !queue.enabled ? "As sessões abrem na" : (byHand ? "Você escolheu: sessões novas abrem na" : "Sessões novas abrem na"),
+                caption: AccountQueue.focusCaption(queue: queue, focus: inUse),
                 headline: entry?.label ?? "nenhuma conta com folga",
                 line: AccountQueue.statusLine(queue: queue, inUse: inUse, outlook: monitor.outlook),
                 tone: entry == nil ? Ink.alarm : .primary)
+            if let note = AccountQueue.terminalNote(queue: queue, focus: inUse, terminal: terminal) {
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal").font(.system(size: 9)).foregroundStyle(.secondary)
+                    Text(note).font(Type.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if queue.enabled, let pinned = queue.pinned {
                 HStack(spacing: 6) {
                     Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Ink.ember)
-                    Text(pinnedNote(queue: queue, pinned: pinned, inUse: inUse))
+                    Text(pinnedNote(queue: queue, pinned: pinned, inUse: terminal))
                         .font(Type.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
@@ -126,8 +133,10 @@ struct AccountsPane: View {
 
     // MARK: rows
 
-    private func row(_ entry: AccountQueue.Entry, index: Int, inUse: String?, next: String?, queue: AccountQueue) -> some View {
+    private func row(_ entry: AccountQueue.Entry, index: Int, inUse: String?, next: String?, terminal: String?,
+                     queue: AccountQueue) -> some View {
         AccountRow(entry: entry, inUse: entry.id == inUse, next: entry.id == next && !queue.isSingle,
+                   terminal: entry.id == terminal && terminal != inUse && !queue.isSingle,
                    draggable: !queue.isSingle, expanded: expanded == entry.id,
                    pinned: queue.enabled && queue.pinned == entry.id,
                    bgAgents: monitor.sessions.contains(where: \.isBackground),
@@ -360,6 +369,8 @@ struct AccountRow: View {
     let entry: AccountQueue.Entry
     let inUse: Bool
     let next: Bool
+    /// New terminal sessions open here while the agents run on another account.
+    let terminal: Bool
     let draggable: Bool
     let expanded: Bool
     let pinned: Bool
@@ -403,7 +414,9 @@ struct AccountRow: View {
                             .accessibilityHidden(true)
                     }
                     HStack(spacing: 14) {
-                        MiniLimit(label: "5h", window: entry.snapshot?.session)
+                        if entry.snapshot == nil || entry.snapshot?.fiveHour() != nil {
+                            MiniLimit(label: "5h", window: entry.snapshot?.fiveHour())
+                        }
                         MiniLimit(label: "Semana", window: entry.snapshot?.weekly)
                     }
                     Text(subline)
@@ -448,8 +461,9 @@ struct AccountRow: View {
         } else if !entry.hasLogin {
             StateChip(text: entry.loginRefused ? "sem acesso" : "sem login", tone: .gone)
         } else if inUse {
-            // Where new sessions open, which is not where every open session runs ("N sessões aqui" says that).
-            StateChip(text: "sessões novas", tone: .inUse)
+            StateChip(text: "em uso", tone: .inUse)
+        } else if terminal {
+            StateChip(text: "terminal", tone: .next)
         } else if next {
             StateChip(text: "próxima", tone: .next)
         }
@@ -464,7 +478,9 @@ struct AccountRow: View {
         var parts = [renewals]
         // Numbers this old say so, and why when the reason is known.
         if let at = entry.snapshot?.fetchedAt, Date().timeIntervalSince(at) > 15 * 60 {
-            parts.append(entry.loginIdle ? "lido \(Fmt.ago(at)), volta na próxima sessão nela" : "lido \(Fmt.ago(at))")
+            parts.append(entry.loginIdle ? "lido \(Fmt.ago(at)), \(AccountQueue.idleReason(entry.refresh, id: entry.id))" : "lido \(Fmt.ago(at))")
+        } else if entry.snapshot == nil, entry.loginIdle {
+            parts.append(AccountQueue.idleReason(entry.refresh, id: entry.id))
         }
         if entry.sessions > 0 { parts.append(entry.sessions == 1 ? "1 sessão aqui" : "\(entry.sessions) sessões aqui") }
         if entry.runsAgents, bgAgents { parts.append("agentes aqui") }
@@ -474,10 +490,10 @@ struct AccountRow: View {
 
     private var renewals: String {
         var parts: [String] = []
-        if let s = entry.snapshot?.session, let at = s.resetsAt, !s.hasReset() {
-            parts.append("5h renova \(Fmt.clock(at))")
-        } else {
-            parts.append("5h livre")
+        if let s = entry.snapshot?.fiveHour() {
+            parts.append(s.resetsAt.map { "5h renova \(Fmt.clock($0))" } ?? "5h livre")
+        } else if entry.snapshot != nil {
+            parts.append("sem limite de 5h")
         }
         if let w = entry.snapshot?.weekly, let at = w.resetsAt, !w.hasReset() {
             parts.append("semana renova \(Fmt.weekday(at))")
@@ -495,14 +511,15 @@ struct AccountDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if entry.isLive, let usage = monitor.usage {
-                if let session = usage.session {
-                    LimitGauge(window: session, burn: monitor.sessionBurn)
-                    if monitor.blockTrail.count >= 2, let start = session.startsAt, let end = session.resetsAt {
+                let headline = usage.headline()
+                if let headline {
+                    LimitGauge(window: headline, burn: monitor.burn(of: headline))
+                    if monitor.blockTrail.count >= 2, let start = headline.startsAt, let end = headline.resetsAt {
                         Trail(points: monitor.blockTrail, span: start...end)
-                            .accessibilityLabel("Evolução da janela de 5h")
+                            .accessibilityLabel(headline.isSession ? "Evolução da janela de 5h" : "Evolução da semana")
                     }
                 }
-                ForEach(usage.windows.filter { !$0.isSession }) { LimitGauge(window: $0, dense: true) }
+                ForEach(usage.windows.filter { !$0.isSession && $0.key != headline?.key }) { LimitGauge(window: $0, dense: true) }
                 if usage.extraUsageEnabled, let extra = usage.extraUsageUtilization {
                     HStack {
                         Text("Crédito extra").font(Type.caption).foregroundStyle(.secondary)
@@ -513,7 +530,7 @@ struct AccountDetail: View {
                 Text(monitor.liveIsCurrent ? "Lido agora, com o login do terminal." : "Última leitura \(Fmt.ago(monitor.liveSeenAt ?? usage.fetchedAt)).")
                     .font(Type.mini).foregroundStyle(.tertiary)
             } else if let snap = entry.snapshot {
-                if let session = snap.session { StaleLimitRow(window: session, seenAt: snap.fetchedAt) }
+                if let session = snap.fiveHour() { StaleLimitRow(window: session, seenAt: snap.fetchedAt) }
                 ForEach(snap.windows.filter { !$0.isSession }) { StaleLimitRow(window: $0, seenAt: snap.fetchedAt) }
             } else {
                 Text("Sem leitura desta conta ainda. Ela aparece aqui quando o Monitor conseguir ler o login dela.")

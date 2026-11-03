@@ -61,7 +61,9 @@ struct Avatar: View {
 
     var body: some View {
         Text(monogram)
-            .font(.system(size: size * 0.4, weight: .bold))
+            .font(.system(size: size * (monogram.count > 2 ? 0.34 : 0.4), weight: .bold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             .foregroundStyle(active ? Ink.ember : Color.secondary)
             .frame(width: size, height: size)
             .background(active ? Ink.ember.opacity(0.18) : Ink.track, in: RoundedRectangle(cornerRadius: size * 0.3))

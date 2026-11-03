@@ -168,7 +168,7 @@ struct AccountSettingsRow: View {
                         .frame(width: 44)
                         .onSubmit(save)
                         .disabled(!queue.configured)
-                        .help("Duas letras para a barra de menu")
+                        .help("Até três caracteres para a barra de menu")
                 }
                 Text([entry.email, entry.organization, entry.plan?.capitalized].compactMap { $0 }.joined(separator: " · "))
                     .font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)

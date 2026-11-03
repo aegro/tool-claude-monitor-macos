@@ -177,7 +177,7 @@ enum AccountRouter {
                 directory: custom ?? (usesDefault ? defaultDirectory : home.appendingPathComponent(id)),
                 usesDefaultDirectory: usesDefault,
                 role: role,
-                monogram: given.isEmpty ? monogram(for: label) : String(given.prefix(2)).uppercased())
+                monogram: given.isEmpty ? monogram(for: label) : String(given.prefix(3)).uppercased())
         }
 
         let pending = entries.keys.sorted().filter { id in
@@ -244,7 +244,7 @@ enum AccountRouter {
 
     static func renameAccount(_ id: String, name: String, monogram: String, at url: URL = configURL) throws {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sigla = String(monogram.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2)).uppercased()
+        let sigla = String(monogram.trimmingCharacters(in: .whitespacesAndNewlines).prefix(3)).uppercased()
         try updateConfig(at: url) { root in
             var contas = root["contas"] as? [String: Any] ?? [:]
             var entry = contas[id] as? [String: Any] ?? [:]
@@ -260,8 +260,15 @@ enum AccountRouter {
     }
 
     /// Two letters for the menu bar and the avatar: the initials of a name with two words or more, the first two
-    /// letters otherwise, and the part in parentheses when there is one ("Thomas (Max)" is "MA").
+    /// letters otherwise, and the part in parentheses when there is one ("Thomas (Max)" is "MA"). A number glued to the
+    /// end of the name stays, so numbered twins differ ("squad.financeiro2" is "SF2").
     static func monogram(for label: String) -> String {
+        let digits = String(label.reversed().prefix { $0.isNumber }.reversed())
+        let stem = label.dropLast(digits.count)
+        if !digits.isEmpty, let glued = stem.last, glued.isLetter {
+            let letters = monogram(for: String(stem))
+            return String(((digits.count > 1 ? String(letters.prefix(1)) : letters) + digits).prefix(3))
+        }
         var base = label
         if let open = label.lastIndex(of: "("), let close = label.lastIndex(of: ")"), open < close {
             let inner = label[label.index(after: open)..<close].trimmingCharacters(in: .whitespaces)

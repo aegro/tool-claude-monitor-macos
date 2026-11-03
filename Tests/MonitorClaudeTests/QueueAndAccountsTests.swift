@@ -29,6 +29,12 @@ struct QueueAndAccountsTests {
         #expect(AccountRouter.monogram(for: "Ação Única") == "AU")
         #expect(AccountRouter.monogram(for: "") == "?")
         #expect(AccountRouter.monogram(for: "Conta (Time de Dados)") == "TD")
+        #expect(AccountRouter.monogram(for: "squad.financeiro2") == "SF2")
+        #expect(AccountRouter.monogram(for: "squad.financeiro") == "SF")
+        #expect(AccountRouter.monogram(for: "pessoal3") == "PE3")
+        #expect(AccountRouter.monogram(for: "squad.financeiro12") == "S12")
+        #expect(AccountRouter.monogram(for: "Conta 2") == "C2")
+        #expect(AccountRouter.monogram(for: "2024") == "20")
     }
 
     @Test func slugSemAcentoUnicoEComTamanhoLimitado() {
@@ -103,10 +109,10 @@ struct QueueAndAccountsTests {
 
     @Test func renomearGuardaNomeESiglaEApagaASiglaVazia() throws {
         let url = try tempConfig(#"{ "contas": { "max": { "nome": "max", "dir": "~/x" } } }"#)
-        try AccountRouter.renameAccount("max", name: "  Thomas (Max) ", monogram: "mxz", at: url)
+        try AccountRouter.renameAccount("max", name: "  Thomas (Max) ", monogram: "mx2z", at: url)
         var entry = try #require((try read(url)["contas"] as? [String: Any])?["max"] as? [String: Any])
         #expect(entry["nome"] as? String == "Thomas (Max)")
-        #expect(entry["sigla"] as? String == "MX")
+        #expect(entry["sigla"] as? String == "MX2")
         #expect(entry["dir"] as? String == "~/x")
         try AccountRouter.renameAccount("max", name: "", monogram: " ", at: url)
         entry = try #require((try read(url)["contas"] as? [String: Any])?["max"] as? [String: Any])

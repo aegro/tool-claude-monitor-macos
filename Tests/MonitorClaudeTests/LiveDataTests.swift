@@ -257,4 +257,35 @@ struct LiveDataTests {
         #expect(AccountRouter.savedLogin("velha", in: dir) == nil)
         #expect(AccountRouter.savedLogin("nada", in: dir) == nil)
     }
+
+    /// Like the router's `contaNoSlot`: the login in `~/.claude.json` names the account by the login saved for it, then
+    /// by its own folder, and with neither the principal stands only while the router never saved a login for it.
+    @Test func contaDosAgentesVemDoLoginNoSlotComoNoRoteador() throws {
+        let ids = ["aegro", "max", "time"]
+        let saved = ["aegro": "u1:org-a", "time": "u3:org-t"]
+        let folders = ["max": "u2:org-m", "time": "u3:org-t"]
+        func agents(_ declared: String?, saved: [String: String] = saved) -> String? {
+            AccountRouter.resolveAgentsAccount(declared: declared, accounts: ids, saved: saved, folders: folders,
+                                               principal: "aegro")
+        }
+        #expect(agents("u3:org-t") == "time")
+        #expect(agents("u1:org-a") == "aegro")
+        #expect(agents("u2:org-m") == "max")
+        #expect(agents("u9:org-x") == nil)
+        #expect(agents(nil) == nil)
+        #expect(agents("u9:org-x", saved: ["time": "u3:org-t"]) == "aegro")
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("monitor-agentes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(#"{"oauthAccount": {"accountUuid": "u1", "organizationUuid": "org-a"}, "chave": "u1:org-a"}"#.utf8)
+            .write(to: dir.appendingPathComponent("aegro.json"))
+        try Data(#"{"oauthAccount": {"accountUuid": "u2"}, "chave": "u2", "invalidoEm": 1}"#.utf8)
+            .write(to: dir.appendingPathComponent("velha.json"))
+        try Data(#"{"oauthAccount": {"accountUuid": "u3"}, "chave": null}"#.utf8).write(to: dir.appendingPathComponent("semchave.json"))
+        #expect(AccountRouter.savedLoginKey("aegro", in: dir) == "u1:org-a")
+        #expect(AccountRouter.savedLoginKey("velha", in: dir) == "u2")
+        #expect(AccountRouter.savedLoginKey("semchave", in: dir) == nil)
+        #expect(AccountRouter.savedLoginKey("nada", in: dir) == nil)
+    }
 }

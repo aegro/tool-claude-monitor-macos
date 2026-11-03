@@ -53,11 +53,11 @@ enum DesktopUsage {
         var snap = UsageSnapshot()
         snap.source = .desktopApp
         snap.fetchedAt = last.at
-        snap.windows = [
-            LimitWindow(
+        if let fiveHour = last.fiveHour {
+            snap.windows.append(LimitWindow(
                 key: "session",
                 title: "Sessão · 5h",
-                utilization: last.fiveHour,
+                utilization: fiveHour,
                 resetsAt: session?.at,
                 // The app records no severity. "normal" is not a claim: `isCritical` still fires
                 // off the percentage alone, which is the only input we honestly have.
@@ -65,18 +65,18 @@ enum DesktopUsage {
                 isSession: true,
                 isActive: true,
                 resetIsExact: session?.exact ?? true
-            ),
-            LimitWindow(
-                key: "weekly_all",
-                title: "Semana",
-                utilization: last.weekly,
-                resetsAt: weekly?.at,
-                severity: "normal",
-                isSession: false,
-                isActive: true,
-                resetIsExact: weekly?.exact ?? true
-            ),
-        ]
+            ))
+        }
+        snap.windows.append(LimitWindow(
+            key: "weekly_all",
+            title: "Semana",
+            utilization: last.weekly,
+            resetsAt: weekly?.at,
+            severity: "normal",
+            isSession: false,
+            isActive: true,
+            resetIsExact: weekly?.exact ?? true
+        ))
         return snap
     }
 
@@ -132,9 +132,9 @@ enum DesktopUsage {
     private static func lastTransition(in series: [DesktopSample],
                                        _ match: (Double, Double) -> Bool) -> Int? {
         guard series.count >= 2 else { return nil }
-        for i in stride(from: series.count - 1, through: 1, by: -1)
-        where match(series[i].fiveHour, series[i - 1].fiveHour) {
-            return i
+        for i in stride(from: series.count - 1, through: 1, by: -1) {
+            guard let current = series[i].fiveHour, let previous = series[i - 1].fiveHour else { continue }
+            if match(current, previous) { return i }
         }
         return nil
     }

@@ -5,7 +5,8 @@ import Foundation
 /// usable substitute for our own polling when the terminal token is gone.
 struct DesktopSample: Equatable {
     var at: Date
-    var fiveHour: Double
+    /// nil on an account without a 5h limit (a verified Ultra account).
+    var fiveHour: Double?
     var weekly: Double
 }
 
@@ -16,7 +17,7 @@ struct DesktopOrgUsage: Equatable, Identifiable {
     var organizationUuid: String
     var label: String
     var plan: String?
-    var fiveHour: Double
+    var fiveHour: Double?
     var weekly: Double
     var seenAt: Date
 
@@ -73,14 +74,16 @@ enum ClaudeDesktop {
             guard let org = s["org"] as? String, !org.isEmpty,
                   let millis = numeric(s["t"]), plausibleEpochMillis(millis),
                   let u = s["u"] as? [String: Any],
-                  let fh = numeric(u["fh"]), let sd = numeric(u["sd"]),
+                  let sd = numeric(u["sd"]),
                   // Skipped, not clamped. `UsageAPI.clamp` maps a nonsense percentage to 0, which
                   // is fine for a single displayed reading but poisonous in a series: a fabricated
                   // zero reads to the reset derivation as a window turning over, and it will date
                   // a reset off a boundary that never happened. Known live source of nonsense —
                   // the endpoint leaks an epoch timestamp into the field (claude-code#52326).
-                  inRange(fh), inRange(sd)
+                  inRange(sd)
             else { continue }
+            let fh = numeric(u["fh"])
+            if let fh, !inRange(fh) { continue }
 
             byOrg[org, default: []].append(DesktopSample(
                 at: Date(timeIntervalSince1970: millis / 1000),
@@ -93,7 +96,7 @@ enum ClaudeDesktop {
         // becomes "the current reading" for that organization.
         for org in byOrg.keys {
             byOrg[org]?.sort {
-                ($0.at, $0.fiveHour, $0.weekly) < ($1.at, $1.fiveHour, $1.weekly)
+                ($0.at, $0.fiveHour ?? -1, $0.weekly) < ($1.at, $1.fiveHour ?? -1, $1.weekly)
             }
         }
         return byOrg

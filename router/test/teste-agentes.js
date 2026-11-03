@@ -476,6 +476,17 @@ const testes = {
     assert.strictEqual(agentes.ritmoDaConta(leituras, sondaCom(0, 90, 82), agora), 2);
     assert.strictEqual(agentes.ritmoDaConta(leituras, { ok: false }, agora), null);
   },
+  contaSemJanelaDe5hMedeORitmoPelaSemana() {
+    const semCinco = { ok: true, verificadoEm: agora, uso: { cinco: null, sete: { usado: 0, renovaEm }, janelas: [] } };
+    assert.strictEqual(agentes.janelaQueLimita(semCinco.uso, agora), 'sete');
+    const leituras = [
+      { em: agora - 4 * 60000, cinco: null, sete: { usado: 10, renovaEm } },
+      { em: agora, cinco: null, sete: { usado: 12, renovaEm } },
+    ];
+    const comUso = { ...semCinco, uso: { ...semCinco.uso, sete: { usado: 12, renovaEm } } };
+    assert.strictEqual(agentes.ritmoDaConta(leituras, comUso, agora), 0.5);
+    assert.strictEqual(contas.folgaDe(comUso, agora), 88);
+  },
   ritmoLentoEm4NaoTroca() {
     const cfg = configurar();
     assert.strictEqual(cfg.limites.horizonteMinutos, 2);

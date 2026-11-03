@@ -5,6 +5,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const contas = require('./contas');
 const agentes = require('./agentes');
+const renovar = require('./renovar');
 
 const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
 
@@ -23,6 +24,7 @@ const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
   release <id>                 clear the exhausted mark
   env <id>                     CLAUDE_CONFIG_DIR export for the shell
   run <id> [args...]           open claude directly on that account
+  refresh [<id>]               renew an expired login through the CLI, when no claude process uses its folder
 `;
 
 const SINONIMOS = {
@@ -76,6 +78,7 @@ async function status() {
     const janelas = c.sonda.uso ? c.sonda.uso.janelas : [];
     const janela = (chave) => janelas.find((j) => j.chave === chave);
     const fmt = (j) => (j ? `${Math.round(j.usado)}% (${horaCurta(j.renovaEm)})` : '–');
+    const fmtCinco = (j) => (j || !c.sonda.uso ? fmt(j) : 'none');
     const outras = janelas
       .filter((j) => !['session', 'weekly_all'].includes(j.chave))
       .map((j) => `${j.rotulo.replace('Weekly ', '')} ${Math.round(j.usado)}%`);
@@ -89,7 +92,7 @@ async function status() {
       contas.rotuloDoLogin(c.id, contas.identidade(c.id).email, c.sonda),
       PAPEIS[c.papel] || c.papel,
       c.folga == null ? '–' : `${c.folga}%`,
-      fmt(janela('session')),
+      fmtCinco(janela('session')),
       fmt(janela('weekly_all')),
       outras.join(', ') || '–',
       situacao.join('; ') || 'ok',
@@ -279,9 +282,29 @@ async function main() {
         await statusDosAgentes();
       }
       break;
-    case '_vigiar':
-      console.log(JSON.stringify(await agentes.vigiar()));
+    case '_vigiar': {
+      const vigia = await agentes.vigiar();
+      const renovacao = await renovar.renovarParadas().catch((e) => ({ acao: 'erro', erro: e.message }));
+      console.log(JSON.stringify({ ...vigia, renovacao }));
       break;
+    }
+    case 'refresh': {
+      const ids = args[0] ? [exigirConta(args[0])] : null;
+      const r = await renovar.renovarParadas({ ids, forcar: true });
+      if (r.acao === 'ocupado') {
+        console.log('another refresh is running, try again');
+        process.exitCode = 1;
+        break;
+      }
+      const feitas = Object.entries(r.contas);
+      if (!feitas.length) console.log(ids ? `${ids[0]}: login is not expired, nothing to renew` : 'no expired login outside ~/.claude');
+      for (const [id, f] of feitas) {
+        if (f.resultado === 'renovado') console.log(`${id}: renewed until ${horaCurta(f.ate)}`);
+        else if (f.resultado === 'em-uso') console.log(`${id}: ${f.processos} claude process(es) use its folder; the CLI there renews it`);
+        else console.log(`${id}: not renewed (${f.erro}); run claude-accounts login ${id}`);
+      }
+      break;
+    }
     case 'sync': {
       const cfg = contas.carregarConfig();
       for (const id of Object.keys(cfg.contas)) {

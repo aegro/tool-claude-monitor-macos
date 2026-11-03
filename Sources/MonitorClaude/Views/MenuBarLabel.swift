@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// The menu bar is not a dashboard, it is an ambient alarm. It shows the one number with
-/// consequences (how much of the 5h window is gone) inside a ring filled to it, coloured when the
+/// consequences (how much of the 5h window is gone, or of the week on an account without one) inside a ring filled to it, coloured when the
 /// pace or the limit asks for attention, and a dot for what is worth a look in the panel. Everything
 /// else waits for a click.
 ///
@@ -28,14 +28,14 @@ struct MenuBarLabel: View {
     /// Alarm only from what describes the number shown: its own window, and the pace forecast only when that
     /// forecast is about this account (the live one).
     private func alarmed(_ reading: Monitor.MenuBarReading) -> Bool? {
-        guard let session = reading.window, reading.current else { return nil }
-        if session.isCritical { return true }
-        if reading.isLive, case .willHitCap(_, _, _, _, true) = monitor.outlook { return true }
+        guard let window = reading.window, reading.current else { return nil }
+        if window.isCritical { return true }
+        if reading.isLive, case .willHitCap(_, _, _, _, true, _) = monitor.outlook { return true }
         return false
     }
 
     var body: some View {
-        let reading = monitor.menuBarSession
+        let reading = monitor.menuBarReading
         let current = reading.current
         let window = showLimit ? reading.window : nil
         let hot = !showCPU && monitor.system.cpuPercent > 60
@@ -48,7 +48,8 @@ struct MenuBarLabel: View {
             },
             gauge: showLimit && window == nil,
             number: window.map { "\(Int($0.utilization.rounded()))" },
-            // Off the head of the queue, the menu bar says which account new sessions open on.
+            numberWindow: window?.shortName,
+            // Off the head of the queue, the menu bar says which account the number is about.
             monogram: showLimit ? monitor.menuBarMonogram : nil,
             cpu: showCPU ? "\(Int(monitor.system.cpuPercent.rounded()))%" : nil,
             tint: Self.tint(alarmed(reading), window: window),
@@ -74,9 +75,11 @@ struct MenuBarLabel: View {
     private func helpText(_ reading: Monitor.MenuBarReading, window: LimitWindow?, hot: Bool, attention: Bool) -> String {
         var lines: [String] = []
         if let window {
-            var line = "\(Int(window.utilization.rounded())) % da janela de 5h"
+            var line = window.isSession ? "\(Int(window.utilization.rounded())) % da janela de 5h"
+                                        : "\(Int(window.utilization.rounded())) % da semana (esta conta não tem limite de 5h)"
             if let reset = window.resetsAt, !window.hasReset() {
-                line += ", renova às \(window.resetIsExact ? "" : "≈ ")\(Fmt.clock(reset))"
+                let at = window.isSession ? Fmt.clock(reset) : Fmt.weekday(reset)
+                line += ", renova \(window.isSession ? "às " : "")\(window.resetIsExact ? "" : "≈ ")\(at)"
             }
             lines.append(line)
             if !reading.current { lines.append(staleHelp(reading)) }
@@ -111,8 +114,10 @@ enum MenuBarArt {
     struct Content: Equatable {
         var ring: Ring?
         var gauge = false
-        /// The share of the 5h window, drawn inside the ring.
+        /// The share of the headline window, drawn inside the ring.
         var number: String?
+        /// Which window the number is about ("5h" or "semana"), for VoiceOver.
+        var numberWindow: String?
         var monogram: String?
         var cpu: String?
         var tint: NSColor?
@@ -123,7 +128,7 @@ enum MenuBarArt {
         var dotMeaning: String?
 
         var spoken: String {
-            [number.map { "limite de 5h em \($0) por cento" }, monogram.map { "conta \($0)" },
+            [number.map { "limite \(numberWindow == "semana" ? "da semana" : "de 5h") em \($0) por cento" }, monogram.map { "conta \($0)" },
              cpu.map { "CPU \($0)" }, dotMeaning].compactMap { $0 }.joined(separator: ", ")
         }
     }
@@ -216,7 +221,7 @@ enum MenuBarArt {
         }
     }
 
-    /// The share of the 5h window as a number inside a ring filled to it: the ring reads as the gauge of the number
+    /// The share of the headline window as a number inside a ring filled to it: the ring reads as the gauge of the number
     /// it holds, which the ring alone, beside a separate percentage, did not. The pace shows as the colour (ember),
     /// so there is no tick to compete with the digits.
     private static func drawRing(_ ring: Ring, number: String?, at x: CGFloat, ink: NSColor, alpha: CGFloat) {

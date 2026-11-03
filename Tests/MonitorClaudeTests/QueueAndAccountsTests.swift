@@ -29,6 +29,12 @@ struct QueueAndAccountsTests {
         #expect(AccountRouter.monogram(for: "Ação Única") == "AU")
         #expect(AccountRouter.monogram(for: "") == "?")
         #expect(AccountRouter.monogram(for: "Conta (Time de Dados)") == "TD")
+        #expect(AccountRouter.monogram(for: "squad.financeiro2") == "SF2")
+        #expect(AccountRouter.monogram(for: "squad.financeiro") == "SF")
+        #expect(AccountRouter.monogram(for: "pessoal3") == "PE3")
+        #expect(AccountRouter.monogram(for: "squad.financeiro12") == "S12")
+        #expect(AccountRouter.monogram(for: "Conta 2") == "C2")
+        #expect(AccountRouter.monogram(for: "2024") == "20")
     }
 
     @Test func slugSemAcentoUnicoEComTamanhoLimitado() {
@@ -103,10 +109,10 @@ struct QueueAndAccountsTests {
 
     @Test func renomearGuardaNomeESiglaEApagaASiglaVazia() throws {
         let url = try tempConfig(#"{ "contas": { "max": { "nome": "max", "dir": "~/x" } } }"#)
-        try AccountRouter.renameAccount("max", name: "  Thomas (Max) ", monogram: "mxz", at: url)
+        try AccountRouter.renameAccount("max", name: "  Thomas (Max) ", monogram: "mx2z", at: url)
         var entry = try #require((try read(url)["contas"] as? [String: Any])?["max"] as? [String: Any])
         #expect(entry["nome"] as? String == "Thomas (Max)")
-        #expect(entry["sigla"] as? String == "MX")
+        #expect(entry["sigla"] as? String == "MX2")
         #expect(entry["dir"] as? String == "~/x")
         try AccountRouter.renameAccount("max", name: "", monogram: " ", at: url)
         entry = try #require((try read(url)["contas"] as? [String: Any])?["max"] as? [String: Any])
@@ -198,6 +204,41 @@ struct QueueAndAccountsTests {
                              strategy: .order, enabled: true, configured: true)
         #expect(q.newSessions() == "compare")
         #expect(q.next(after: "compare") == nil)
+    }
+
+    /// The router moved the agents off the preferred account for the pace while it still had the reserve's 3 points:
+    /// new sessions stay there, and the menu bar showed its 97 % with the agents already spending the next account.
+    @Test func barraDeMenuSegueOsAgentesQuandoORoteadorOsTiraDaPreferida() {
+        let q = AccountQueue(entries: [entry("aegro", used: 97), entry("max", used: 93),
+                                       entry("time", used: 2)],
+                             strategy: .order, enabled: true, reserveBelow: 3, configured: true, agents: "time")
+        #expect(q.newSessions() == "aegro")
+        #expect(q.focus() == "time")
+
+        let together = AccountQueue(entries: q.entries, strategy: .order, enabled: true, reserveBelow: 3,
+                                    configured: true, agents: "aegro")
+        #expect(together.focus() == "aegro")
+    }
+
+    @Test func barraDeMenuMostraAContaEscolhidaEnquantoAsSessoesAbremNela() {
+        let pinned = AccountQueue(entries: [entry("aegro", used: 10), entry("time", used: 2)],
+                                  strategy: .order, enabled: true, configured: true, pinned: "time", agents: "aegro")
+        #expect(pinned.focus() == "time")
+
+        let pinnedOut = AccountQueue(entries: [entry("aegro", used: 10), entry("time", used: 100)],
+                                     strategy: .order, enabled: true, configured: true, pinned: "time",
+                                     agents: "aegro")
+        #expect(pinnedOut.newSessions() == "aegro")
+        #expect(pinnedOut.focus() == "aegro")
+    }
+
+    @Test func semContaDosAgentesNaFilaABarraFicaComAsSessoesNovas() {
+        let unknown = AccountQueue(entries: [entry("aegro", used: 40), entry("time", used: 2)],
+                                   strategy: .order, enabled: true, configured: true)
+        #expect(unknown.focus() == "aegro")
+        let gone = AccountQueue(entries: unknown.entries, strategy: .order, enabled: true, configured: true,
+                                agents: "sumiu")
+        #expect(gone.focus() == "aegro")
     }
 
     @Test func trocaDesligadaAbreNaPrincipalSemProxima() {
@@ -326,11 +367,13 @@ struct QueueAndAccountsTests {
         let q = AccountQueue(entries: [entry("aegro", used: 33, live: true), entry("max", used: 0),
                                        entry("compare", .reserve, used: 46)],
                              strategy: .order, enabled: true, configured: true)
-        let safe = AccountQueue.statusLine(queue: q, inUse: "aegro", outlook: .safe(rate: 17, reset: 2 * 3600), now: now)
+        let fiveHour = snapshot(session: 33, weekly: 33).session!
+        let safe = AccountQueue.statusLine(queue: q, inUse: "aegro", outlook: .safe(rate: 17, reset: 2 * 3600, window: fiveHour), now: now)
         #expect(safe.hasPrefix("Dá para ir até o reset das \(Fmt.clock(now.addingTimeInterval(7200)))."))
         #expect(safe.hasSuffix("Se bater o limite, segue na Max."))
         let cap = AccountQueue.statusLine(queue: q, inUse: "aegro",
-                                          outlook: .willHitCap(exhaustIn: 1800, reset: 7200, rate: 45, minutes: 30, aheadOfPace: true),
+                                          outlook: .willHitCap(exhaustIn: 1800, reset: 7200, rate: 45, minutes: 30, aheadOfPace: true,
+                                                               window: fiveHour),
                                           now: now)
         #expect(cap.hasPrefix("No ritmo atual, acaba às \(Fmt.clock(now.addingTimeInterval(1800)))"))
 

@@ -96,6 +96,10 @@ final class Monitor: ObservableObject {
     private var lastUsageFetch: Date?
     private var lastAgentsWatch: Date?
     private var watchingAgents = false
+    /// The newest login renewal by the router already followed by a read.
+    private var lastRenewalSeen: Date?
+    /// A forced refresh asked for while another ran: it runs as soon as that one ends, so its reason is not lost.
+    private var refreshQueued = false
     private var lastLedgerScan: Date?
     private var sampling = false
     private var cachedCreds: Keychain.Credentials?
@@ -292,7 +296,8 @@ final class Monitor: ObservableObject {
     }
 
     private func watchAgentsIfDue() {
-        guard !Self.readOnly, router?.config.enabled == true, !watchingAgents,
+        // Also with switching off: the router's check then only renews idle logins.
+        guard !Self.readOnly, router?.config.hasExtraAccounts == true, !watchingAgents,
               lastAgentsWatch.map({ Date().timeIntervalSince($0) >= 30 }) ?? true
         else { return }
         lastAgentsWatch = Date()
@@ -301,7 +306,9 @@ final class Monitor: ObservableObject {
         // On a GCD thread, not the cooperative pool: the router's check can take a while.
         DispatchQueue.global(qos: .utility).async { [weak self] in
             AccountRouter.watchAgents()
-            Task { @MainActor in self?.finishAgentsWatch() }
+            let agents = AccountRouter.loadConfig().flatMap { AccountRouter.agentsAccount(config: $0) }
+            let refreshes = AccountRouter.refreshes()
+            Task { @MainActor in self?.finishAgentsWatch(agents: agents, refreshes: refreshes) }
         }
     }
 
@@ -320,8 +327,13 @@ final class Monitor: ObservableObject {
         try? AccountRouter.publish(rate)
     }
 
-    private func finishAgentsWatch() {
+    private func finishAgentsWatch(agents: String?, refreshes: [String: AccountRouter.LoginRefresh]) {
         watchingAgents = false
+        let renewed = refreshes.values.contains { $0.outcome == .renewed && $0.at > (lastRenewalSeen ?? .distantPast) }
+        if renewed { lastRenewalSeen = refreshes.values.filter { $0.outcome == .renewed }.map(\.at).max() }
+        let switched = router != nil && agents != router?.agentsAccount
+        if switched { router?.agentsAccount = agents }
+        if switched || renewed { Task { await refreshUsage(force: true) } }
         if lastAgentsWatch == nil { watchAgentsIfDue() }
     }
 
@@ -357,9 +369,18 @@ final class Monitor: ObservableObject {
 
     func refreshUsage(force: Bool) async {
         if !force, let last = lastUsageFetch, Date().timeIntervalSince(last) < 30 { return }
-        guard !loadingUsage else { return }
+        guard !loadingUsage else {
+            if force { refreshQueued = true }
+            return
+        }
         loadingUsage = true
-        defer { loadingUsage = false }
+        defer {
+            loadingUsage = false
+            if refreshQueued {
+                refreshQueued = false
+                Task { await refreshUsage(force: true) }
+            }
+        }
         lastUsageFetch = Date()
 
         // Read the active identity first: if Claude Code switched accounts since our last poll
@@ -478,7 +499,7 @@ final class Monitor: ObservableObject {
                 lastProbe[probeKey] = snap.fetchedAt
                 if let identity {
                     accounts.record(uuid: identity.key, label: identity.label,
-                                    plan: creds.subscriptionType ?? identity.planFallback,
+                                    plan: creds.plan ?? identity.planFallback,
                                     snapshot: snap, at: snap.fetchedAt)
                     read.insert(identity.key)
                 }
@@ -505,8 +526,11 @@ final class Monitor: ObservableObject {
             available: available,
             exhausted: exhausted,
             agentsLogins: Set(config.accounts.map(\.id).filter(AccountRouter.hasAgentsLogin)),
+            agentsAccount: AccountRouter.agentsAccount(config: config),
             switches: AccountRouter.switches(limit: 20),
             idleLogins: idle,
+            refreshes: AccountRouter.refreshes(),
+            plans: credsById.compactMapValues(\.plan),
             keychainRefused: refused)
     }
 
@@ -616,7 +640,7 @@ final class Monitor: ObservableObject {
 
             if let id = identity {
                 accounts.record(uuid: id.key, label: id.label,
-                                plan: creds.subscriptionType ?? id.planFallback,
+                                plan: creds.plan ?? id.planFallback,
                                 snapshot: snap, at: snap.fetchedAt)
             }
         } catch {
@@ -892,30 +916,36 @@ final class Monitor: ObservableObject {
         history.burnRate(\.weekly, org: liveOrg, window: 6 * 3600, minPoints: 8, minSpan: 3600)
     }
 
-    /// Whichever comes first decides the story: you run out, or the window resets.
+    /// The burn rate of the window the headline is about (`UsageSnapshot.headline`).
+    func burn(of window: LimitWindow) -> BurnRate? { window.isSession ? sessionBurn : weeklyBurn }
+
+    /// Whichever comes first decides the story: you run out, or the window resets. About the headline window: the 5h
+    /// one while the account has it, else the week.
     enum Outlook {
         case idle
         case measuring
-        case safe(rate: Double, reset: TimeInterval)
-        case willHitCap(exhaustIn: TimeInterval, reset: TimeInterval, rate: Double, minutes: Double, aheadOfPace: Bool)
+        case safe(rate: Double, reset: TimeInterval, window: LimitWindow)
+        case willHitCap(exhaustIn: TimeInterval, reset: TimeInterval, rate: Double, minutes: Double, aheadOfPace: Bool,
+                        window: LimitWindow)
     }
 
     var outlook: Outlook {
-        guard let w = usage?.session, let reset = w.timeToReset else { return .idle }
-        guard let burn = sessionBurn else { return .measuring }
+        guard let w = usage?.headline, !w.hasReset(), let reset = w.timeToReset else { return .idle }
+        guard let burn = burn(of: w) else { return .measuring }
         guard let hours = burn.hoursToExhaustion(from: w.utilization) else {
-            return .safe(rate: burn.percentPerHour, reset: reset)
+            return .safe(rate: burn.percentPerHour, reset: reset, window: w)
         }
         let exhaust = hours * 3600
-        guard exhaust < reset else { return .safe(rate: burn.percentPerHour, reset: reset) }
+        guard exhaust < reset else { return .safe(rate: burn.percentPerHour, reset: reset, window: w) }
         return .willHitCap(exhaustIn: exhaust, reset: reset,
                            rate: burn.percentPerHour, minutes: burn.basedOnMinutes,
-                           aheadOfPace: (w.paceRatio ?? 0) >= 1)
+                           aheadOfPace: (w.paceRatio ?? 0) >= 1, window: w)
     }
 
+    /// The headline window's own trail, from its start.
     var blockTrail: [(Date, Double)] {
-        guard let reset = usage?.session?.resetsAt else { return [] }
-        return history.series(\.session, since: reset.addingTimeInterval(-5 * 3600), org: liveOrg)
+        guard let window = usage?.headline, !window.hasReset(), let start = window.startsAt else { return [] }
+        return history.series(window.isSession ? \.session : \.weekly, since: start, org: liveOrg)
     }
 
     var weekTrail: [(Date, Double)] {
@@ -995,26 +1025,28 @@ final class Monitor: ObservableObject {
             let snapshot = candidates.max { $0.fetchedAt < $1.fetchedAt }
             return AccountQueue.Entry(
                 id: account.id, label: account.label, monogram: account.monogram, role: account.role,
-                plan: identity.flatMap { accounts.records[$0.key]?.plan ?? $0.planFallback },
+                plan: router.plans[account.id] ?? identity.flatMap { accounts.records[$0.key]?.plan ?? $0.planFallback },
                 email: identity?.email, organization: identity?.organizationDisplay,
                 snapshot: snapshot, hasLogin: router.available.contains(account.id),
                 agentsLogin: account.id == router.config.principal || router.agentsLogins.contains(account.id),
                 exhaustedUntil: router.exhausted[account.id].flatMap { $0 > now ? $0 : nil },
                 sessions: sessions.filter { $0.accountId == account.id }.count,
                 sessionsInFolder: sessions.filter { $0.folderAccountId == account.id }.count,
-                runsAgents: account.id == router.config.principal,
+                runsAgents: account.id == router.agentsAccount,
                 isLive: live,
                 loginIdle: router.idleLogins.contains(account.id),
+                refresh: router.refreshes[account.id],
+                renewable: !account.usesDefaultDirectory,
                 loginRefused: router.keychainRefused.contains(account.id))
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
                             reserveBelow: router.config.reserveBelow, configured: true,
-                            principal: router.config.principal, pinned: router.config.pinned)
+                            principal: router.config.principal, pinned: router.config.pinned,
+                            agents: router.agentsAccount)
     }
 
-    /// The 5h window the menu bar shows, and whether it is current: the account new sessions open on, which is the
-    /// one its monogram names. Before, the number came from the account in `~/.claude` whatever the queue said, so
-    /// after choosing another account the menu bar kept showing the old one's percentage.
+    /// The window the menu bar shows (`UsageSnapshot.headline`: the 5h one, or the week on an account without it), and
+    /// whether it is current: the account of `AccountQueue.focus`, which is the one its monogram names.
     struct MenuBarReading {
         var window: LimitWindow?
         var current: Bool
@@ -1030,22 +1062,22 @@ final class Monitor: ObservableObject {
     /// A queue account's reading older than this is drawn muted in the menu bar, like a dead live feed.
     static let menuBarFreshness: TimeInterval = 15 * 60
 
-    var menuBarSession: MenuBarReading {
+    var menuBarReading: MenuBarReading {
         let q = accountQueue
-        guard q.configured, !q.isSingle, let id = q.newSessions(), let entry = q.entry(id),
+        guard q.configured, !q.isSingle, let id = q.focus(), let entry = q.entry(id),
               !entry.isLive else {
-            return MenuBarReading(window: usage?.session, current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
+            return MenuBarReading(window: usage?.headline, current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
         }
         let seen = entry.snapshot?.fetchedAt
         let fresh = seen.map { Date().timeIntervalSince($0) < Self.menuBarFreshness } ?? false
-        return MenuBarReading(window: entry.snapshot?.session, current: fresh, seenAt: seen, isLive: false)
+        return MenuBarReading(window: entry.snapshot?.headline, current: fresh, seenAt: seen, isLive: false)
     }
 
-    /// The monogram the menu bar shows: only when new sessions are not opening on the head of the queue.
+    /// The monogram the menu bar shows: only when the account its number is about is not the head of the queue.
     var menuBarMonogram: String? {
         let q = accountQueue
-        guard q.configured, !q.isSingle, let inUse = q.newSessions(), inUse != q.route.first?.id else { return nil }
-        return q.entry(inUse)?.monogram
+        guard q.configured, !q.isSingle, let shown = q.focus(), shown != q.route.first?.id else { return nil }
+        return q.entry(shown)?.monogram
     }
 
     /// New sessions open on `id` from now on, above the rule; nil goes back to the rule.

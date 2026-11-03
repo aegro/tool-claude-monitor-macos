@@ -35,4 +35,5 @@ jobs:
           node router/test/teste-proxy.js
           node router/test/teste-agentes.js
           node router/test/teste-wrapper.js
+          node router/test/teste-renovar.js
           python3 router/test/teste-tui.py

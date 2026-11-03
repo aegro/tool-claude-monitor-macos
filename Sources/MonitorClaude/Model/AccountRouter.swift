@@ -84,6 +84,7 @@ enum AccountRouter {
     static var switchesURL: URL { home.appendingPathComponent(".estado/trocas.jsonl") }
     static var exhaustedURL: URL { home.appendingPathComponent(".estado/esgotadas.json") }
     static var slotBurnRateURL: URL { home.appendingPathComponent(".estado/ritmo.json") }
+    static var refreshesURL: URL { home.appendingPathComponent(".estado/renovacoes.json") }
     static var defaultConfigDirectory: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude")
     }
@@ -176,7 +177,7 @@ enum AccountRouter {
                 directory: custom ?? (usesDefault ? defaultDirectory : home.appendingPathComponent(id)),
                 usesDefaultDirectory: usesDefault,
                 role: role,
-                monogram: given.isEmpty ? monogram(for: label) : String(given.prefix(2)).uppercased())
+                monogram: given.isEmpty ? monogram(for: label) : String(given.prefix(3)).uppercased())
         }
 
         let pending = entries.keys.sorted().filter { id in
@@ -243,7 +244,7 @@ enum AccountRouter {
 
     static func renameAccount(_ id: String, name: String, monogram: String, at url: URL = configURL) throws {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sigla = String(monogram.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2)).uppercased()
+        let sigla = String(monogram.trimmingCharacters(in: .whitespacesAndNewlines).prefix(3)).uppercased()
         try updateConfig(at: url) { root in
             var contas = root["contas"] as? [String: Any] ?? [:]
             var entry = contas[id] as? [String: Any] ?? [:]
@@ -259,8 +260,15 @@ enum AccountRouter {
     }
 
     /// Two letters for the menu bar and the avatar: the initials of a name with two words or more, the first two
-    /// letters otherwise, and the part in parentheses when there is one ("Thomas (Max)" is "MA").
+    /// letters otherwise, and the part in parentheses when there is one ("Thomas (Max)" is "MA"). A number glued to the
+    /// end of the name stays, so numbered twins differ ("squad.financeiro2" is "SF2").
     static func monogram(for label: String) -> String {
+        let digits = String(label.reversed().prefix { $0.isNumber }.reversed())
+        let stem = label.dropLast(digits.count)
+        if !digits.isEmpty, let glued = stem.last, glued.isLetter {
+            let letters = monogram(for: String(stem))
+            return String(((digits.count > 1 ? String(letters.prefix(1)) : letters) + digits).prefix(3))
+        }
         var base = label
         if let open = label.lastIndex(of: "("), let close = label.lastIndex(of: ")"), open < close {
             let inner = label[label.index(after: open)..<close].trimmingCharacters(in: .whitespaces)
@@ -456,6 +464,38 @@ enum AccountRouter {
         return saved
     }
 
+    /// The queue account the agents of `claude agents` run on, read like the router's `contaNoSlot`: the login in
+    /// `~/.claude.json` matched against the login the router saved for each account, then against each account's own
+    /// folder. With no match, the principal while the router never saved its login, since it never left the slot.
+    static func agentsAccount(config: Config, in dir: URL = savedLoginsDirectory) -> String? {
+        let ids = config.accounts.map(\.id)
+        return resolveAgentsAccount(
+            declared: ClaudeConfig.activeAccount()?.key,
+            accounts: ids,
+            saved: Dictionary(uniqueKeysWithValues: ids.compactMap { id in savedLoginKey(id, in: dir).map { (id, $0) } }),
+            folders: Dictionary(uniqueKeysWithValues: config.accounts.filter { !$0.usesDefaultDirectory }
+                .compactMap { a in folderIdentity(a).map { (a.id, $0.key) } }),
+            principal: config.principal)
+    }
+
+    static func resolveAgentsAccount(declared: String?, accounts: [String], saved: [String: String],
+                                     folders: [String: String], principal: String) -> String? {
+        if let declared {
+            if let id = accounts.first(where: { saved[$0] == declared }) { return id }
+            if let id = accounts.first(where: { folders[$0] == declared }) { return id }
+        }
+        return saved[principal] == nil && accounts.contains(principal) ? principal : nil
+    }
+
+    /// The `chave` the router saved for `id`, even on a login it marked as no longer working: it still names the account.
+    static func savedLoginKey(_ id: String, in dir: URL = savedLoginsDirectory) -> String? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(id).json")),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let key = root["chave"] as? String, !key.isEmpty
+        else { return nil }
+        return key
+    }
+
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {
         try? Keychain.credentials(service: keychainService(for: account), timeout: timeout)
     }
@@ -581,6 +621,42 @@ enum AccountRouter {
     static func combined(full: UsageSnapshot?, live: UsageSnapshot?) -> UsageSnapshot? {
         guard let live, live.fetchedAt > (full?.fetchedAt ?? .distantPast) else { return full }
         return merging(live, into: full)
+    }
+
+    /// The router's last renewal of an expired login, per account (`claude-accounts refresh`, also run by `_vigiar`).
+    struct LoginRefresh: Equatable {
+        enum Outcome: Equatable {
+            case renewed
+            /// A `claude` process runs with the account's folder: the CLI there renews it, and a second client is
+            /// never started on the same login.
+            case inUse
+            case failed(String)
+        }
+        var at: Date
+        var outcome: Outcome
+    }
+
+    static func refreshes() -> [String: LoginRefresh] {
+        guard let data = try? Data(contentsOf: refreshesURL) else { return [:] }
+        return parseRefreshes(data)
+    }
+
+    static func parseRefreshes(_ data: Data) -> [String: LoginRefresh] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        var result: [String: LoginRefresh] = [:]
+        for (id, value) in root {
+            guard let entry = value as? [String: Any], let ms = (entry["em"] as? NSNumber)?.doubleValue,
+                  let kind = entry["resultado"] as? String
+            else { continue }
+            let outcome: LoginRefresh.Outcome
+            switch kind {
+            case "renovado": outcome = .renewed
+            case "em-uso": outcome = .inUse
+            default: outcome = .failed((entry["erro"] as? String) ?? kind)
+            }
+            result[id] = LoginRefresh(at: Date(timeIntervalSince1970: ms / 1000), outcome: outcome)
+        }
+        return result
     }
 
     static func exhausted(now: Date = Date()) -> [String: Date] {
@@ -775,8 +851,9 @@ enum AccountRouter {
 
     static func slotBurnRate(account: String, snapshot: UsageSnapshot, session: BurnRate?, weekly: BurnRate?,
                              now: Date = Date()) -> SlotBurnRate? {
-        let weeklyBinds = used(snapshot.weekly, now: now) > used(snapshot.session, now: now)
-        guard let window = weeklyBinds ? snapshot.weekly : snapshot.session,
+        let fiveHour = snapshot.fiveHour
+        let weeklyBinds = fiveHour == nil || used(snapshot.weekly, now: now) > used(fiveHour, now: now)
+        guard let window = weeklyBinds ? snapshot.weekly : fiveHour,
               let burn = weeklyBinds ? weekly : session,
               burn.percentPerHour.isFinite
         else { return nil }
@@ -878,10 +955,16 @@ struct RouterState: Equatable {
     var available: Set<String> = []
     var exhausted: [String: Date] = [:]
     var agentsLogins: Set<String> = []
+    /// The account the agents of `claude agents` run on now (`AccountRouter.agentsAccount`).
+    var agentsAccount: String?
     var switches: [AccountRouter.Switch] = []
-    /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while, and only a
-    /// session renews it (the Monitor never does). Their numbers stay as last read until then.
+    /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while. The Monitor never
+    /// renews a token itself; the router has the official CLI do it (`refreshes`). Their numbers stay as last read
+    /// until then.
     var idleLogins: Set<String> = []
+    var refreshes: [String: AccountRouter.LoginRefresh] = [:]
+    /// Each account's plan from its own login (`Keychain.Credentials.plan`).
+    var plans: [String: String] = [:]
     /// Accounts whose Keychain read waits for "Ler de novo": macOS asked to let it through and got no, or no answer.
     var keychainRefused: Set<String> = []
 

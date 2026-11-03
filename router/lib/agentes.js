@@ -296,6 +296,7 @@ function ritmoDeUso(leituras, chave, agora = Date.now()) {
 }
 
 function janelaQueLimita(uso, agora = Date.now()) {
+  if (!uso.cinco) return 'sete';
   return contas.usadoEfetivo(uso.sete, agora) > contas.usadoEfetivo(uso.cinco, agora) ? 'sete' : 'cinco';
 }
 
@@ -950,6 +951,7 @@ module.exports = {
   folgaParaVolta,
   deveTrocarAntes,
   alvoPreventivo,
+  janelaQueLimita,
   vigiar,
   prepararSlot,
   linhaDoSecurity,

@@ -15,7 +15,7 @@ final class Settings: ObservableObject {
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .sessionLimit: return "Limite 5h"
+            case .sessionLimit: return "Limite"
             case .cpu: return "CPU"
             case .both: return "Ambos"
             }

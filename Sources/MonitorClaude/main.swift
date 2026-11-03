@@ -48,8 +48,9 @@ if CommandLine.arguments.contains("--dump-router") {
                 } else if let (snap, _) = try? await UsageAPI.fetch(token: creds.accessToken) {
                     let free = AccountRouter.headroom(snap)
                     headroom[account.id] = free
-                    line += String(format: " · 5h %.0f%% · sem %.0f%% · folga %.0f%%",
-                                   snap.session?.utilization ?? 0, snap.weekly?.utilization ?? 0, free)
+                    let fiveHour = snap.fiveHour.map { String(format: "5h %.0f%%", $0.utilization) } ?? "sem 5h"
+                    line += String(format: " · %@ · sem %.0f%% · folga %.0f%%",
+                                   fiveHour, snap.weekly?.utilization ?? 0, free)
                 } else {
                     line += " · API falhou"
                 }
@@ -86,7 +87,7 @@ if CommandLine.arguments.contains("--dump-desktop-feed") {
         // public repo ends up pasted into issues, and eight characters already disambiguate.
         print("▸ \(label)  (\(org.prefix(8)))  \(series.count) amostras")
         guard let last = series.last else { continue }
-        print("   última: \(iso.string(from: last.at))  5h \(last.fiveHour)%  semana \(last.weekly)%"
+        print("   última: \(iso.string(from: last.at))  5h \(last.fiveHour.map { "\($0)%" } ?? "–")  semana \(last.weekly)%"
               + "  \(DesktopUsage.isCurrent(last.at) ? "· ao vivo" : "· parada")")
 
         if let reset = DesktopUsage.sessionReset(series: series) {
@@ -103,7 +104,7 @@ if CommandLine.arguments.contains("--dump-desktop-feed") {
         }
         print("   últimas 8 amostras:")
         for s in series.suffix(8) {
-            print("     \(iso.string(from: s.at))  fh \(Int(s.fiveHour))  sd \(Int(s.weekly))")
+            print("     \(iso.string(from: s.at))  fh \(s.fiveHour.map { "\(Int($0))" } ?? "–")  sd \(Int(s.weekly))")
         }
         print("")
     }

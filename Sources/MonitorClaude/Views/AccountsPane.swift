@@ -414,8 +414,8 @@ struct AccountRow: View {
                             .accessibilityHidden(true)
                     }
                     HStack(spacing: 14) {
-                        if entry.snapshot == nil || entry.snapshot?.fiveHour() != nil {
-                            MiniLimit(label: "5h", window: entry.snapshot?.fiveHour())
+                        if entry.snapshot == nil || entry.snapshot?.fiveHour != nil {
+                            MiniLimit(label: "5h", window: entry.snapshot?.fiveHour)
                         }
                         MiniLimit(label: "Semana", window: entry.snapshot?.weekly)
                     }
@@ -478,9 +478,9 @@ struct AccountRow: View {
         var parts = [renewals]
         // Numbers this old say so, and why when the reason is known.
         if let at = entry.snapshot?.fetchedAt, Date().timeIntervalSince(at) > 15 * 60 {
-            parts.append(entry.loginIdle ? "lido \(Fmt.ago(at)), \(AccountQueue.idleReason(entry.refresh, id: entry.id))" : "lido \(Fmt.ago(at))")
+            parts.append(entry.loginIdle ? "lido \(Fmt.ago(at)), \(AccountQueue.idleReason(entry.refresh, id: entry.id, renewable: entry.renewable))" : "lido \(Fmt.ago(at))")
         } else if entry.snapshot == nil, entry.loginIdle {
-            parts.append(AccountQueue.idleReason(entry.refresh, id: entry.id))
+            parts.append(AccountQueue.idleReason(entry.refresh, id: entry.id, renewable: entry.renewable))
         }
         if entry.sessions > 0 { parts.append(entry.sessions == 1 ? "1 sessão aqui" : "\(entry.sessions) sessões aqui") }
         if entry.runsAgents, bgAgents { parts.append("agentes aqui") }
@@ -490,8 +490,8 @@ struct AccountRow: View {
 
     private var renewals: String {
         var parts: [String] = []
-        if let s = entry.snapshot?.fiveHour() {
-            parts.append(s.resetsAt.map { "5h renova \(Fmt.clock($0))" } ?? "5h livre")
+        if let s = entry.snapshot?.fiveHour {
+            if let at = s.resetsAt, !s.hasReset() { parts.append("5h renova \(Fmt.clock(at))") } else { parts.append("5h livre") }
         } else if entry.snapshot != nil {
             parts.append("sem limite de 5h")
         }
@@ -511,7 +511,7 @@ struct AccountDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if entry.isLive, let usage = monitor.usage {
-                let headline = usage.headline()
+                let headline = usage.headline
                 if let headline {
                     LimitGauge(window: headline, burn: monitor.burn(of: headline))
                     if monitor.blockTrail.count >= 2, let start = headline.startsAt, let end = headline.resetsAt {
@@ -530,7 +530,7 @@ struct AccountDetail: View {
                 Text(monitor.liveIsCurrent ? "Lido agora, com o login do terminal." : "Última leitura \(Fmt.ago(monitor.liveSeenAt ?? usage.fetchedAt)).")
                     .font(Type.mini).foregroundStyle(.tertiary)
             } else if let snap = entry.snapshot {
-                if let session = snap.fiveHour() { StaleLimitRow(window: session, seenAt: snap.fetchedAt) }
+                if let session = snap.fiveHour { StaleLimitRow(window: session, seenAt: snap.fetchedAt) }
                 ForEach(snap.windows.filter { !$0.isSession }) { StaleLimitRow(window: $0, seenAt: snap.fetchedAt) }
             } else {
                 Text("Sem leitura desta conta ainda. Ela aparece aqui quando o Monitor conseguir ler o login dela.")

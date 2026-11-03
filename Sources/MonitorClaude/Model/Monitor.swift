@@ -930,7 +930,7 @@ final class Monitor: ObservableObject {
     }
 
     var outlook: Outlook {
-        guard let w = usage?.headline(), let reset = w.timeToReset else { return .idle }
+        guard let w = usage?.headline, let reset = w.timeToReset else { return .idle }
         guard let burn = burn(of: w) else { return .measuring }
         guard let hours = burn.hoursToExhaustion(from: w.utilization) else {
             return .safe(rate: burn.percentPerHour, reset: reset, window: w)
@@ -944,7 +944,7 @@ final class Monitor: ObservableObject {
 
     /// The headline window's own trail, from its start.
     var blockTrail: [(Date, Double)] {
-        guard let window = usage?.headline(), let start = window.startsAt else { return [] }
+        guard let window = usage?.headline, let start = window.startsAt else { return [] }
         return history.series(window.isSession ? \.session : \.weekly, since: start, org: liveOrg)
     }
 
@@ -1036,6 +1036,7 @@ final class Monitor: ObservableObject {
                 isLive: live,
                 loginIdle: router.idleLogins.contains(account.id),
                 refresh: router.refreshes[account.id],
+                renewable: !account.usesDefaultDirectory,
                 loginRefused: router.keychainRefused.contains(account.id))
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
@@ -1065,11 +1066,11 @@ final class Monitor: ObservableObject {
         let q = accountQueue
         guard q.configured, !q.isSingle, let id = q.focus(), let entry = q.entry(id),
               !entry.isLive else {
-            return MenuBarReading(window: usage?.headline(), current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
+            return MenuBarReading(window: usage?.headline, current: liveIsCurrent, seenAt: liveSeenAt, isLive: true)
         }
         let seen = entry.snapshot?.fetchedAt
         let fresh = seen.map { Date().timeIntervalSince($0) < Self.menuBarFreshness } ?? false
-        return MenuBarReading(window: entry.snapshot?.headline(), current: fresh, seenAt: seen, isLive: false)
+        return MenuBarReading(window: entry.snapshot?.headline, current: fresh, seenAt: seen, isLive: false)
     }
 
     /// The monogram the menu bar shows: only when the account its number is about is not the head of the queue.

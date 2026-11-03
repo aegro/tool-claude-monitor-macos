@@ -48,7 +48,7 @@ if CommandLine.arguments.contains("--dump-router") {
                 } else if let (snap, _) = try? await UsageAPI.fetch(token: creds.accessToken) {
                     let free = AccountRouter.headroom(snap)
                     headroom[account.id] = free
-                    let fiveHour = snap.fiveHour().map { String(format: "5h %.0f%%", $0.utilization) } ?? "sem 5h"
+                    let fiveHour = snap.fiveHour.map { String(format: "5h %.0f%%", $0.utilization) } ?? "sem 5h"
                     line += String(format: " · %@ · sem %.0f%% · folga %.0f%%",
                                    fiveHour, snap.weekly?.utilization ?? 0, free)
                 } else {

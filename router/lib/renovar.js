@@ -38,16 +38,32 @@ function vivo(pid) {
   }
 }
 
-function sessoesVivasNaPasta(dir) {
+function inicioDoProcesso(pid) {
+  return new Promise((resolve) => {
+    execFile('ps', ['-o', 'lstart=', '-p', String(pid)], (erro, saida) => resolve(erro ? null : String(saida).trim()));
+  });
+}
+
+const normalizarInicio = (texto) => String(texto || '').replace(/\s+/g, ' ').trim();
+
+async function sessoesVivasNaPasta(dir, inicio = inicioDoProcesso) {
   let arquivos = [];
   try {
     arquivos = fs.readdirSync(path.join(dir, 'sessions')).filter((f) => f.endsWith('.json'));
   } catch {
     return [];
   }
-  return arquivos
-    .map((f) => (contas.lerJson(path.join(dir, 'sessions', f), {}) || {}).pid)
-    .filter((pid) => Number.isInteger(pid) && vivo(pid));
+  const vivas = [];
+  for (const f of arquivos) {
+    const sessao = contas.lerJson(path.join(dir, 'sessions', f), {}) || {};
+    if (!Number.isInteger(sessao.pid) || !vivo(sessao.pid)) continue;
+    if (sessao.procStart) {
+      const real = await inicio(sessao.pid);
+      if (real != null && normalizarInicio(real) !== normalizarInicio(sessao.procStart)) continue;
+    }
+    vivas.push(sessao.pid);
+  }
+  return vivas;
 }
 
 function lerPs() {
@@ -61,7 +77,7 @@ function lerPs() {
 async function processosNaPasta(dir) {
   const ps = await lerPs();
   if (ps == null) return null;
-  return [...new Set([...processosNoAmbiente(ps, dir), ...sessoesVivasNaPasta(dir)])];
+  return [...new Set([...processosNoAmbiente(ps, dir), ...(await sessoesVivasNaPasta(dir))])];
 }
 
 function envDaRenovacao(dir) {
@@ -70,17 +86,19 @@ function envDaRenovacao(dir) {
     if (chave.startsWith('CLAUDE_CODE_') || chave === 'CLAUDECODE') delete env[chave];
   }
   delete env.CLAUDE_AUTO_CONTA;
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
   env.CLAUDE_CONFIG_DIR = dir;
   return env;
 }
 
-function rodarUsage(dir, { prazoMs = PRAZO_MS } = {}) {
+function rodarUsage(dir, { prazoMs = PRAZO_MS, comando = null } = {}) {
   fs.mkdirSync(DIR_DE_TRABALHO, { recursive: true });
   const args = ['-p', '/usage', '--no-session-persistence', '--strict-mcp-config', '--setting-sources', 'project'];
   return new Promise((resolve) => {
     let filho;
     try {
-      filho = spawn(contas.resolverClaude(), args, { cwd: DIR_DE_TRABALHO, env: envDaRenovacao(dir), stdio: ['ignore', 'ignore', 'pipe'] });
+      filho = spawn(comando || contas.resolverClaude(), args, { cwd: DIR_DE_TRABALHO, env: envDaRenovacao(dir), stdio: ['ignore', 'ignore', 'pipe'], detached: true });
     } catch (e) {
       resolve({ ok: false, erro: e.message });
       return;
@@ -89,15 +107,24 @@ function rodarUsage(dir, { prazoMs = PRAZO_MS } = {}) {
     filho.stderr.on('data', (d) => {
       erro = (erro + d).slice(-400);
     });
-    const relogio = setTimeout(() => filho.kill('SIGTERM'), prazoMs);
-    filho.on('error', (e) => {
+    let fim = false;
+    const terminar = (resultado) => {
+      if (fim) return;
+      fim = true;
       clearTimeout(relogio);
-      resolve({ ok: false, erro: e.message });
-    });
-    filho.on('close', (codigo, sinal) => {
-      clearTimeout(relogio);
-      if (sinal) resolve({ ok: false, erro: 'the CLI took too long' });
-      else resolve(codigo === 0 ? { ok: true } : { ok: false, erro: erro.trim().split('\n').pop() || `the CLI exited with ${codigo}` });
+      filho.stderr.destroy();
+      resolve(resultado);
+    };
+    const relogio = setTimeout(() => {
+      try {
+        process.kill(-filho.pid, 'SIGKILL');
+      } catch {}
+      terminar({ ok: false, erro: 'the CLI took too long' });
+    }, prazoMs);
+    filho.on('error', (e) => terminar({ ok: false, erro: e.message }));
+    filho.on('exit', (codigo) => {
+      if (codigo === 0) terminar({ ok: true });
+      else terminar({ ok: false, erro: erro.trim().split('\n').pop() || `the CLI exited with ${codigo}` });
     });
   });
 }
@@ -120,6 +147,13 @@ function tomarTrava() {
   } catch {
     return false;
   }
+}
+
+function tocarTrava() {
+  const agora = new Date();
+  try {
+    fs.utimesSync(DIR_TRAVA, agora, agora);
+  } catch {}
 }
 
 function soltarTrava() {
@@ -156,6 +190,7 @@ async function renovarParadas({ ids = null, forcar = false, deps = {} } = {}) {
     );
     const feitas = {};
     for (const id of alvos) {
+      tocarTrava();
       const anterior = anteriores[id];
       const espera = anterior && anterior.resultado === 'em-uso' ? INTERVALO_EM_USO_MS : INTERVALO_MS;
       if (!forcar && anterior && agora - anterior.em < espera) continue;
@@ -177,6 +212,8 @@ module.exports = {
   INTERVALO_MS,
   processosNoAmbiente,
   processosNaPasta,
+  sessoesVivasNaPasta,
+  rodarUsage,
   envDaRenovacao,
   renovarParadas,
   lerRenovacoes,

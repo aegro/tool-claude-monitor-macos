@@ -25,24 +25,41 @@ struct WithoutFiveHourTests {
         ]
         let snap = UsageAPI.parse(root)
         #expect(snap.session == nil)
-        #expect(snap.fiveHour(now: now) == nil)
-        #expect(snap.headline(now: now)?.key == "weekly_all")
-        #expect(snap.headline(now: now)?.utilization == 9)
+        #expect(snap.fiveHour == nil)
+        #expect(snap.headline?.key == "weekly_all")
+        #expect(snap.headline?.utilization == 9)
     }
 
     @Test func comJanelaDe5hOTítuloContinuaSendoEla() {
-        let snap = UsageSnapshot(windows: [window("session", 12, resetsIn: 3600), window("weekly_all", 98, resetsIn: 86_400)])
-        #expect(snap.headline(now: now)?.isSession == true)
-        #expect(snap.headline(now: now)?.utilization == 12)
-        let idle = UsageSnapshot(windows: [window("session", 0, resetsIn: nil), window("weekly_all", 98, resetsIn: 86_400)])
-        #expect(idle.headline(now: now)?.isSession == true)
+        let snap = UsageSnapshot(windows: [window("session", 12, resetsIn: 3600), window("weekly_all", 98, resetsIn: 86_400)],
+                                 fetchedAt: now)
+        #expect(snap.headline?.isSession == true)
+        #expect(snap.headline?.utilization == 12)
+        let idle = UsageSnapshot(windows: [window("session", 0, resetsIn: nil), window("weekly_all", 98, resetsIn: 86_400)],
+                                 fetchedAt: now)
+        #expect(idle.headline?.isSession == true)
     }
 
-    /// The last 5h window an account had before it lost the limit stays in a stored reading, already past its reset.
+    /// The last 5h window an account had before it lost the limit stays in its stored reading; live numbers without a
+    /// 5h window merged into it must not bring it back.
     @Test func janelaDe5hVelhaDeLeituraGuardadaNãoVoltaAoTítulo() {
-        let snap = UsageSnapshot(windows: [window("session", 64, resetsIn: -3 * 86_400), window("weekly_all", 49, resetsIn: 86_400)])
-        #expect(snap.fiveHour(now: now) == nil)
-        #expect(snap.headline(now: now)?.key == "weekly_all")
+        let stored = UsageSnapshot(windows: [window("session", 64, resetsIn: -3 * 86_400), window("weekly_all", 40, resetsIn: 86_400)],
+                                   fetchedAt: now.addingTimeInterval(-3 * 86_400 - 3600))
+        let live = UsageSnapshot(windows: [window("weekly_all", 49, resetsIn: 86_400)], fetchedAt: now)
+        let merged = AccountRouter.merging(live, into: stored, now: now)
+        #expect(merged.fiveHour == nil)
+        #expect(merged.headline?.key == "weekly_all")
+        #expect(merged.headline?.utilization == 49)
+    }
+
+    /// A Max account read at 14:00 with its 5h window resetting at 16:00, not read again: at 16:30 it still has the
+    /// 5h limit, just free.
+    @Test func contaComCincoHorasLidaAntesDoResetContinuaComCincoHoras() throws {
+        let snap = UsageSnapshot(windows: [window("session", 40, resetsIn: -1800), window("weekly_all", 30, resetsIn: 86_400)],
+                                 fetchedAt: now.addingTimeInterval(-9000))
+        let fiveHour = try #require(snap.fiveHour)
+        #expect(fiveHour.hasReset(at: now))
+        #expect(AccountRouter.used(fiveHour, now: now) == 0)
     }
 
     @Test func ritmoDoSlotSemJanelaDe5hUsaASemanaMesmoZerada() throws {
@@ -65,7 +82,7 @@ struct WithoutFiveHourTests {
         #expect(series.allSatisfy { $0.fiveHour == nil })
         let snap = try #require(DesktopUsage.snapshot(series: series, weeklyAnchor: nil, now: now))
         #expect(snap.session == nil)
-        #expect(snap.headline(now: now)?.utilization == 41)
+        #expect(snap.headline?.utilization == 41)
     }
 
     @Test func fraseDeStatusDaSemanaFalaODiaDoReset() {
@@ -113,6 +130,36 @@ struct FocusAndRefreshTests {
         #expect(q.focus() == "financeiro")
         #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Você escolheu: sessões novas abrem na")
         #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions()) == "Os agentes seguem na Financeiro2.")
+    }
+
+    @Test func próximaDosAgentesSóEntreContasComLoginDeAgentes() {
+        var semAgentes = entry("financeiro")
+        semAgentes.agentsLogin = false
+        let q = AccountQueue(entries: [semAgentes, entry("financeiro2"), entry("gabriel")], strategy: .order, enabled: true,
+                             configured: true, agents: "financeiro2")
+        #expect(q.next(after: "financeiro2") == "gabriel")
+        #expect(q.next(after: "gabriel") == "financeiro")
+    }
+
+    @Test func fraseDeMaisFolgaSóParaAContaDasSessõesNovas() {
+        var agentes = entry("financeiro2")
+        agentes.snapshot = UsageSnapshot(windows: [LimitWindow(key: "weekly_all", title: "Semana", utilization: 50,
+                                                               resetsAt: Date().addingTimeInterval(86_400), severity: "normal",
+                                                               isSession: false, isActive: true)])
+        var terminal = entry("financeiro")
+        terminal.snapshot = UsageSnapshot(windows: [LimitWindow(key: "weekly_all", title: "Semana", utilization: 9,
+                                                                resetsAt: Date().addingTimeInterval(86_400), severity: "normal",
+                                                                isSession: false, isActive: true)])
+        let q = AccountQueue(entries: [terminal, agentes], strategy: .headroom, enabled: true, configured: true,
+                             agents: "financeiro2")
+        #expect(q.newSessions() == "financeiro")
+        let line = AccountQueue.statusLine(queue: q, inUse: "financeiro2", outlook: nil)
+        #expect(!line.contains("mais folga"))
+        #expect(AccountQueue.statusLine(queue: q, inUse: "financeiro", outlook: nil).contains("mais folga"))
+    }
+
+    @Test func contaDoSlotParadaNãoPrometeRenovação() {
+        #expect(AccountQueue.idleReason(nil, id: "principal", renewable: false) == "login vencido, volta na próxima sessão nela")
     }
 
     @Test func renovaçõesDoRoteadorViramMotivoLegível() {

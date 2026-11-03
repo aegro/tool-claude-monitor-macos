@@ -283,8 +283,9 @@ async function main() {
       }
       break;
     case '_vigiar': {
+      const vigia = await agentes.vigiar();
       const renovacao = await renovar.renovarParadas().catch((e) => ({ acao: 'erro', erro: e.message }));
-      console.log(JSON.stringify({ ...(await agentes.vigiar()), renovacao }));
+      console.log(JSON.stringify({ ...vigia, renovacao }));
       break;
     }
     case 'refresh': {

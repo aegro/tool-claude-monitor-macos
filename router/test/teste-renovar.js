@@ -122,6 +122,42 @@ const testes = {
     delete process.env.CLAUDE_AUTO_CONTA;
   },
 
+  async prazoMataOGrupoMesmoComNetoSegurandoOStderr() {
+    const bin = path.join(raiz, 'claude-pendurado.sh');
+    fs.writeFileSync(bin, '#!/bin/sh\ntrap "" TERM\nsleep 30 &\nsleep 30\n', { mode: 0o755 });
+    const inicio = Date.now();
+    const r = await renovar.rodarUsage(path.join(raiz, 'pasta'), { prazoMs: 500, comando: bin });
+    assert.strictEqual(r.ok, false);
+    assert.match(r.erro, /too long/);
+    assert.ok(Date.now() - inicio < 5000, 'rodarUsage ficou pendurado');
+  },
+
+  async cliQueSaiComErroDizOMotivo() {
+    const bin = path.join(raiz, 'claude-falha.sh');
+    fs.writeFileSync(bin, '#!/bin/sh\necho "OAuth token has expired" >&2\nexit 1\n', { mode: 0o755 });
+    const r = await renovar.rodarUsage(path.join(raiz, 'pasta'), { prazoMs: 5000, comando: bin });
+    assert.deepStrictEqual(r, { ok: false, erro: 'OAuth token has expired' });
+  },
+
+  async sessaoComPidReusadoNaoContaComoViva() {
+    const dir = path.join(raiz, 'conta-velha');
+    fs.mkdirSync(path.join(dir, 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'sessions', 'a.json'), JSON.stringify({ pid: process.pid, procStart: 'Mon Jan  1 00:00:00 2024' }));
+    assert.deepStrictEqual(await renovar.sessoesVivasNaPasta(dir, async () => 'Tue Nov  3 10:44:42 2026'), []);
+    fs.writeFileSync(path.join(dir, 'sessions', 'a.json'), JSON.stringify({ pid: process.pid, procStart: 'Tue Nov  3 10:44:42 2026' }));
+    assert.deepStrictEqual(await renovar.sessoesVivasNaPasta(dir, async () => 'Tue Nov 3 10:44:42 2026'), [process.pid]);
+  },
+
+  envSemChaveDeApi() {
+    process.env.ANTHROPIC_API_KEY = 'x';
+    process.env.ANTHROPIC_AUTH_TOKEN = 'y';
+    const env = renovar.envDaRenovacao('/tmp/conta');
+    assert.strictEqual(env.ANTHROPIC_API_KEY, undefined);
+    assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, undefined);
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+  },
+
   async travaOcupadaNaoRodaDuasVezes() {
     configurar();
     fs.mkdirSync(path.join(contas.DIR_ESTADO, 'renovar.trava'), { recursive: true });

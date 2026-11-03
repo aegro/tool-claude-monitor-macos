@@ -27,6 +27,9 @@ struct AccountQueue: Equatable {
         var loginIdle = false
         /// The router's last renewal of this account's expired login, if any.
         var refresh: AccountRouter.LoginRefresh?
+        /// The router renews this account's login when it expires (`claude-accounts refresh`): not the one in
+        /// `~/.claude`, whose own sessions renew it.
+        var renewable = true
         /// macOS was asked to let its login be read and refused (or nobody answered): "Ler de novo" asks again.
         var loginRefused = false
 
@@ -105,10 +108,12 @@ struct AccountQueue: Equatable {
         return agents.flatMap { id in entries.contains { $0.id == id } ? id : nil } ?? opens
     }
 
-    /// Who takes over if `id` hits its limit, or nil when nobody can.
+    /// Who takes over if `id` hits its limit, or nil when nobody can. The agents only move to an account with an agents
+    /// login, so after theirs only those count.
     func next(after id: String?, now: Date = Date()) -> String? {
         guard enabled, configured, let id else { return nil }
-        return pick(excluding: [id], now: now)
+        let noAgentsLogin = id == agents ? entries.filter { !$0.agentsLogin }.map(\.id) : []
+        return pick(excluding: Set([id] + noAgentsLogin), now: now)
     }
 
     func entry(_ id: String?) -> Entry? { entries.first { $0.id == id } }
@@ -175,7 +180,8 @@ struct AccountQueue: Equatable {
     }
 
     /// Why an account with an expired login has no fresh numbers, and what to do about it.
-    static func idleReason(_ refresh: AccountRouter.LoginRefresh?, id: String) -> String {
+    static func idleReason(_ refresh: AccountRouter.LoginRefresh?, id: String, renewable: Bool = true) -> String {
+        guard renewable else { return "login vencido, volta na próxima sessão nela" }
         switch refresh?.outcome {
         case nil: return "login vencido, o roteador renova em instantes"
         case .renewed: return "login renovado, lendo de novo"
@@ -209,7 +215,8 @@ struct AccountQueue: Equatable {
                 case .idle:
                     break
                 }
-            } else if queue.strategy == .headroom, queue.enabled, let room = entry.headroom, !queue.isSingle {
+            } else if queue.strategy == .headroom, queue.enabled, inUse == queue.newSessions(now: now),
+                      let room = entry.headroom, !queue.isSingle {
                 parts.append("É a que tem mais folga agora (\(Fmt.pct(room))).")
             }
         }

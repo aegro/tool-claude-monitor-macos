@@ -844,7 +844,7 @@ enum AccountRouter {
 
     static func slotBurnRate(account: String, snapshot: UsageSnapshot, session: BurnRate?, weekly: BurnRate?,
                              now: Date = Date()) -> SlotBurnRate? {
-        let fiveHour = snapshot.fiveHour(now: now)
+        let fiveHour = snapshot.fiveHour
         let weeklyBinds = fiveHour == nil || used(snapshot.weekly, now: now) > used(fiveHour, now: now)
         guard let window = weeklyBinds ? snapshot.weekly : fiveHour,
               let burn = weeklyBinds ? weekly : session,

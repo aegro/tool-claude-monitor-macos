@@ -40,7 +40,9 @@ function vivo(pid) {
 
 function inicioDoProcesso(pid) {
   return new Promise((resolve) => {
-    execFile('ps', ['-o', 'lstart=', '-p', String(pid)], (erro, saida) => resolve(erro ? null : String(saida).trim()));
+    execFile('ps', ['-o', 'lstart=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C' } }, (erro, saida) =>
+      resolve(erro ? null : String(saida).trim()),
+    );
   });
 }
 
@@ -92,7 +94,7 @@ function envDaRenovacao(dir) {
   return env;
 }
 
-function rodarUsage(dir, { prazoMs = PRAZO_MS, comando = null } = {}) {
+function rodarUsage(dir, { prazoMs = PRAZO_MS, treguaMs = 5000, comando = null } = {}) {
   fs.mkdirSync(DIR_DE_TRABALHO, { recursive: true });
   const args = ['-p', '/usage', '--no-session-persistence', '--strict-mcp-config', '--setting-sources', 'project'];
   return new Promise((resolve) => {
@@ -108,23 +110,52 @@ function rodarUsage(dir, { prazoMs = PRAZO_MS, comando = null } = {}) {
       erro = (erro + d).slice(-400);
     });
     let fim = false;
+    let saiuCom = null;
+    let relogioDoFecho = null;
+    let relogioDoKill = null;
     const terminar = (resultado) => {
       if (fim) return;
       fim = true;
       clearTimeout(relogio);
+      clearTimeout(relogioDoFecho);
+      clearTimeout(relogioDoKill);
       filho.stderr.destroy();
       resolve(resultado);
     };
-    const relogio = setTimeout(() => {
+    let estourou = false;
+    const pelaSaida = () => {
+      if (estourou) terminar({ ok: false, erro: 'the CLI took too long' });
+      else if (saiuCom === 0) terminar({ ok: true });
+      else terminar({ ok: false, erro: erro.trim().split('\n').pop() || `the CLI exited with ${saiuCom}` });
+    };
+    const sinalizar = (sinal) => {
       try {
-        process.kill(-filho.pid, 'SIGKILL');
+        process.kill(-filho.pid, sinal);
       } catch {}
-      terminar({ ok: false, erro: 'the CLI took too long' });
+    };
+    const relogio = setTimeout(() => {
+      estourou = true;
+      sinalizar('SIGTERM');
+      relogioDoKill = setTimeout(() => {
+        sinalizar('SIGKILL');
+        terminar({ ok: false, erro: 'the CLI took too long' });
+      }, treguaMs);
     }, prazoMs);
     filho.on('error', (e) => terminar({ ok: false, erro: e.message }));
-    filho.on('exit', (codigo) => {
-      if (codigo === 0) terminar({ ok: true });
-      else terminar({ ok: false, erro: erro.trim().split('\n').pop() || `the CLI exited with ${codigo}` });
+    filho.on('exit', (codigo, sinal) => {
+      saiuCom = sinal ? sinal : codigo;
+      if (sinal) {
+        sinalizar('SIGKILL');
+        terminar({ ok: false, erro: 'the CLI took too long' });
+        return;
+      }
+      relogioDoFecho = setTimeout(() => {
+        sinalizar('SIGTERM');
+        pelaSaida();
+      }, 1000);
+    });
+    filho.on('close', () => {
+      if (saiuCom != null) pelaSaida();
     });
   });
 }
@@ -213,6 +244,7 @@ module.exports = {
   processosNoAmbiente,
   processosNaPasta,
   sessoesVivasNaPasta,
+  inicioDoProcesso,
   rodarUsage,
   envDaRenovacao,
   renovarParadas,

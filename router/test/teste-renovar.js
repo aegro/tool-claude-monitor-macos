@@ -126,7 +126,7 @@ const testes = {
     const bin = path.join(raiz, 'claude-pendurado.sh');
     fs.writeFileSync(bin, '#!/bin/sh\ntrap "" TERM\nsleep 30 &\nsleep 30\n', { mode: 0o755 });
     const inicio = Date.now();
-    const r = await renovar.rodarUsage(path.join(raiz, 'pasta'), { prazoMs: 500, comando: bin });
+    const r = await renovar.rodarUsage(path.join(raiz, 'pasta'), { prazoMs: 500, treguaMs: 300, comando: bin });
     assert.strictEqual(r.ok, false);
     assert.match(r.erro, /too long/);
     assert.ok(Date.now() - inicio < 5000, 'rodarUsage ficou pendurado');
@@ -137,6 +137,27 @@ const testes = {
     fs.writeFileSync(bin, '#!/bin/sh\necho "OAuth token has expired" >&2\nexit 1\n', { mode: 0o755 });
     const r = await renovar.rodarUsage(path.join(raiz, 'pasta'), { prazoMs: 5000, comando: bin });
     assert.deepStrictEqual(r, { ok: false, erro: 'OAuth token has expired' });
+  },
+
+  async cliQueSaiDeixandoNetoNoStderrNaoPerdeOMotivo() {
+    const bin = path.join(raiz, 'claude-neto.sh');
+    fs.writeFileSync(bin, '#!/bin/sh\necho "refresh failed: invalid_grant" >&2\nsleep 30 &\nexit 1\n', { mode: 0o755 });
+    const inicio = Date.now();
+    const r = await renovar.rodarUsage(path.join(raiz, 'pasta'), { prazoMs: 10000, comando: bin });
+    assert.deepStrictEqual(r, { ok: false, erro: 'refresh failed: invalid_grant' });
+    assert.ok(Date.now() - inicio < 5000);
+  },
+
+  async cliQueAtendeOSigtermSaiPeloPrazo() {
+    const bin = path.join(raiz, 'claude-lento.sh');
+    fs.writeFileSync(bin, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    const r = await renovar.rodarUsage(path.join(raiz, 'pasta'), { prazoMs: 300, treguaMs: 5000, comando: bin });
+    assert.deepStrictEqual(r, { ok: false, erro: 'the CLI took too long' });
+  },
+
+  async inicioDoProcessoNoFormatoDoClaude() {
+    const inicio = await renovar.inicioDoProcesso(process.pid);
+    assert.match(inicio, /^[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d \d{4}$/);
   },
 
   async sessaoComPidReusadoNaoContaComoViva() {

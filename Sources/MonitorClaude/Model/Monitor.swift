@@ -930,7 +930,7 @@ final class Monitor: ObservableObject {
     }
 
     var outlook: Outlook {
-        guard let w = usage?.headline, let reset = w.timeToReset else { return .idle }
+        guard let w = usage?.headline, !w.hasReset(), let reset = w.timeToReset else { return .idle }
         guard let burn = burn(of: w) else { return .measuring }
         guard let hours = burn.hoursToExhaustion(from: w.utilization) else {
             return .safe(rate: burn.percentPerHour, reset: reset, window: w)
@@ -944,7 +944,7 @@ final class Monitor: ObservableObject {
 
     /// The headline window's own trail, from its start.
     var blockTrail: [(Date, Double)] {
-        guard let window = usage?.headline, let start = window.startsAt else { return [] }
+        guard let window = usage?.headline, !window.hasReset(), let start = window.startsAt else { return [] }
         return history.series(window.isSession ? \.session : \.weekly, since: start, org: liveOrg)
     }
 

@@ -115,7 +115,7 @@ struct FocusAndRefreshTests {
         #expect(q.focus() == "financeiro2")
         #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Os agentes rodam na")
         #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions())
-                == "Sessões novas do terminal abrem na Financeiro: os agentes não seguem a regra do terminal.")
+                == "Sessões novas do terminal abrem na Financeiro, a primeira da fila com folga. Os agentes só trocam de conta quando esta bate o limite.")
     }
 
     @Test func juntosNãoHáSegundaLinha() {

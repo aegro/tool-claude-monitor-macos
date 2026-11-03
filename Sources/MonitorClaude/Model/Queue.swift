@@ -171,7 +171,8 @@ struct AccountQueue: Equatable {
     static func terminalNote(queue: AccountQueue, focus: String?, terminal: String?) -> String? {
         guard queue.configured, !queue.isSingle else { return nil }
         if let terminal, terminal != focus, let entry = queue.entry(terminal) {
-            return "Sessões novas do terminal abrem na \(entry.label): os agentes não seguem a regra do terminal."
+            let rule = queue.strategy == .headroom ? "a de mais folga agora" : "a primeira da fila com folga"
+            return "Sessões novas do terminal abrem na \(entry.label), \(rule). Os agentes só trocam de conta quando esta bate o limite."
         }
         if let agents = queue.agents, agents != focus, let entry = queue.entry(agents) {
             return "Os agentes seguem na \(entry.label)."

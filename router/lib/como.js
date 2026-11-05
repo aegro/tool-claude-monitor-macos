@@ -170,7 +170,7 @@ function caminhosDoPedido(pedido, home = os.homedir()) {
     }
     const formas = [...new Set([citado, real])];
     if (!formas.every((f) => leituraPermitida(f, limites))) continue;
-    if (pasta && real.split('/').filter(Boolean).length < 3) continue;
+    if (pasta && formas.some((f) => f.split('/').filter(Boolean).length < 3)) continue;
     for (const f of formas) caminhos.push(pasta ? `${f}/**` : f);
   }
   return [...new Set(caminhos)];

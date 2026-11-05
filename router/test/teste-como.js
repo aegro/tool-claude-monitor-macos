@@ -120,6 +120,8 @@ const testes = {
     assert.deepStrictEqual(regras('leia ~/.claude-accounts'), []);
     // Pasta rasa demais.
     assert.deepStrictEqual(regras('resuma /usr'), []);
+    // A profundidade vale para as duas formas: no macOS /var/db é raso, mesmo resolvendo para /private/var/db.
+    if (fs.existsSync('/var/db') && fs.realpathSync('/var/db') !== '/var/db') assert.deepStrictEqual(regras('resuma /var/db'), []);
     // O que o pedido cita de verdade passa.
     const arquivo = fs.realpathSync(path.join(home, 'Code', 'projeto', 'relatorio.html'));
     assert.ok(regras('publique ~/Code/projeto/relatorio.html').includes(arquivo));

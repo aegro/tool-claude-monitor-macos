@@ -150,8 +150,10 @@ const testes = {
     assert.strictEqual(plano.env.PATH, '/bin');
     // Fora do VS Code e do app desktop não há Artifact: o comando avisa em vez de deixar o filho dizer que não achou.
     assert.match(plano.aviso, /only exist in Claude Code sessions from VS Code or the desktop app/);
+    assert.strictEqual(plano.semArtefato, true);
     const doVsCode = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact'], modelo: 'm' }, cfg, { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' });
     assert.strictEqual(doVsCode.aviso, null);
+    assert.strictEqual(doVsCode.semArtefato, false);
     const semArtefato = como.planejar('principal', { pedido: 'x', ferramentas: ['Read'], modelo: 'm' }, cfg, {});
     assert.strictEqual(semArtefato.aviso, null);
   },

@@ -123,7 +123,7 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
   const aviso = semArtefato
     ? 'the Artifact tools only exist in Claude Code sessions from VS Code or the desktop app; run this from one of them'
     : null;
-  return { id, env, dir, login, onde, args, aviso, pedido: opcoes.pedido, ferramentas: opcoes.ferramentas, modelo: opcoes.modelo };
+  return { id, env, dir, login, onde, args, aviso, semArtefato, pedido: opcoes.pedido, ferramentas: opcoes.ferramentas, modelo: opcoes.modelo };
 }
 
 // As ferramentas que o filho tem e as que ele usa sem pedir. Leitura sem escopo (`Read`, `Glob`, `Grep`) fica fora da
@@ -289,7 +289,7 @@ async function conferir(opcoes, { verificarToken = conferirToken, saida = proces
     a = { plano: {}, token: null, erro: `could not check ${opcoes.id}: ${e.message}`, avisos: [] };
   }
   const { plano, token, avisos } = a;
-  const erro = a.erro || (plano.aviso && plano.aviso.startsWith('the Artifact tools') ? plano.aviso : null);
+  const erro = a.erro || (plano.semArtefato ? plano.aviso : null);
   const r = {
     account: opcoes.id,
     ok: !erro,

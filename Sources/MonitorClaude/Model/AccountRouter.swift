@@ -92,16 +92,17 @@ enum AccountRouter {
         /// The `claude-accounts` process that ran it, from `id`.
         var pid: pid_t? { id.split(separator: "-").first.flatMap { pid_t($0) } }
 
-        /// No exit code and no live process: the parent died (a session's Bash timed out, a closed terminal) before
-        /// recording the end, and the task may have half-run.
-        func abandoned(isAlive: (pid_t) -> Bool = AccountRouter.processAlive) -> Bool {
-            exitCode == nil && !(pid.map(isAlive) ?? false)
+        /// No exit code and no live parent: the parent died (a session's Bash timed out, a closed terminal) before
+        /// recording the end, and the task may have half-run. The parent must have started by `at`, so a later
+        /// process that got the same pid does not count as the task still running.
+        func abandoned(isAlive: (pid_t, Date) -> Bool = AccountRouter.processAlive) -> Bool {
+            exitCode == nil && !(pid.map { isAlive($0, at) } ?? false)
         }
 
         /// How the row reads. Exit 0 says the process ended, not that the request worked: a delete the child could
         /// not confirm also ends with 0. Without an exit code, the process decides between running and abandoned; a
         /// task can run for as long as it needs, so there is no time cutoff.
-        func outcome(isAlive: (pid_t) -> Bool = AccountRouter.processAlive) -> String {
+        func outcome(isAlive: (pid_t, Date) -> Bool = AccountRouter.processAlive) -> String {
             switch exitCode {
             case 0: return "terminou"
             case let code?: return "saída \(code)"
@@ -114,6 +115,24 @@ enum AccountRouter {
     static func processAlive(_ pid: pid_t) -> Bool {
         guard pid > 0 else { return false }
         return kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    /// Whether `pid` is alive and is the process that was already running at `startedBy`. A pid macOS handed to a
+    /// newer process fails the check, read from the kernel's start time (`proc_pidinfo`). When the start time cannot
+    /// be read, the plain existence check decides.
+    static func processAlive(_ pid: pid_t, startedBy: Date) -> Bool {
+        guard processAlive(pid) else { return false }
+        guard let started = processStart(pid) else { return true }
+        // One second of slack: the router stamps the task with `Date.now()` right after it starts, in ms.
+        return started <= startedBy.addingTimeInterval(1)
+    }
+
+    /// When `pid` started, from the kernel; nil when it cannot be read (gone, or not visible).
+    static func processStart(_ pid: pid_t) -> Date? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000)
     }
 
     static let commandNames = ["claude-auto", "claude-accounts"]
@@ -752,6 +771,7 @@ enum AccountRouter {
         tail(url, limit: limit, parseOneShotTask)
     }
 
+    /// One line of `.estado/acessos.jsonl` as a task; nil for a line without a time or an account (torn or foreign).
     static func parseOneShotTask(_ line: Data) -> OneShotTask? {
         guard let root = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let ms = (root["em"] as? NSNumber)?.doubleValue,

@@ -40,8 +40,8 @@ struct OneShotTasksTests {
         let at = Date(timeIntervalSince1970: 1_793_891_061)
         var task = AccountRouter.OneShotTask(id: "4242-1793891061000", at: at, from: nil, account: "principal", login: nil,
                                              organization: nil, tools: [], request: "", exitCode: 0)
-        let vivo: (pid_t) -> Bool = { $0 == 4242 }
-        let morto: (pid_t) -> Bool = { _ in false }
+        let vivo: (pid_t, Date) -> Bool = { pid, _ in pid == 4242 }
+        let morto: (pid_t, Date) -> Bool = { _, _ in false }
         // Exit 0 is the process ending, not the request working (a delete the child could not confirm also gives 0).
         #expect(task.outcome(isAlive: morto) == "terminou")
         #expect(!task.abandoned(isAlive: morto))
@@ -55,10 +55,13 @@ struct OneShotTasksTests {
         #expect(task.abandoned(isAlive: morto))
         // An id without a pid cannot be checked, so it is not counted as running.
         task.id = "sem-pid"
-        #expect(task.abandoned(isAlive: { _ in true }))
+        #expect(task.abandoned(isAlive: { _, _ in true }))
         // The real check: this test process is alive, pid 0 never counts.
         #expect(AccountRouter.processAlive(getpid()))
         #expect(!AccountRouter.processAlive(0))
+        // A pid reused by a newer process is not the task's parent: this process started before now, not before 1970.
+        #expect(AccountRouter.processAlive(getpid(), startedBy: Date()))
+        #expect(!AccountRouter.processAlive(getpid(), startedBy: Date(timeIntervalSince1970: 1)))
     }
 
     @Test func listaAsMaisNovasPrimeiroEIgnoraLinhaQuebrada() throws {

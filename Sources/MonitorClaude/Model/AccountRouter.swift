@@ -74,6 +74,78 @@ enum AccountRouter {
         var reason: String
     }
 
+    /// One task run with `claude-accounts as` (a line of `.estado/acessos.jsonl`): asked from a session on `from` (nil
+    /// when from a plain terminal), run on `account` with that login and org.
+    struct OneShotTask: Equatable, Identifiable {
+        /// The router's `<pid>-<start ms>`, unique per task; the pid tells a running task from one whose parent died.
+        var id: String
+        var at: Date
+        var from: String?
+        var account: String
+        var login: String?
+        var organization: String?
+        var tools: [String]
+        var request: String
+        /// nil while it runs, or when the process that asked died before writing the end.
+        var exitCode: Int?
+
+        /// The `claude-accounts` process that ran it, from `id`.
+        var pid: pid_t? { id.split(separator: "-").first.flatMap { pid_t($0) } }
+
+        /// Whether the process that asked was still alive when the list was read (`AccountRouter.oneShotTasks`).
+        /// Resolved there, not in the view, so a parent that dies changes the published state on the next refresh.
+        var parentAlive = false
+
+        /// No exit code and no live parent: the parent died (a session's Bash timed out, a closed terminal) before
+        /// recording the end, and the task may have half-run.
+        var abandoned: Bool { exitCode == nil && !parentAlive }
+
+        /// How the row reads. Exit 0 says the process ended, not that the request worked: a delete the child could
+        /// not confirm also ends with 0. Without an exit code, the process decides between running and abandoned; a
+        /// task can run for as long as it needs, so there is no time cutoff.
+        var outcome: String {
+            switch exitCode {
+            case 0: return "terminou"
+            case let code?: return "saída \(code)"
+            case nil: return abandoned ? "sem fim registrado" : "rodando"
+            }
+        }
+    }
+
+    /// Whether a process exists (`kill(pid, 0)`; EPERM still means it exists, under another user).
+    static func processAlive(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        return kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    /// Whether `pid` is a process of this user that was already running at `startedBy`: the parent of a task, not a
+    /// newer process that got the same pid. `claude-accounts` always runs as this user, so a pid owned by anyone else
+    /// is a reuse. Read with `sysctl`, which sees every user's processes; if it fails, only a live process of this
+    /// user counts (`kill` without EPERM).
+    static func processAlive(_ pid: pid_t, startedBy: Date) -> Bool {
+        guard pid > 0 else { return false }
+        guard let info = processInfo(pid) else { return kill(pid, 0) == 0 }
+        guard let info else { return false }
+        // One second of slack: the router stamps the task with `Date.now()` right after it starts, in ms.
+        return info.uid == getuid() && info.started <= startedBy.addingTimeInterval(1)
+    }
+
+    /// Owner and start time of `pid` from `sysctl(KERN_PROC_PID)`: `.some(nil)` when there is no such process (or only
+    /// its zombie), nil
+    /// when the call itself failed.
+    static func processInfo(_ pid: pid_t) -> (uid: uid_t, started: Date)?? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else { return nil }
+        guard size > 0 else { return .some(nil) }
+        // A zombie exited and only waits for its parent to reap it: no process, for the task.
+        guard Int32(info.kp_proc.p_stat) != SZOMB else { return .some(nil) }
+        let start = info.kp_proc.p_un.__p_starttime
+        return .some((info.kp_eproc.e_ucred.cr_uid,
+                      Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)))
+    }
+
     static let commandNames = ["claude-auto", "claude-accounts"]
 
     /// `CLAUDE_AUTO_HOME` wins, like in the router, so a test or a second setup never touches the real accounts.
@@ -85,6 +157,7 @@ enum AccountRouter {
     }
     static var configURL: URL { home.appendingPathComponent("config.json") }
     static var switchesURL: URL { home.appendingPathComponent(".estado/trocas.jsonl") }
+    static var oneShotTasksURL: URL { home.appendingPathComponent(".estado/acessos.jsonl") }
     static var exhaustedURL: URL { home.appendingPathComponent(".estado/esgotadas.json") }
     static var slotBurnRateURL: URL { home.appendingPathComponent(".estado/ritmo.json") }
     static var refreshesURL: URL { home.appendingPathComponent(".estado/renovacoes.json") }
@@ -686,10 +759,51 @@ enum AccountRouter {
         return text.split(separator: "\n").last.flatMap { parseSwitch(Data($0.utf8)) }
     }
 
+    /// The last `limit` readable lines of a JSONL file, newest first. A broken line is skipped without costing a
+    /// slot, so a torn write at the end does not shorten the list.
+    static func tail<T>(_ url: URL, limit: Int, _ parse: (Data) -> T?) -> [T] {
+        guard limit > 0, let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        var found: [T] = []
+        for line in text.split(separator: "\n").reversed() {
+            guard let item = parse(Data(line.utf8)) else { continue }
+            found.append(item)
+            if found.count == limit { break }
+        }
+        return found
+    }
+
     /// The latest switches, newest first.
     static func switches(limit: Int = 30) -> [Switch] {
-        guard let text = try? String(contentsOf: switchesURL, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").suffix(limit).reversed().compactMap { parseSwitch(Data($0.utf8)) }
+        tail(switchesURL, limit: limit, parseSwitch)
+    }
+
+    /// The latest tasks run with `claude-accounts as`, newest first,
+    /// with whether each unfinished one's parent is alive.
+    static func oneShotTasks(limit: Int = 8, url: URL = oneShotTasksURL,
+                             isAlive: (pid_t, Date) -> Bool = processAlive) -> [OneShotTask] {
+        tail(url, limit: limit, parseOneShotTask).map { task in
+            var task = task
+            if task.exitCode == nil { task.parentAlive = task.pid.map { isAlive($0, task.at) } ?? false }
+            return task
+        }
+    }
+
+    /// One line of `.estado/acessos.jsonl` as a task; nil for a line without a time or an account (torn or foreign).
+    static func parseOneShotTask(_ line: Data) -> OneShotTask? {
+        guard let root = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let ms = (root["em"] as? NSNumber)?.doubleValue,
+              let account = root["conta"] as? String, !account.isEmpty
+        else { return nil }
+        return OneShotTask(id: root["id"] as? String ?? "\(Int64(ms))-\(account)",
+                           at: Date(timeIntervalSince1970: ms / 1000),
+                           from: root["de"] as? String,
+                           account: account,
+                           login: root["login"] as? String,
+                           organization: root["organizacao"] as? String,
+                           tools: root["ferramentas"] as? [String] ?? [],
+                           request: (root["pedido"] as? String ?? "")
+                               .split(whereSeparator: \.isWhitespace).joined(separator: " "),
+                           exitCode: (root["codigo"] as? NSNumber)?.intValue)
     }
 
     /// The reason the router recorded, in words.
@@ -999,6 +1113,8 @@ struct RouterState: Equatable {
     /// The account the agents of `claude agents` run on now (`AccountRouter.agentsAccount`).
     var agentsAccount: String?
     var switches: [AccountRouter.Switch] = []
+    /// The latest tasks run with `claude-accounts as` (`AccountRouter.oneShotTasks`).
+    var oneShotTasks: [AccountRouter.OneShotTask] = []
     /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while. The Monitor never
     /// renews a token itself; the router has the official CLI do it (`refreshes`). Their numbers stay as last read
     /// until then.

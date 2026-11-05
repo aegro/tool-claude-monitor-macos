@@ -135,11 +135,58 @@ struct AccountsSettings: View {
                     }
                 }
             }
+
+            if let tasks = monitor.router?.oneShotTasks, !tasks.isEmpty {
+                Section {
+                    ForEach(tasks) { t in
+                        OneShotTaskRow(task: t, from: t.from.map { name($0, queue) } ?? "terminal", to: name(t.account, queue))
+                    }
+                } header: {
+                    Text("Tarefas em outra conta")
+                } footer: {
+                    Text("Pedidas com claude-accounts as, de uma sessão ou do terminal, cada uma no login da conta de destino. O registro guarda as últimas 500, que saem em claude-accounts accesses -n 500.")
+                        .font(Type.caption).foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
     }
 
     private func name(_ id: String, _ queue: AccountQueue) -> String { queue.entry(id)?.label ?? id }
+}
+
+/// One `claude-accounts as` task: when, from which session's account to which account (and its org), how it ended, and
+/// the start of what was asked.
+struct OneShotTaskRow: View {
+    let task: AccountRouter.OneShotTask
+    let from: String
+    let to: String
+
+    private static let stampWidth: CGFloat = 84
+    private static let gap: CGFloat = 8
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: Self.gap) {
+                Text(Fmt.stamp(task.at)).font(Type.caption).monospacedDigit().foregroundStyle(.secondary)
+                    .frame(width: Self.stampWidth, alignment: .leading)
+                Text("\(from) → \(to)").font(Type.body)
+                if let org = task.organization {
+                    Text(org).font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                Spacer()
+                Text(task.outcome).font(Type.caption)
+                    .foregroundStyle(task.exitCode == 0 || (task.exitCode == nil && !task.abandoned) ? Color.secondary : Ink.alarm)
+            }
+            Text(task.request.isEmpty ? "(sem pedido registrado)" : task.request)
+                .font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                .padding(.leading, Self.stampWidth + Self.gap)
+                .help([task.request.isEmpty ? nil : "\(task.request) (até 300 caracteres)",
+                       task.login.map { "Login: \($0)\(task.organization.map { ", \($0)" } ?? "")" },
+                       task.tools.isEmpty ? nil : "Ferramentas: \(task.tools.joined(separator: ", "))"]
+                    .compactMap { $0 }.joined(separator: "\n\n"))
+        }
+    }
 }
 
 struct AccountSettingsRow: View {

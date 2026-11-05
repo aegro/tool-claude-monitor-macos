@@ -76,7 +76,9 @@ enum AccountRouter {
 
     /// One task run with `claude-accounts as` (a line of `.estado/acessos.jsonl`): asked from a session on `from` (nil
     /// when from a plain terminal), run on `account` with that login and org.
-    struct OneShotTask: Equatable {
+    struct OneShotTask: Equatable, Identifiable {
+        /// The router's `<pid>-<start ms>`, unique per task; the pid tells a running task from one whose parent died.
+        var id: String
         var at: Date
         var from: String?
         var account: String
@@ -87,19 +89,32 @@ enum AccountRouter {
         /// nil while it runs, or when the process that asked died before writing the end.
         var exitCode: Int?
 
-        /// How the row reads: ended, failed with the exit code, running, or ended without saying so. Exit 0 says the
-        /// process ended, not that the request worked: a delete the child could not confirm also ends with 0.
-        func outcome(now: Date = Date()) -> String {
+        /// The `claude-accounts` process that ran it, from `id`.
+        var pid: pid_t? { id.split(separator: "-").first.flatMap { pid_t($0) } }
+
+        /// No exit code and no live process: the parent died (a session's Bash timed out, a closed terminal) before
+        /// recording the end, and the task may have half-run.
+        func abandoned(isAlive: (pid_t) -> Bool = AccountRouter.processAlive) -> Bool {
+            exitCode == nil && !(pid.map(isAlive) ?? false)
+        }
+
+        /// How the row reads. Exit 0 says the process ended, not that the request worked: a delete the child could
+        /// not confirm also ends with 0. Without an exit code, the process decides between running and abandoned; a
+        /// task can run for as long as it needs, so there is no time cutoff.
+        func outcome(isAlive: (pid_t) -> Bool = AccountRouter.processAlive) -> String {
             switch exitCode {
             case 0: return "terminou"
             case let code?: return "saída \(code)"
-            case nil: return now.timeIntervalSince(at) < AccountRouter.oneShotRunningWindow ? "rodando" : "sem fim registrado"
+            case nil: return abandoned(isAlive: isAlive) ? "sem fim registrado" : "rodando"
             }
         }
     }
 
-    /// A task with no exit code past this is not running any more: its parent died before recording the end.
-    static let oneShotRunningWindow: TimeInterval = 30 * 60
+    /// Whether a process exists (`kill(pid, 0)`; EPERM still means it exists, under another user).
+    static func processAlive(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        return kill(pid, 0) == 0 || errno == EPERM
+    }
 
     static let commandNames = ["claude-auto", "claude-accounts"]
 
@@ -714,16 +729,27 @@ enum AccountRouter {
         return text.split(separator: "\n").last.flatMap { parseSwitch(Data($0.utf8)) }
     }
 
+    /// The last `limit` readable lines of a JSONL file, newest first. A broken line is skipped without costing a
+    /// slot, so a torn write at the end does not shorten the list.
+    static func tail<T>(_ url: URL, limit: Int, _ parse: (Data) -> T?) -> [T] {
+        guard limit > 0, let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        var found: [T] = []
+        for line in text.split(separator: "\n").reversed() {
+            guard let item = parse(Data(line.utf8)) else { continue }
+            found.append(item)
+            if found.count == limit { break }
+        }
+        return found
+    }
+
     /// The latest switches, newest first.
     static func switches(limit: Int = 30) -> [Switch] {
-        guard let text = try? String(contentsOf: switchesURL, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").suffix(limit).reversed().compactMap { parseSwitch(Data($0.utf8)) }
+        tail(switchesURL, limit: limit, parseSwitch)
     }
 
     /// The latest tasks run with `claude-accounts as`, newest first.
-    static func oneShotTasks(limit: Int = 20, url: URL = oneShotTasksURL) -> [OneShotTask] {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").suffix(limit).reversed().compactMap { parseOneShotTask(Data($0.utf8)) }
+    static func oneShotTasks(limit: Int = 8, url: URL = oneShotTasksURL) -> [OneShotTask] {
+        tail(url, limit: limit, parseOneShotTask)
     }
 
     static func parseOneShotTask(_ line: Data) -> OneShotTask? {
@@ -731,7 +757,8 @@ enum AccountRouter {
               let ms = (root["em"] as? NSNumber)?.doubleValue,
               let account = root["conta"] as? String, !account.isEmpty
         else { return nil }
-        return OneShotTask(at: Date(timeIntervalSince1970: ms / 1000),
+        return OneShotTask(id: root["id"] as? String ?? "\(Int64(ms))-\(account)",
+                           at: Date(timeIntervalSince1970: ms / 1000),
                            from: root["de"] as? String,
                            account: account,
                            login: root["login"] as? String,

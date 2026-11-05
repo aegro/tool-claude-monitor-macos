@@ -138,13 +138,13 @@ struct AccountsSettings: View {
 
             if let tasks = monitor.router?.oneShotTasks, !tasks.isEmpty {
                 Section {
-                    ForEach(Array(tasks.prefix(8).enumerated()), id: \.offset) { _, t in
+                    ForEach(tasks) { t in
                         OneShotTaskRow(task: t, from: t.from.map { name($0, queue) } ?? "terminal", to: name(t.account, queue))
                     }
                 } header: {
                     Text("Tarefas em outra conta")
                 } footer: {
-                    Text("Pedidas por uma sessão com claude-accounts as, cada uma no login da conta de destino. A lista inteira sai em claude-accounts accesses.")
+                    Text("Pedidas com claude-accounts as, de uma sessão ou do terminal, cada uma no login da conta de destino. A lista inteira sai em claude-accounts accesses.")
                         .font(Type.caption).foregroundStyle(.secondary)
                 }
             }
@@ -162,23 +162,29 @@ struct OneShotTaskRow: View {
     let from: String
     let to: String
 
+    private static let stampWidth: CGFloat = 84
+    private static let gap: CGFloat = 8
+
     var body: some View {
+        let abandoned = task.abandoned()
         VStack(alignment: .leading, spacing: 2) {
-            HStack {
+            HStack(spacing: Self.gap) {
                 Text(Fmt.stamp(task.at)).font(Type.caption).monospacedDigit().foregroundStyle(.secondary)
-                    .frame(width: 84, alignment: .leading)
+                    .frame(width: Self.stampWidth, alignment: .leading)
                 Text("\(from) → \(to)").font(Type.body)
                 if let org = task.organization {
                     Text(org).font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer()
                 Text(task.outcome()).font(Type.caption)
-                    .foregroundStyle(task.exitCode == 0 || task.exitCode == nil ? Color.secondary : Ink.alarm)
+                    .foregroundStyle(task.exitCode == 0 || (task.exitCode == nil && !abandoned) ? Color.secondary : Ink.alarm)
             }
             Text(task.request.isEmpty ? "(sem pedido registrado)" : task.request)
                 .font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                .padding(.leading, 92)
-                .help([task.request, task.tools.isEmpty ? nil : "Ferramentas: \(task.tools.joined(separator: ", "))"]
+                .padding(.leading, Self.stampWidth + Self.gap)
+                .help([task.request.isEmpty ? nil : "\(task.request) (até 300 caracteres)",
+                       task.login.map { "Login: \($0)\(task.organization.map { ", \($0)" } ?? "")" },
+                       task.tools.isEmpty ? nil : "Ferramentas: \(task.tools.joined(separator: ", "))"]
                     .compactMap { $0 }.joined(separator: "\n\n"))
         }
     }

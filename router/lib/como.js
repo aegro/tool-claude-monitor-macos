@@ -89,11 +89,11 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
   // Na pasta do ~/.claude, quem está lá é a conta segundo `identidade` (que corrige o ~/.claude.json regravado por uma
   // sessão antiga depois de uma troca dos agentes); nas outras pastas, o que a pasta declara.
   const login = path.resolve(dir) === path.resolve(contas.DIR_PRINCIPAL) ? { ...contas.identidade(id, cfg) } : declarado;
-  if (!login.chave) return { erro: `${id} has no login in ${dir}: run claude-accounts login ${id}` };
+  if (!login.chave) return { erro: `${id} has no login in ${dir}: run ${refazerLogin(id, cfg)}` };
   const outra = contaDaChave(login.chave, id, cfg);
   if (outra || (!contas.usaDirPadrao(id, cfg) && contas.loginDeOutraContaDaFila(id, cfg))) {
     const de = outra ? ` (${contas.nomeDaConta(outra, cfg)})` : '';
-    return { erro: `${dir} is signed in to ${contas.rotuloDoLoginDaPasta(login)}${de}, not to ${id}; fix it with claude-accounts login ${id}` };
+    return { erro: `${dir} is signed in to ${contas.rotuloDoLoginDaPasta(login)}${de}, not to ${id}; fix it with ${refazerLogin(id, cfg)}` };
   }
   const onde = contas.rotuloDoLoginDaPasta(login);
   const { ferramentas, liberadas } = permissoes(opcoes.ferramentas, opcoes.pedido);
@@ -146,6 +146,12 @@ function permissoes(pedidas, pedido) {
   return { ferramentas, liberadas: [...new Set(liberadas)] };
 }
 
+// O comando que conserta o login da pasta. Para a conta do ~/.claude, `login <id>` entraria no próprio ~/.claude, que é
+// o slot dos agentes, e desfaria a troca deles; o certo é dar a ela a pasta própria, que a sessão nova já prefere.
+function refazerLogin(id, cfg) {
+  return contas.usaDirPadrao(id, cfg) ? contas.comandoParaRefazerLoginProprio(id) : `claude-accounts login ${id}`;
+}
+
 function contaDaChave(chave, exceto, cfg) {
   return [...new Set([...cfg.rota, ...cfg.reserva])].find((o) => o !== exceto && contas.identidade(o, cfg).chave === chave) || null;
 }
@@ -176,14 +182,14 @@ function lerItemDaPasta(dir) {
 // aviso. Sem resposta da API, o mesmo.
 async function conferirToken(plano, cfg = contas.carregarConfig(), { lerItem = lerItemDaPasta, conferir = agentes.conferirLogin } = {}) {
   const item = await lerItem(plano.dir);
-  if (!item) return { erro: `${plano.id} has no login in ${plano.dir}: run claude-accounts login ${plano.id}` };
+  if (!item) return { erro: `${plano.id} has no login in ${plano.dir}: run ${refazerLogin(plano.id, cfg)}` };
   const r = await conferir(item);
-  if (r.valido === false && !r.chave) return { erro: `the ${plano.id} login in ${plano.dir} no longer works (${r.motivo}): run claude-accounts login ${plano.id}` };
+  if (r.valido === false && !r.chave) return { erro: `the ${plano.id} login in ${plano.dir} no longer works (${r.motivo}): run ${refazerLogin(plano.id, cfg)}` };
   if (!r.chave || r.vencido) return { aviso: `could not check the token in ${plano.dir} (${r.vencido ? 'expired, the CLI renews it' : r.motivo}); going by the login the folder declares` };
   if (r.chave === plano.login.chave) return {};
   const outra = contaDaChave(r.chave, plano.id, cfg);
   const dela = outra ? `${contas.nomeDaConta(outra, cfg)} (${outra})` : 'an account outside the queue';
-  return { erro: `the token in ${plano.dir} belongs to ${dela}, not to ${plano.id} (${plano.onde}); fix it with claude-accounts login ${plano.id}` };
+  return { erro: `the token in ${plano.dir} belongs to ${dela}, not to ${plano.id} (${plano.onde}); fix it with ${refazerLogin(plano.id, cfg)}` };
 }
 
 // Cada tarefa vira uma linha em `.estado/acessos.jsonl`: quem pediu (a conta da sessão de origem), em que conta rodou,

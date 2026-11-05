@@ -135,6 +135,12 @@ const testes = {
     assert.match((await com({ valido: true, chave: null, vencido: true })).aviso, /expired, the CLI renews it/);
     assert.match((await com({ valido: null, motivo: 'timeout' })).aviso, /could not check the token .*timeout/);
     assert.match((await com({}, null)).erro, /has no login/);
+    assert.match((await com({}, null)).erro, /claude-accounts login principal$/);
+    // A conta do ~/.claude (sem `dir`): `login <id>` entraria no slot dos agentes; o conserto é a pasta própria.
+    const doPadrao = { ...cfg, contas: { ...cfg.contas, principal: {} } };
+    const noPadrao = (r, item = '{}') => como.conferirToken(plano, doPadrao, { lerItem: async () => item, conferir: async () => r });
+    assert.match((await noPadrao({ valido: false, motivo: 'HTTP 401' })).erro, /claude-accounts login principal --own-folder$/);
+    assert.match((await noPadrao({}, null)).erro, /claude-accounts login principal --own-folder$/);
   },
   async entradaSemDadoNaoSeguraOComando() {
     const parada = new PassThrough();

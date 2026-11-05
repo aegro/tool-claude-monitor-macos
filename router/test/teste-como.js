@@ -63,12 +63,37 @@ const testes = {
     assert.ok(!a.includes('leia o artefato'));
     assert.strictEqual(a[0], '-p');
     assert.strictEqual(a[a.indexOf('--tools') + 1], 'Artifact,ArtifactComments,ArtifactData,Read');
-    assert.strictEqual(a[a.indexOf('--allowedTools') + 1], 'Artifact,ArtifactComments,ArtifactData,Read');
+    // Leitura sem escopo não é liberada: um artefato de terceiro com instrução embutida não leva o filho a ~/.ssh.
+    assert.strictEqual(a[a.indexOf('--allowedTools') + 1], 'Artifact,ArtifactComments,ArtifactData');
     // Sem os settings do usuário (que podem liberar Bash), sem MCP local, sem transcrição.
     assert.strictEqual(a[a.indexOf('--setting-sources') + 1], 'project');
     assert.ok(a.includes('--strict-mcp-config'));
     assert.ok(a.includes('--no-session-persistence'));
     assert.match(a[a.indexOf('--append-system-prompt') + 1], /thomas@empresa\.com, Empresa/);
+  },
+  leituraSoDoQueOPedidoCita() {
+    const cfg = configurar({ principal: TEAM, max: MAX });
+    const arquivo = path.join(raiz, 'relatorio.html');
+    fs.writeFileSync(arquivo, '<p>x</p>');
+    const real = fs.realpathSync(arquivo);
+    const liberadas = (pedido, ferramentas = como.FERRAMENTAS_PADRAO) => {
+      const a = como.planejar('principal', { pedido, ferramentas, modelo: 'm' }, cfg, {}).args;
+      return a.includes('--allowedTools') ? a[a.indexOf('--allowedTools') + 1].split(',') : [];
+    };
+    // O caminho citado (com aspas e pontuação em volta) ganha a regra só para ele, já resolvido (/tmp → /private/tmp).
+    assert.ok(liberadas(`publique "${arquivo}".`).includes(`Read(/${real})`));
+    assert.ok(liberadas(`resuma ${raiz}`).includes(`Read(/${fs.realpathSync(raiz)}/**)`));
+    // Caminho que não existe não vira regra; sem Read nas ferramentas, nenhuma regra de leitura.
+    assert.ok(!liberadas('leia /nao/existe/nada.txt').some((f) => f.startsWith('Read')));
+    assert.deepStrictEqual(liberadas(`publique ${arquivo}`, ['Artifact']), ['Artifact']);
+    // Só leitura, sem caminho: o filho tem o Read (no diretório atual) e nenhuma flag de liberação vazia.
+    const so = como.planejar('principal', { pedido: 'x', ferramentas: ['Read'], modelo: 'm' }, cfg, {}).args;
+    assert.ok(!so.includes('--allowedTools'));
+    assert.strictEqual(so[so.indexOf('--tools') + 1], 'Read');
+    // Regra com escopo pedida à mão vale como escrita, e o --tools leva só o nome.
+    const mao = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact', 'Read(//dados/**)'], modelo: 'm' }, cfg, {}).args;
+    assert.strictEqual(mao[mao.indexOf('--tools') + 1], 'Artifact,Read');
+    assert.strictEqual(mao[mao.indexOf('--allowedTools') + 1], 'Artifact,Read(//dados/**)');
   },
   recusaContaSemLoginOuComOLoginDeOutra() {
     const cfg = configurar({ principal: TEAM, max: MAX, vazia: null, copia: MAX });

@@ -118,7 +118,7 @@ claude-accounts accesses          # as últimas tarefas, com quem pediu, em que 
 
 O `as` roda um `claude -p` de uma vez na pasta em que uma sessão nova da conta abriria (`envDaSessao`), no diretório atual (caminhos relativos funcionam), e devolve a saída. O filho é estreito de propósito:
 
-- só as ferramentas de `--tools`, que também são as únicas liberadas (`--allowedTools`); padrão `Artifact,ArtifactComments,ArtifactData,Read`;
+- só as ferramentas de `--tools`; padrão `Artifact,ArtifactComments,ArtifactData,Read`. Elas são as únicas liberadas (`--allowedTools`), menos a leitura sem escopo (`Read`, `Glob`, `Grep`): o filho lê artefatos de terceiros, e um com instrução embutida não pode levá-lo a ler `~/.ssh` ou um `.env` e devolver o conteúdo. Sem regra, o `-p` lê só o diretório atual e nega o resto sem perguntar; um caminho absoluto citado no pedido (`publique /caminho/relatorio.html`) que existe ganha a regra só para ele (`Read(//caminho)`, ou `/**` numa pasta), e uma regra com escopo em `--tools` (`Read(//dados/**)`) vale como escrita;
 - sem os settings do usuário (`--setting-sources project`), que podem liberar Bash ou MCP inteiros, e sem os servidores MCP locais (`--strict-mcp-config`);
 - modelo `claude-haiku-5-5` por padrão (`--model` troca), sem transcrição (`--no-session-persistence`);
 - o prompt de sistema pede que ele termine dizendo em que conta e organização fez a operação e o link de cada artefato.

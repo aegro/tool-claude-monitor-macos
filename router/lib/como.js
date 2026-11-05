@@ -12,6 +12,7 @@
 // registro.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
@@ -95,13 +96,13 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
     return { erro: `${dir} is signed in to ${contas.rotuloDoLoginDaPasta(login)}${de}, not to ${id}; fix it with claude-accounts login ${id}` };
   }
   const onde = contas.rotuloDoLoginDaPasta(login);
-  const lista = opcoes.ferramentas.join(',');
+  const { ferramentas, liberadas } = permissoes(opcoes.ferramentas, opcoes.pedido);
   // O pedido vai pela entrada padrão do filho, nunca em argv: um pedido que começa com "-" (uma lista em markdown)
   // seria lido como opção do CLI.
   const args = [
     '-p',
-    '--tools', lista,
-    '--allowedTools', lista,
+    '--tools', ferramentas.join(','),
+    ...(liberadas.length ? ['--allowedTools', liberadas.join(',')] : []),
     '--model', opcoes.modelo,
     '--no-session-persistence',
     '--setting-sources', 'project',
@@ -115,6 +116,34 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
     ? 'the Artifact tools only exist in Claude Code sessions from VS Code or the desktop app; run this from one of them'
     : null;
   return { id, env, dir, login, onde, args, aviso, pedido: opcoes.pedido, ferramentas: opcoes.ferramentas, modelo: opcoes.modelo };
+}
+
+// As ferramentas que o filho tem e as que ele usa sem pedir. Leitura sem escopo (`Read`, `Glob`, `Grep`) fica fora da
+// segunda lista: o filho lê artefatos de terceiros, e um artefato com instrução embutida levaria o modelo a ler
+// `~/.ssh`, um `.env` ou as pastas das contas e devolver o conteúdo num comentário. Sem a regra, o `-p` lê só o
+// diretório atual e nega o resto sem perguntar (medido em 05/11/2026). Um caminho absoluto que o próprio pedido cita, e
+// que existe, ganha a regra só para ele (`Read(//caminho)`, ou `/**` numa pasta): é o "publique /x/relatorio.html".
+// Quem nomeia uma regra com escopo em --tools (`Read(//x/**)`) a tem como escrita.
+const LEITURA_SEM_ESCOPO = new Set(['Read', 'Glob', 'Grep']);
+
+function caminhosDoPedido(pedido, home = os.homedir()) {
+  const caminhos = [];
+  for (const bruto of String(pedido).split(/\s+/)) {
+    const t = bruto.replace(/^["'`(<[]+/, '').replace(/["'`)>\],;:!?.]+$/, '');
+    if (!t.startsWith('/') && !t.startsWith('~/')) continue;
+    try {
+      const real = fs.realpathSync(t.startsWith('~/') ? path.join(home, t.slice(2)) : t);
+      caminhos.push(fs.statSync(real).isDirectory() ? `${real}/**` : real);
+    } catch {}
+  }
+  return [...new Set(caminhos)];
+}
+
+function permissoes(pedidas, pedido) {
+  const ferramentas = [...new Set(pedidas.map((f) => f.replace(/\(.*\)$/, '')))];
+  const liberadas = pedidas.filter((f) => !LEITURA_SEM_ESCOPO.has(f));
+  if (ferramentas.includes('Read')) liberadas.push(...caminhosDoPedido(pedido).map((c) => `Read(/${c})`));
+  return { ferramentas, liberadas: [...new Set(liberadas)] };
 }
 
 function contaDaChave(chave, exceto, cfg) {

@@ -127,7 +127,8 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
     `Você roda com o login ${onde} (conta ${id}), a pedido de outra sessão e só para esta tarefa. ` +
       'Termine dizendo em que conta e organização a operação foi feita e o link de cada artefato que criou, mudou ou leu.',
   ];
-  const semArtefato = opcoes.ferramentas.some((f) => DE_ARTEFATO.has(f)) && !ENTRADAS_COM_ARTEFATO.has(env.CLAUDE_CODE_ENTRYPOINT);
+  // Pelos nomes que o filho recebe (`ferramentas`, sem o escopo): `Artifact(x)` em --tools também vira Artifact.
+  const semArtefato = ferramentas.some((f) => DE_ARTEFATO.has(f)) && !ENTRADAS_COM_ARTEFATO.has(env.CLAUDE_CODE_ENTRYPOINT);
   const aviso = semArtefato
     ? 'the Artifact tools only exist in Claude Code sessions from VS Code or the desktop app; run this from one of them'
     : null;

@@ -158,6 +158,10 @@ const testes = {
     const doVsCode = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact'], modelo: 'm' }, cfg, { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' });
     assert.strictEqual(doVsCode.aviso, null);
     assert.strictEqual(doVsCode.semArtefato, false);
+    // Com escopo, a ferramenta ainda é Artifact para o filho: fora do VS Code, também falta.
+    const comEscopo = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact(foo)'], modelo: 'm' }, cfg, {});
+    assert.strictEqual(comEscopo.semArtefato, true);
+    assert.match(comEscopo.aviso, /only exist in Claude Code sessions/);
     const semArtefato = como.planejar('principal', { pedido: 'x', ferramentas: ['Read'], modelo: 'm' }, cfg, {});
     assert.strictEqual(semArtefato.aviso, null);
   },

@@ -166,7 +166,6 @@ struct OneShotTaskRow: View {
     private static let gap: CGFloat = 8
 
     var body: some View {
-        let abandoned = task.abandoned()
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: Self.gap) {
                 Text(Fmt.stamp(task.at)).font(Type.caption).monospacedDigit().foregroundStyle(.secondary)
@@ -176,8 +175,8 @@ struct OneShotTaskRow: View {
                     Text(org).font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer()
-                Text(task.outcome()).font(Type.caption)
-                    .foregroundStyle(task.exitCode == 0 || (task.exitCode == nil && !abandoned) ? Color.secondary : Ink.alarm)
+                Text(task.outcome).font(Type.caption)
+                    .foregroundStyle(task.exitCode == 0 || (task.exitCode == nil && !task.abandoned) ? Color.secondary : Ink.alarm)
             }
             Text(task.request.isEmpty ? "(sem pedido registrado)" : task.request)
                 .font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)

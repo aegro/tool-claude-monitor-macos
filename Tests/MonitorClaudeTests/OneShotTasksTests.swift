@@ -40,28 +40,50 @@ struct OneShotTasksTests {
         let at = Date(timeIntervalSince1970: 1_793_891_061)
         var task = AccountRouter.OneShotTask(id: "4242-1793891061000", at: at, from: nil, account: "principal", login: nil,
                                              organization: nil, tools: [], request: "", exitCode: 0)
-        let vivo: (pid_t, Date) -> Bool = { pid, _ in pid == 4242 }
-        let morto: (pid_t, Date) -> Bool = { _, _ in false }
         // Exit 0 is the process ending, not the request working (a delete the child could not confirm also gives 0).
-        #expect(task.outcome(isAlive: morto) == "terminou")
-        #expect(!task.abandoned(isAlive: morto))
+        #expect(task.outcome == "terminou")
+        #expect(!task.abandoned)
         task.exitCode = 2
-        #expect(task.outcome(isAlive: morto) == "saída 2")
-        // No exit code: the process decides, however long the task has been running.
+        #expect(task.outcome == "saída 2")
+        // No exit code: the parent decides, however long the task has been running.
         task.exitCode = nil
-        #expect(task.outcome(isAlive: vivo) == "rodando")
-        #expect(!task.abandoned(isAlive: vivo))
-        #expect(task.outcome(isAlive: morto) == "sem fim registrado")
-        #expect(task.abandoned(isAlive: morto))
-        // An id without a pid cannot be checked, so it is not counted as running.
-        task.id = "sem-pid"
-        #expect(task.abandoned(isAlive: { _, _ in true }))
-        // The real check: this test process is alive, pid 0 never counts.
-        #expect(AccountRouter.processAlive(getpid()))
-        #expect(!AccountRouter.processAlive(0))
-        // A pid reused by a newer process is not the task's parent: this process started before now, not before 1970.
+        task.parentAlive = true
+        #expect(task.outcome == "rodando")
+        #expect(!task.abandoned)
+        task.parentAlive = false
+        #expect(task.outcome == "sem fim registrado")
+        #expect(task.abandoned)
+    }
+
+    @Test func oPaiÉDesteUsuárioEJáRodavaNaHoraDaTarefa() {
+        // This test process: alive, this user's, started before now and after 1970.
         #expect(AccountRouter.processAlive(getpid(), startedBy: Date()))
         #expect(!AccountRouter.processAlive(getpid(), startedBy: Date(timeIntervalSince1970: 1)))
+        // launchd is alive and started long ago, but it is root's: a reused pid, never the task's parent.
+        #expect(!AccountRouter.processAlive(1, startedBy: Date()))
+        #expect(!AccountRouter.processAlive(0, startedBy: Date()))
+        #expect(AccountRouter.processAlive(getpid()))
+        #expect(!AccountRouter.processAlive(0))
+    }
+
+    @Test func aListaResolveSeOPaiAindaVive() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("acessos-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("acessos.jsonl")
+        try [#"{"id":"4242-1000","em":1000,"conta":"viva","codigo":null}"#,
+             #"{"id":"4343-2000","em":2000,"conta":"morta","codigo":null}"#,
+             #"{"id":"4444-3000","em":3000,"conta":"feita","codigo":0}"#,
+             #"{"em":1793891061844,"conta":"sem-pid","codigo":null}"#]
+            .joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        var asked: [pid_t] = []
+        let tasks = AccountRouter.oneShotTasks(url: url) { pid, at in
+            asked.append(pid)
+            return pid == 4242 && at == Date(timeIntervalSince1970: 1)
+        }
+        #expect(tasks.map(\.outcome) == ["sem fim registrado", "terminou", "sem fim registrado", "rodando"])
+        // Only unfinished tasks with a pid ask the kernel (an older line's made-up id, `<ms>-<account>`, has none).
+        #expect(asked.sorted() == [4242, 4343])
     }
 
     @Test func listaAsMaisNovasPrimeiroEIgnoraLinhaQuebrada() throws {

@@ -124,17 +124,54 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
 // diretório atual e nega o resto sem perguntar (medido em 05/11/2026). Um caminho absoluto que o próprio pedido cita, e
 // que existe, ganha a regra só para ele (`Read(//caminho)`, ou `/**` numa pasta): é o "publique /x/relatorio.html".
 // Quem nomeia uma regra com escopo em --tools (`Read(//x/**)`) a tem como escrita.
+//
+// A regra é fechada, porque um " / " solto num pedido em português liberaria a máquina inteira: nunca a raiz, o home
+// nem um ancestral dele; nunca o que está dentro de uma pasta sensível ou a contém (chaves, as pastas do Claude e das
+// contas, o Keychain); pasta só com 3 níveis ou mais (`/Users/x/projeto`, não `/opt/x`). Sai nas duas formas quando
+// diferem, a citada (`/tmp/x.html`) e a resolvida (`/private/tmp/x.html`), e as duas passam pelos mesmos cortes.
 const LEITURA_SEM_ESCOPO = new Set(['Read', 'Glob', 'Grep']);
+const SENSIVEIS_NO_HOME = ['.ssh', '.gnupg', '.aws', '.claude', '.claude-accounts', '.config/aegro', 'Library/Keychains'];
+
+const contem = (pasta, p) => p === pasta || p.startsWith(pasta.endsWith('/') ? pasta : `${pasta}/`);
+
+function comAsDuasFormas(caminhos) {
+  const formas = new Set();
+  for (const c of caminhos) {
+    formas.add(path.resolve(c));
+    try {
+      formas.add(fs.realpathSync(c));
+    } catch {}
+  }
+  return [...formas];
+}
+
+function leituraPermitida(p, { home, sensiveis }) {
+  if (home.some((h) => contem(p, h))) return false;
+  return !sensiveis.some((s) => contem(s, p) || contem(p, s));
+}
 
 function caminhosDoPedido(pedido, home = os.homedir()) {
+  const limites = {
+    home: comAsDuasFormas([home]),
+    sensiveis: comAsDuasFormas([...SENSIVEIS_NO_HOME.map((s) => path.join(home, s)), contas.DIR_CONTAS, contas.DIR_PRINCIPAL]),
+  };
   const caminhos = [];
   for (const bruto of String(pedido).split(/\s+/)) {
     const t = bruto.replace(/^["'`(<[]+/, '').replace(/["'`)>\],;:!?.]+$/, '');
     if (!t.startsWith('/') && !t.startsWith('~/')) continue;
+    const citado = path.resolve(t.startsWith('~/') ? path.join(home, t.slice(2)) : t);
+    let real;
+    let pasta;
     try {
-      const real = fs.realpathSync(t.startsWith('~/') ? path.join(home, t.slice(2)) : t);
-      caminhos.push(fs.statSync(real).isDirectory() ? `${real}/**` : real);
-    } catch {}
+      real = fs.realpathSync(citado);
+      pasta = fs.statSync(real).isDirectory();
+    } catch {
+      continue;
+    }
+    const formas = [...new Set([citado, real])];
+    if (!formas.every((f) => leituraPermitida(f, limites))) continue;
+    if (pasta && real.split('/').filter(Boolean).length < 3) continue;
+    for (const f of formas) caminhos.push(pasta ? `${f}/**` : f);
   }
   return [...new Set(caminhos)];
 }
@@ -301,6 +338,7 @@ module.exports = {
   registrar,
   lerAcessos,
   lerEntrada,
+  caminhosDoPedido,
   rodar,
   FERRAMENTAS_PADRAO,
   MODELO_PADRAO,

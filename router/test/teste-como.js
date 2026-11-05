@@ -82,7 +82,13 @@ const testes = {
     };
     // O caminho citado (com aspas e pontuação em volta) ganha a regra só para ele, já resolvido (/tmp → /private/tmp).
     assert.ok(liberadas(`publique "${arquivo}".`).includes(`Read(/${real})`));
-    assert.ok(liberadas(`resuma ${raiz}`).includes(`Read(/${fs.realpathSync(raiz)}/**)`));
+    const pasta = path.join(raiz, 'relatorios');
+    fs.mkdirSync(pasta, { recursive: true });
+    assert.ok(liberadas(`resuma ${pasta}`).includes(`Read(/${fs.realpathSync(pasta)}/**)`));
+    // As duas formas, quando diferem (no macOS o tmpdir é um link para /private/var/…).
+    if (path.resolve(arquivo) !== real) assert.ok(liberadas(`publique ${arquivo}`).includes(`Read(/${path.resolve(arquivo)})`));
+    // Pasta que contém a das contas (aqui, o CLAUDE_AUTO_HOME do teste) não é liberada.
+    assert.ok(!liberadas(`resuma ${raiz}`).some((f) => f.startsWith('Read')));
     // Caminho que não existe não vira regra; sem Read nas ferramentas, nenhuma regra de leitura.
     assert.ok(!liberadas('leia /nao/existe/nada.txt').some((f) => f.startsWith('Read')));
     assert.deepStrictEqual(liberadas(`publique ${arquivo}`, ['Artifact']), ['Artifact']);
@@ -94,6 +100,30 @@ const testes = {
     const mao = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact', 'Read(//dados/**)'], modelo: 'm' }, cfg, {}).args;
     assert.strictEqual(mao[mao.indexOf('--tools') + 1], 'Artifact,Read');
     assert.strictEqual(mao[mao.indexOf('--allowedTools') + 1], 'Artifact,Read(//dados/**)');
+  },
+  palavraSoltaNaoLiberaAMaquinaNemOHome() {
+    const home = path.join(raiz, 'home', 'thomas');
+    for (const d of ['.ssh', '.claude-accounts', '.config/aegro', 'Code/projeto']) fs.mkdirSync(path.join(home, d), { recursive: true });
+    fs.writeFileSync(path.join(home, '.ssh', 'id_ed25519'), 'chave');
+    fs.writeFileSync(path.join(home, 'Code', 'projeto', 'relatorio.html'), '<p>x</p>');
+    const regras = (pedido) => como.caminhosDoPedido(pedido, home);
+    // A raiz, o home e os ancestrais dele: nada.
+    assert.deepStrictEqual(regras('leia o artefato A / B e resuma'), []);
+    assert.deepStrictEqual(regras('resumo (/) aqui'), []);
+    assert.deepStrictEqual(regras('resuma ~/ e o resto'), []);
+    assert.deepStrictEqual(regras(`veja ${home}`), []);
+    assert.deepStrictEqual(regras(`veja ${path.dirname(home)}`), []);
+    // Pastas sensíveis, por dentro ou por quem as contém.
+    assert.deepStrictEqual(regras('leia ~/.ssh/id_ed25519'), []);
+    assert.deepStrictEqual(regras('resuma ~/.ssh'), []);
+    assert.deepStrictEqual(regras('resuma ~/.config'), []);
+    assert.deepStrictEqual(regras('leia ~/.claude-accounts'), []);
+    // Pasta rasa demais.
+    assert.deepStrictEqual(regras('resuma /usr'), []);
+    // O que o pedido cita de verdade passa.
+    const arquivo = fs.realpathSync(path.join(home, 'Code', 'projeto', 'relatorio.html'));
+    assert.ok(regras('publique ~/Code/projeto/relatorio.html').includes(arquivo));
+    assert.ok(regras('resuma ~/Code/projeto').includes(`${fs.realpathSync(path.join(home, 'Code', 'projeto'))}/**`));
   },
   recusaContaSemLoginOuComOLoginDeOutra() {
     const cfg = configurar({ principal: TEAM, max: MAX, vazia: null, copia: MAX });

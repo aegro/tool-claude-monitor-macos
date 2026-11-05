@@ -425,8 +425,12 @@ async function equilibrar(cfg, lista, estado) {
   const alvo = alvoDoEquilibrio(candidatas, atual, cfg, agora);
   if (!alvo) return null;
   const daVez = candidatas.find((c) => c.id === atual);
-  const porHora = (c) => contas.porHoraDe(c, agora).toFixed(2);
-  contas.log(`agentes: ${atual} com ${porHora(daVez)} pp/h até renovar e ${alvo.id} com ${porHora(alvo)}; troca por equilíbrio`);
+  // A conta da vez na reserva pode não ter ritmo medido, e o log não pode derrubar a troca.
+  const porHora = (c) => {
+    const valor = contas.porHoraDe(c, agora);
+    return valor == null ? 'ritmo desconhecido' : `${valor.toFixed(2)} pp/h`;
+  };
+  contas.log(`agentes: ${atual} com ${porHora(daVez)} até renovar e ${alvo.id} com ${porHora(alvo)}; troca por equilíbrio`);
   try {
     const troca = await trocarSlotSemTrava(alvo.id, 'equilibrio', estado);
     if (troca.mudou) estado.ultimaTroca = Date.now();

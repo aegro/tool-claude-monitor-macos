@@ -311,6 +311,14 @@ const testes = {
     const semArtefato = JSON.parse(escrito.pop());
     assert.strictEqual(semArtefato.ok, false);
     assert.match(semArtefato.error, /only exist in Claude Code sessions from VS Code or the desktop app/);
+    // O login foi conferido: a org segue na saída, e o aviso que virou erro não se repete.
+    assert.strictEqual(semArtefato.login, 'thomas@empresa.com');
+    assert.strictEqual(semArtefato.organization, 'Empresa');
+    assert.strictEqual(semArtefato.token, 'checked');
+    assert.deepStrictEqual(semArtefato.warnings, []);
+    // Em texto, a linha com a org sai igual, e o motivo vai para o stderr com saída 2.
+    assert.strictEqual(await como.rodar(['principal', '--check'], ok), 2);
+    assert.strictEqual(escrito.pop(), `principal: thomas@empresa.com, Empresa (folder ${path.join(raiz, 'pastas', 'principal')}, token checked)\n`);
     // Sem ferramenta de artefato pedida, a mesma sessão passa.
     assert.strictEqual(await como.rodar(['principal', '--check', '--json', '--tools', 'Read'], ok), 0);
     escrito.pop();

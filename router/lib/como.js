@@ -279,8 +279,9 @@ function lerEntrada(entrada = process.stdin, esperaMs = ESPERA_DA_ENTRADA_MS) {
 // a org, 2 quando a tarefa não rodaria (com o motivo e o conserto).
 //
 // Para a conferência, a falta das ferramentas de artefato (sessão fora do VS Code e do app desktop) é motivo de não
-// rodar, não aviso: quem pergunta antes de publicar precisa saber que a publicação vai falhar. Com erro, login e org
-// saem vazios, porque o que a pasta declara acabou de ser desmentido ou não pôde ser confirmado.
+// rodar, não aviso: quem pergunta antes de publicar precisa saber que a publicação vai falhar. Login e org saem
+// vazios só quando a conferência do login recusou (o que a pasta declara foi desmentido ou não pôde ser confirmado);
+// faltando só o Artifact, o login foi conferido e segue na saída, porque a org é justamente o que se perguntou.
 async function conferir(opcoes, { verificarToken = conferirToken, saida = process.stdout } = {}) {
   let a;
   try {
@@ -288,23 +289,26 @@ async function conferir(opcoes, { verificarToken = conferirToken, saida = proces
   } catch (e) {
     a = { plano: {}, token: null, erro: `could not check ${opcoes.id}: ${e.message}`, avisos: [] };
   }
-  const { plano, token, avisos } = a;
+  const { plano, token } = a;
+  const recusado = Boolean(a.erro);
   const erro = a.erro || (plano.semArtefato ? plano.aviso : null);
+  // O aviso que virou erro não se repete em warnings.
+  const avisos = a.avisos.filter((aviso) => aviso !== erro);
   const r = {
     account: opcoes.id,
     ok: !erro,
-    login: erro ? null : plano.login.email || null,
-    organization: erro ? null : plano.login.organizacao || null,
+    login: recusado ? null : plano.login.email || null,
+    organization: recusado ? null : plano.login.organizacao || null,
     folder: plano.dir || null,
-    token: erro ? null : token.aviso ? 'unchecked' : 'checked',
-    warnings: erro ? [] : avisos,
+    token: recusado ? null : token.aviso ? 'unchecked' : 'checked',
+    warnings: avisos,
     error: erro,
   };
   if (opcoes.json) saida.write(`${JSON.stringify(r)}\n`);
-  else if (erro) process.stderr.write(`claude-accounts: ${erro}\n`);
   else {
-    saida.write(`${r.account}: ${plano.onde} (folder ${r.folder}, token ${r.token})\n`);
+    if (!recusado) saida.write(`${r.account}: ${plano.onde} (folder ${r.folder}, token ${r.token})\n`);
     for (const aviso of avisos) process.stderr.write(`claude-accounts: ${aviso}\n`);
+    if (erro) process.stderr.write(`claude-accounts: ${erro}\n`);
   }
   return erro ? 2 : 0;
 }

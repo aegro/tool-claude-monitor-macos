@@ -84,7 +84,7 @@ struct AccountsSettings: View {
                     get: { queue.strategy },
                     set: { s in Task { await monitor.setStrategy(s) } })) {
                     Text("Na do topo da fila, enquanto tiver folga").tag(AccountRouter.Strategy.order)
-                    Text("Na que tiver mais folga").tag(AccountRouter.Strategy.headroom)
+                    Text("Na que tiver mais folga até renovar").tag(AccountRouter.Strategy.headroom)
                 }
                 .disabled(!queue.enabled || queue.isSingle)
             }

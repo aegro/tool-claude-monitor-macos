@@ -612,6 +612,47 @@ function folgaDe(sonda, agora = Date.now()) {
   return Math.max(0, Math.min(100, Math.round(100 - usado)));
 }
 
+const HORAS_DA_SEMANA = 168;
+
+// Quanto da semana a conta pode gastar por hora até renovar, em pontos percentuais por hora: o que sobra da janela
+// de 7 dias dividido pelas horas até ela renovar. Junta as duas coisas que a folga sozinha não vê: 8% com dois dias
+// pela frente rendem menos que 90% com cinco (0,19 contra 0,75 por hora), e 40% que renovam em 10 h valem mais que
+// 90% que renovam em cinco dias, porque o que não for gasto até a renovação se perde. Janela já renovada ou sem hora
+// de renovação conta como uma semana inteira; sem janela semanal, vale a folga distribuída pela semana.
+function folgaPorHora(sonda, agora = Date.now()) {
+  if (!sonda || !sonda.uso) return null;
+  const sete = sonda.uso.sete;
+  if (!sete) {
+    const folga = folgaDe(sonda, agora);
+    return folga == null ? null : folga / HORAS_DA_SEMANA;
+  }
+  const restante = Math.max(0, 100 - usadoEfetivo(sete, agora));
+  const horas = sete.renovaEm && sete.renovaEm > agora ? (sete.renovaEm - agora) / 3600000 : HORAS_DA_SEMANA;
+  return restante / Math.max(1, Math.min(HORAS_DA_SEMANA, horas));
+}
+
+function porHoraDe(c, agora = Date.now()) {
+  const daSonda = folgaPorHora(c.sonda, agora);
+  if (daSonda != null) return daSonda;
+  return c.folga == null ? null : c.folga / HORAS_DA_SEMANA;
+}
+
+// A ordem entre duas contas que podem receber a sessão. Conta com folga confortável (`limites.voltar`, 20%) vem
+// antes, e entre elas vence a de mais folga por hora até renovar. Abaixo disso a conta está perto de um limite (5h ou
+// semana) e o que conta é a folga de agora: mandar uma sessão longa para lá é pedir uma troca no meio dela. Empate fica
+// com a ordem da fila.
+function confortavel(c, cfg = carregarConfig()) {
+  return c.folga != null && c.folga >= cfg.limites.voltar;
+}
+
+function compararContas(a, b, ordem, cfg = carregarConfig(), agora = Date.now()) {
+  const pontos = (c) => (c.folga == null ? 1 : c.folga);
+  if (confortavel(a, cfg) !== confortavel(b, cfg)) return confortavel(a, cfg) ? -1 : 1;
+  const diferenca = confortavel(a, cfg) ? porHoraDe(b, agora) - porHoraDe(a, agora) : pontos(b) - pontos(a);
+  if (Math.abs(diferenca) > 1e-9) return diferenca;
+  return ordem.indexOf(a.id) - ordem.indexOf(b.id);
+}
+
 async function sondar(id, cfg = carregarConfig(), credencialDada = null) {
   const inicio = Date.now();
   const credencial = credencialDada || (await lerCredencial(id, cfg));
@@ -722,7 +763,7 @@ function loginDeOutraContaDaFila(id, cfg = carregarConfig()) {
   return outrasDaFila(id, cfg).some((o) => identidade(o, cfg).chave === outra.chave) ? outra : null;
 }
 
-function decidir(candidatos, { excluir = [] } = {}) {
+function decidir(candidatos, { excluir = [], agora = Date.now() } = {}) {
   const cfg = carregarConfig();
   const ordem = candidatos.map((c) => c.id);
   const pontos = (c) => (c.folga == null ? 1 : c.folga);
@@ -733,8 +774,7 @@ function decidir(candidatos, { excluir = [] } = {}) {
   if (fixada && elegivel(fixada)) return fixada;
   const preferida = cfg.preferida && candidatos.find((c) => c.id === cfg.preferida);
   if (preferida && elegivel(preferida) && pontos(preferida) >= cfg.limites.reserva) return preferida;
-  const melhor = (lista) =>
-    lista.filter(elegivel).sort((a, b) => pontos(b) - pontos(a) || ordem.indexOf(a.id) - ordem.indexOf(b.id))[0] || null;
+  const melhor = (lista) => lista.filter(elegivel).sort((a, b) => compararContas(a, b, ordem, cfg, agora))[0] || null;
   const daRota = melhor(candidatos.filter((c) => c.papel === 'rota'));
   let escolhida = daRota;
   if (!daRota || pontos(daRota) < cfg.limites.reserva) {
@@ -793,6 +833,7 @@ function motivoLegivel(motivo) {
   if (base === 'conta_suspensa') return 'teve a conta suspensa';
   if (base === 'preventiva') return 'estava quase no limite';
   if (base === 'ao abrir') return 'estava sem folga quando os agentes abriram';
+  if (base === 'equilibrio') return 'tinha pouca folga até renovar, e outra conta tinha bem mais';
   if (base === 'manual') return 'foi trocada à mão';
   if (base === 'escolhida') return 'deu lugar à conta que você escolheu';
   if (base === 'teste') return 'saiu num teste de troca';
@@ -1026,6 +1067,11 @@ module.exports = {
   sondar,
   lerUso,
   folgaDe,
+  folgaPorHora,
+  porHoraDe,
+  compararContas,
+  confortavel,
+  HORAS_DA_SEMANA,
   usadoEfetivo,
   avaliarContas,
   decidir,

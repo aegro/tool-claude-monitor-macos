@@ -62,7 +62,135 @@ const design = { accessToken: 'design' };
 const slotDaConta = JSON.stringify({ mcpOAuth: mcp, claudeAiOauth: { accessToken: 'a', refreshToken: 'a-r' }, designOauth: design });
 const loginDaSegunda = JSON.stringify({ claudeAiOauth: { accessToken: 'b', refreshToken: 'b-r' } });
 
+const HORA = 3600000;
+
+// Uma conta como a avaliação devolve: semana com `usado`% e renovação em `horas`, e a janela de 5h só quando dada.
+function naSemana(id, papel, usado, horas, cinco = null) {
+  const sonda = {
+    ok: true,
+    verificadoEm: agora,
+    uso: { cinco: cinco == null ? null : { usado: cinco, renovaEm: agora + 2 * HORA }, sete: { usado, renovaEm: agora + horas * HORA }, janelas: [] },
+  };
+  return { id, papel, sonda, folga: contas.folgaDe(sonda, agora), esgotada: null, logada: true };
+}
+
 const testes = {
+  folgaPorHoraDivideOQueSobraDaSemanaPelasHorasAteRenovar() {
+    const team = naSemana('principal', 'rota', 92, 43, 2);
+    const ultra = naSemana('segunda', 'rota', 10, 115);
+    assert.strictEqual(contas.folgaPorHora(team.sonda, agora).toFixed(2), '0.19');
+    assert.strictEqual(contas.folgaPorHora(ultra.sonda, agora).toFixed(2), '0.78');
+    // Janela já renovada vale a semana inteira livre; renovação a minutos não explode a conta (mínimo de 1 h).
+    const renovada = { uso: { cinco: null, sete: { usado: 97, renovaEm: agora - 1000 } } };
+    assert.strictEqual(contas.folgaPorHora(renovada, agora), 100 / 168);
+    const quaseRenovando = { uso: { cinco: null, sete: { usado: 70, renovaEm: agora + 60000 } } };
+    assert.strictEqual(contas.folgaPorHora(quaseRenovando, agora), 30);
+    // Sem janela semanal, a folga distribuída pela semana; sem leitura, nada.
+    const soCinco = { uso: { cinco: { usado: 40, renovaEm: agora + HORA }, sete: null } };
+    assert.strictEqual(contas.folgaPorHora(soCinco, agora), 60 / 168);
+    assert.strictEqual(contas.folgaPorHora({ ok: false }, agora), null);
+  },
+  escolhaPassaLongeDaContaQuaseNoLimiteDaSemana() {
+    configurar({ rota: ['principal', 'segunda'] });
+    // 05/11/2026: Team em 92% com dois dias até renovar, Ultra em 10% com cinco.
+    const lista = [naSemana('principal', 'rota', 92, 43, 2), naSemana('segunda', 'rota', 10, 115), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(escolhida(lista), 'segunda');
+    configurar();
+  },
+  entreContasConfortaveisGastaPrimeiroOQueRenovaAntes() {
+    configurar();
+    // 60% que renovam em 10 h se perdem se ninguém usar; os 90% que renovam em cinco dias esperam.
+    const vencendo = [naSemana('principal', 'rota', 40, 10), naSemana('segunda', 'rota', 10, 120), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(escolhida(vencendo), 'principal');
+    // Com a renovação longe, volta a valer a de mais folga.
+    const longe = [naSemana('principal', 'rota', 40, 100), naSemana('segunda', 'rota', 10, 120), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(escolhida(longe), 'segunda');
+    // Perto de um limite (abaixo de limites.voltar), a renovação próxima não salva: vale a folga de agora.
+    const apertada = [naSemana('principal', 'rota', 85, 3), naSemana('segunda', 'rota', 10, 120), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(escolhida(apertada), 'segunda');
+    // A janela de 5h quase cheia também tira a conta da frente, mesmo com a semana sobrando.
+    const cincoCheia = [naSemana('principal', 'rota', 10, 20, 90), naSemana('segunda', 'rota', 30, 120), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(escolhida(cincoCheia), 'segunda');
+  },
+  reservaSoEntraQuandoARotaAcabaMesmoRendendoMaisPorHora() {
+    configurar();
+    const lista = [naSemana('principal', 'rota', 60, 150), naSemana('segunda', 'rota', 70, 150), naSemana('extra', 'reserva', 0, 5)];
+    assert.strictEqual(escolhida(lista), 'principal');
+    const rotaNoFim = [naSemana('principal', 'rota', 98, 150), naSemana('segunda', 'rota', 99, 150), naSemana('extra', 'reserva', 0, 5)];
+    assert.strictEqual(escolhida(rotaNoFim), 'extra');
+  },
+  agentesSaemDaContaQueNaoChegaARenovacao() {
+    const cfg = configurar({ rota: ['principal', 'segunda'] });
+    const lista = [naSemana('principal', 'rota', 92, 43, 2), naSemana('segunda', 'rota', 10, 115), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual((agentes.alvoDoEquilibrio(lista, 'principal', cfg, agora) || {}).id, 'segunda');
+    // Já na melhor, ficam.
+    assert.strictEqual(agentes.alvoDoEquilibrio(lista, 'segunda', cfg, agora), null);
+  },
+  agentesNaoTrocamPorGanhoPequeno() {
+    const cfg = configurar();
+    // 0,58 contra 0,63 por hora: a troca custaria o cache e não mudaria nada.
+    const parecidas = [naSemana('principal', 'rota', 30, 120), naSemana('segunda', 'rota', 5, 150), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(agentes.alvoDoEquilibrio(parecidas, 'principal', cfg, agora), null);
+    // Uma conta da rota com folga abaixo de limites.voltar nunca é destino, nem rendendo mais.
+    const destinoApertado = [naSemana('principal', 'rota', 95, 100), naSemana('segunda', 'rota', 85, 2), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(agentes.alvoDoEquilibrio(destinoApertado, 'principal', cfg, agora), null);
+    // Esgotada ou sem login de agentes também não.
+    const esgotada = [naSemana('principal', 'rota', 92, 43), { ...naSemana('segunda', 'rota', 10, 115), esgotada: { ate: agora + HORA } }];
+    assert.strictEqual(agentes.alvoDoEquilibrio(esgotada, 'principal', cfg, agora), null);
+    const semLogin = [naSemana('principal', 'rota', 92, 43), { ...naSemana('segunda', 'rota', 10, 115), logada: false }];
+    assert.strictEqual(agentes.alvoDoEquilibrio(semLogin, 'principal', cfg, agora), null);
+  },
+  equilibrioNaoLevaParaAReservaETrazDeVolta() {
+    const cfg = configurar();
+    // A reserva sobrando não puxa os agentes da rota.
+    const rotaApertada = [naSemana('principal', 'rota', 92, 43), naSemana('segunda', 'rota', 95, 43), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(agentes.alvoDoEquilibrio(rotaApertada, 'principal', cfg, agora), null);
+    // Na reserva, voltam para a rota assim que uma conta dela tem folga confortável, sem exigir o dobro.
+    const rotaVoltou = [naSemana('principal', 'rota', 40, 150), naSemana('segunda', 'rota', 95, 43), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual((agentes.alvoDoEquilibrio(rotaVoltou, 'extra', cfg, agora) || {}).id, 'principal');
+    assert.strictEqual(agentes.alvoDoEquilibrio(rotaApertada, 'extra', cfg, agora), null);
+  },
+  destinoDoEquilibrioPrecisaDeMetadeDaFolgaNasDuasJanelas() {
+    const cfg = configurar();
+    // Rende mais que o dobro pela semana, mas a janela de 5h já passou da metade: logo viria uma troca preventiva.
+    const cincoPelaMetade = [naSemana('principal', 'rota', 50, 100), naSemana('segunda', 'rota', 10, 40, 60), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(agentes.alvoDoEquilibrio(cincoPelaMetade, 'principal', cfg, agora), null);
+    const cincoLivre = [naSemana('principal', 'rota', 50, 100), naSemana('segunda', 'rota', 10, 40, 20), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual((agentes.alvoDoEquilibrio(cincoLivre, 'principal', cfg, agora) || {}).id, 'segunda');
+  },
+  equilibrioNaoTiraDaRotaAContaSemLoginNaPastaPropria() {
+    const cfg = configurar();
+    // A do ~/.claude sem login na pasta própria sairia da rota do terminal; as outras moram na própria pasta.
+    assert.strictEqual(agentes.podeSairDoSlot('principal', cfg), false);
+    assert.strictEqual(agentes.podeSairDoSlot('segunda', cfg), true);
+  },
+  trocaAMaoDosAgentesSegueAteOutraTroca() {
+    const cfg = configurar();
+    const noSlot = agentes.contaNoSlot(cfg);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: { conta: noSlot, em: agora - 2 * HORA } }, agora), false);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: { conta: 'outra', em: agora - 2 * HORA } }, agora), true);
+    // Uma troca depois da escolha à mão encerra a escolha, mesmo que o slot tenha voltado para a mesma conta.
+    const escolhaVencida = { conta: noSlot, em: agora - 2 * HORA };
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: escolhaVencida, ultimaTroca: agora - HORA }, agora), true);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: escolhaVencida, ultimaTroca: escolhaVencida.em }, agora), false);
+  },
+  equilibrioRespeitaPreferidaFixadaECalma() {
+    const lista = [naSemana('principal', 'rota', 92, 43), naSemana('segunda', 'rota', 10, 115), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(agentes.alvoDoEquilibrio(lista, 'principal', configurar({ preferida: 'principal' }), agora), null);
+    assert.strictEqual(agentes.alvoDoEquilibrio(lista, 'principal', configurar({ fixada: 'principal' }), agora), null);
+    const cfg = configurar();
+    assert.strictEqual(agentes.podeEquilibrar(cfg, {}, agora), true);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { ultimaTroca: agora - 10 * 60000 }, agora), false);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { ultimaTroca: agora - 31 * 60000 }, agora), true);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { ultimaChecagemDoEquilibrio: agora - 5 * 60000 }, agora), false);
+    assert.strictEqual(agentes.podeEquilibrar(configurar({ preferida: 'principal' }), {}, agora), false);
+    configurar();
+  },
+  motivoDoEquilibrioTemTexto() {
+    const { texto } = contas.textoDaTroca({ de: 'principal', para: 'segunda', motivo: 'agents equilibrio' });
+    assert.ok(texto.includes('pouca folga até renovar'), texto);
+    assert.ok(texto.includes('Os agentes seguiram junto.'), texto);
+  },
   contaFixadaAMaoVenceARegraEnquantoTemFolga() {
     configurar({ preferida: 'principal', fixada: 'extra' });
     // Fora da regra: a preferida tem folga, e mesmo assim abre na escolhida à mão.

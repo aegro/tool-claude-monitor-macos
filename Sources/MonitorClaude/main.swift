@@ -35,7 +35,7 @@ if CommandLine.arguments.contains("--dump-router") {
     }
     let sem = DispatchSemaphore(value: 0)
     Task {
-        var headroom: [String: Double] = [:]
+        var usage: [String: UsageSnapshot] = [:]
         var available: Set<String> = []
         print("ativo: \(config.enabled)  principal: \(config.principal)")
         for account in config.accounts {
@@ -47,7 +47,7 @@ if CommandLine.arguments.contains("--dump-router") {
                     line += " · token vencido"
                 } else if let (snap, _) = try? await UsageAPI.fetch(token: creds.accessToken) {
                     let free = AccountRouter.headroom(snap)
-                    headroom[account.id] = free
+                    usage[account.id] = snap
                     let fiveHour = snap.fiveHour.map { String(format: "5h %.0f%%", $0.utilization) } ?? "sem 5h"
                     line += String(format: " · %@ · sem %.0f%% · folga %.0f%%",
                                    fiveHour, snap.weekly?.utilization ?? 0, free)
@@ -59,8 +59,7 @@ if CommandLine.arguments.contains("--dump-router") {
             }
             print(line)
         }
-        let pick = AccountRouter.pick(config, headroom: headroom, available: available,
-                                      exhausted: AccountRouter.exhausted())
+        let pick = AccountRouter.pick(config, usage: usage, available: available, exhausted: AccountRouter.exhausted())
         print("usaria agora: \(pick ?? "nenhuma")")
         if let last = AccountRouter.lastSwitch() {
             print("última troca: \(last.from) → \(last.to) (\(last.reason)) \(Fmt.stamp(last.at))")

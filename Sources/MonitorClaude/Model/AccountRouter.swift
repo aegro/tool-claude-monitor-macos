@@ -21,6 +21,9 @@ enum AccountRouter {
         var accounts: [Account]
         var reserveBelow: Double
         var preferred: String?
+        /// `limites.voltar`: from this much room up an account is comfortable, and comfortable accounts compete by
+        /// room per hour until the week renews (see `AccountRouter.pick`).
+        var comfortableFrom: Double = 20
         /// The account the person chose by hand (`fixada`): new sessions open there whatever the rule, while it has
         /// room; out of room, the rule decides again.
         var pinned: String? = nil
@@ -163,7 +166,9 @@ enum AccountRouter {
         let reserve = ((root["reserva"] as? [String]) ?? []).filter {
             known.contains($0) && !route.contains($0) && seen.insert($0).inserted
         }
-        let reserveBelow = ((root["limites"] as? [String: Any])?["reserva"] as? NSNumber)?.doubleValue ?? 3
+        let limits = root["limites"] as? [String: Any]
+        let reserveBelow = (limits?["reserva"] as? NSNumber)?.doubleValue ?? 3
+        let comfortableFrom = (limits?["voltar"] as? NSNumber)?.doubleValue ?? 20
 
         func account(_ id: String, _ role: Account.Role) -> Account {
             let entry = entries[id] as? [String: Any] ?? [:]
@@ -192,6 +197,7 @@ enum AccountRouter {
             accounts: route.map { account($0, .route) } + reserve.map { account($0, .reserve) },
             reserveBelow: reserveBelow,
             preferred: preferred,
+            comfortableFrom: comfortableFrom,
             pinned: pinned,
             principalUsesDefaultDirectory: ((entries[principal] as? [String: Any])?["dir"] as? String) == nil,
             pending: pending.filter { $0 != principal }.map { account($0, .pending) })
@@ -699,6 +705,7 @@ enum AccountRouter {
         case "preventiva": text = "quase no limite"
         case "preferida": text = "volta para a preferida"
         case "ao abrir": text = "sem folga ao abrir"
+        case "equilibrio": text = "pouca folga até renovar"
         case "manual": text = "troca manual"
         case "teste": text = "teste"
         default: text = base
@@ -898,10 +905,44 @@ enum AccountRouter {
         max(0, min(100, (100 - max(used(snapshot.session, now: now), used(snapshot.weekly, now: now))).rounded()))
     }
 
-    static func pick(_ config: Config, headroom: [String: Double], available: Set<String>,
-                     exhausted: [String: Date]) -> String? {
+    static let hoursInWeek = 168.0
+
+    /// How much of the week the account can spend per hour until it renews, in points per hour: what is left of the
+    /// 7-day window over the hours until it resets (the router's `folgaPorHora`). 8% with two days to go is worth less
+    /// than 90% with five (0.19 against 0.75 per hour), and 40% that renews in 10 h is worth more than 90% that renews
+    /// in five days, since what is not spent by the reset is lost. A window already past its reset, or without a reset
+    /// time, counts as a whole week; without a weekly window, the headroom spread over the week.
+    static func perHour(_ snapshot: UsageSnapshot, now: Date = Date()) -> Double {
+        guard let weekly = snapshot.weekly else { return headroom(snapshot, now: now) / hoursInWeek }
+        let left = max(0, 100 - used(weekly, now: now))
+        let hours = weekly.resetsAt.map { $0 > now ? $0.timeIntervalSince(now) / 3600 : hoursInWeek } ?? hoursInWeek
+        return left / max(1, min(hoursInWeek, hours))
+    }
+
+    static func pick(_ config: Config, usage: [String: UsageSnapshot], available: Set<String>,
+                     exhausted: [String: Date], now: Date = Date()) -> String? {
+        pick(config, headroom: usage.mapValues { headroom($0, now: now) }, perHour: usage.mapValues { perHour($0, now: now) },
+             available: available, exhausted: exhausted)
+    }
+
+    /// The router's `decidir`: the pinned account, then the preferred one, then the best of the route, and the reserve
+    /// only when the route is out. Between two accounts, the comfortable one (headroom from `comfortableFrom`) comes
+    /// first; comfortable ones compete by room per hour until the week renews, the others by headroom now, since they
+    /// are close to a limit. Ties keep the queue order.
+    /// The app calls `pick(_:usage:...)`; this form, with the numbers already worked out, is what the tests drive.
+    static func pick(_ config: Config, headroom: [String: Double], perHour: [String: Double] = [:],
+                     available: Set<String>, exhausted: [String: Date]) -> String? {
         let order = config.accounts.map(\.id)
         func score(_ id: String) -> Double { headroom[id] ?? 1 }
+        func comfortable(_ id: String) -> Bool { headroom[id].map { $0 >= config.comfortableFrom } ?? false }
+        func rate(_ id: String) -> Double { perHour[id] ?? score(id) / hoursInWeek }
+        func before(_ a: (offset: Int, element: String), _ b: (offset: Int, element: String)) -> Bool {
+            let (x, y) = (a.element, b.element)
+            if comfortable(x) != comfortable(y) { return comfortable(x) }
+            let difference = comfortable(x) ? rate(x) - rate(y) : score(x) - score(y)
+            if abs(difference) > 1e-9 { return difference > 0 }
+            return a.offset < b.offset
+        }
         if let pinned = config.pinned, available.contains(pinned), exhausted[pinned] == nil, score(pinned) > 0 {
             return pinned
         }
@@ -916,7 +957,7 @@ enum AccountRouter {
                         && available.contains(id) && exhausted[id] == nil && score(id) > 0
                 }
                 .enumerated()
-                .max { a, b in (score(a.element), -a.offset) < (score(b.element), -b.offset) }?
+                .min(by: before)?
                 .element
         }
         let route = best(.route)

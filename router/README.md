@@ -1,6 +1,6 @@
 # claude-auto
 
-Roteador de contas do Claude Code que vem dentro do Monitor Claude. Escolhe a conta com mais folga ao abrir e, quando o limite bate, reabre a mesma sessão em outra conta e manda continuar.
+Roteador de contas do Claude Code que vem dentro do Monitor Claude. Escolhe a conta com mais folga até renovar ao abrir e, quando o limite bate, reabre a mesma sessão em outra conta e manda continuar.
 
 ## Contas
 
@@ -28,7 +28,7 @@ Config em `~/.claude-accounts/config.json`:
 | --- | --- | --- |
 | `ativo` | `true` | desligado, o `claude-auto` só repassa para o `claude` |
 | `principal` | `"principal"` | id da conta que usa o próprio `~/.claude` |
-| `rota` | `["principal"]` | contas usadas normalmente; vence a de maior folga |
+| `rota` | `["principal"]` | contas usadas normalmente; vence a de mais folga até renovar (veja [Qual conta](#qual-conta)) |
 | `reserva` | `[]` | só entra quando todas da rota estão abaixo de `limites.reserva` |
 | `preferida` | nenhuma | conta usada primeiro sempre que tem folga; veja [Conta preferida](#conta-preferida). A fila do Monitor grava aqui a primeira da rota na regra “A do topo primeiro” e tira a chave na “A de mais folga” |
 | `fixada` | nenhuma | conta escolhida à mão (o **Usar esta agora** do Monitor): as sessões novas abrem nela acima da regra e da preferida enquanto ela tiver login e folga; esgotada, a regra decide de novo, e ninguém volta sozinho para a preferida enquanto a chave existir |
@@ -38,13 +38,24 @@ Config em `~/.claude-accounts/config.json`:
 | `limites.preventiva` | `5` | folga (%) abaixo da qual a troca preventiva dispara (stream-json no fim do turno; `claude agents` só enquanto o ritmo de uso é desconhecido) |
 | `limites.horizonteMinutos` | `2` | minutos à frente que o `claude agents` projeta a folga pelo ritmo de uso |
 | `limites.margem` | `2` | folga (%) projetada no horizonte que dispara a troca preventiva do `claude agents`; com a folga já nesse valor, troca sempre |
-| `limites.voltar` | `20` | folga (%) que a preferida precisa recuperar para as sessões voltarem para ela |
+| `limites.voltar` | `20` | folga (%) que a preferida precisa recuperar para as sessões voltarem para ela; também a folga a partir da qual a conta é confortável e passa a ser comparada pela folga por hora até renovar |
 | `cacheUsoSegundos` | `60` | idade máxima da leitura de cota antes de consultar de novo |
 | `notificar` | `true` | notificação do macOS a cada troca |
 
 `claude-accounts`, a troca dos agentes e os Ajustes do Monitor só mudam `config.json` e o `.claude.json` do slot (`~/.claude.json`) dentro de uma trava `<arquivo>.lock`, o mesmo diretório que o Claude Code usa para o `.claude.json`, e releem o arquivo dentro dela. Trava sem atividade há mais de 10 s é tratada como abandonada; trava ocupada por mais de alguns segundos faz a mudança desistir com erro, sem gravar. Arquivo com JSON inválido não é sobrescrito.
 
 Folga é 100% menos o maior uso entre as janelas de 5h e de 7 dias; conta sem janela de 5h (Ultra verificada: a API manda `five_hour: null`) vale pela semana, e a troca preventiva mede o ritmo dela. Conta que bateu o limite fica marcada como esgotada até o horário de renovação.
+
+### Qual conta
+
+A folga sozinha não diz quanto a conta aguenta até renovar: 8% com dois dias pela frente rendem menos que 90% com cinco, e 40% que renovam em 10 h se perdem se ninguém usar. Por isso a escolha também usa a **folga por hora até renovar**: o que sobra da janela de 7 dias dividido pelas horas até ela renovar (janela já renovada ou sem hora de renovação conta como a semana inteira; o divisor é de pelo menos 1 h). Entre as contas que podem receber a sessão:
+
+1. a fixada, depois a preferida, como antes;
+2. conta com folga de pelo menos `limites.voltar` (confortável) vem antes da que está perto de um limite, de 5h ou da semana;
+3. entre as confortáveis vence a de mais folga por hora até renovar, o que gasta primeiro a cota que renova antes; entre as outras, a de mais folga agora, porque mandar uma sessão longa para uma conta perto do limite é pedir uma troca no meio dela;
+4. empate fica com a ordem da fila, e a reserva só entra quando a melhor da rota está abaixo de `limites.reserva`.
+
+`claude-accounts status` e o Monitor usam a mesma regra.
 
 ## Como troca
 
@@ -74,7 +85,9 @@ O endpoint de uso costuma responder 429 quando o próprio Claude Code também o 
 
 Um login que não cabe no `security -i` (cerca de 4 KB) é recusado, com uma exceção: o item do slot (`Claude Code-credentials`) é gravado em argv com `security add-generic-password`, porque o próprio Claude Code grava esse mesmo item assim quando ele passa do limite, então não há exposição nova; os logins guardados de cada conta continuam recusados.
 
-Se um turno gasta o resto da folga antes disso, vale a troca por limite: o Monitor troca o login de `~/.claude` para a conta com mais folga (ou usa a que já entrou pela troca preventiva), reinicia o agente e manda continuar. Conta sem login de agentes não entra na troca.
+**Troca por equilíbrio.** Sem ela, os agentes só saíam de uma conta quando ela quase acabava. Agora, a cada 15 minutos com algum agente em segundo plano, e a cada `claude agents`/`--bg`, a conta dos agentes é comparada com as outras da rota pela folga por hora até renovar: se outra conta da rota com login de agentes, não esgotada e com pelo menos 50% de folga nas duas janelas tem pelo menos o dobro, o login de `~/.claude` troca para ela (motivo `equilibrio`, "tinha pouca folga até renovar"). Exemplo de 05/11/2026: Team em 92% da semana com dois dias até renovar (0,19 por hora) contra Ultra em 10% com cinco (0,78). Os 50% evitam que a troca, que custa o cache das conversas, caia numa conta com a janela de 5h pela metade e leve a uma troca preventiva logo depois. Agentes que estão na reserva voltam para a rota assim que uma conta dela tem esses 50%, sem exigir o dobro. Não há equilíbrio com `preferida` ou `fixada` na config (as regras delas decidem), enquanto os agentes estão na conta escolhida com `claude-accounts agents use`, nos 30 minutos depois de qualquer troca dos agentes, nem quando a conta de `~/.claude` não tem login na pasta própria (ela sairia da rota do terminal até um novo login). Como na preventiva, os ociosos são reiniciados na conta nova e o que está no meio de um turno muda quando ficar ocioso; a leitura de uma conta que saiu por troca preventiva só vale se for de depois da saída.
+
+Se um turno gasta o resto da folga antes disso, vale a troca por limite: o Monitor troca o login de `~/.claude` para a conta escolhida pela regra de [Qual conta](#qual-conta) (ou usa a que já entrou pela troca preventiva), reinicia o agente e manda continuar. Conta sem login de agentes não entra na troca.
 
 Quando a troca muda o login de `~/.claude`, `principal` passa a ser a conta que entrou. A anterior segue na rota do terminal e do T3 pelo próprio diretório, `~/.claude-accounts/<id>`, com o login que tiver ali. Sem login nesse diretório, a troca avisa (log e notificação) e `claude-accounts status` e os Ajustes mostram `claude-accounts login <id>` no lugar do e-mail, em vez de a conta sumir da escolha sem explicação.
 

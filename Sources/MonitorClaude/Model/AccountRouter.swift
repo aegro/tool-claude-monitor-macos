@@ -130,7 +130,8 @@ enum AccountRouter {
         return info.uid == getuid() && info.started <= startedBy.addingTimeInterval(1)
     }
 
-    /// Owner and start time of `pid` from `sysctl(KERN_PROC_PID)`: `.some(nil)` when there is no such process, nil
+    /// Owner and start time of `pid` from `sysctl(KERN_PROC_PID)`: `.some(nil)` when there is no such process (or only
+    /// its zombie), nil
     /// when the call itself failed.
     static func processInfo(_ pid: pid_t) -> (uid: uid_t, started: Date)?? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
@@ -138,6 +139,8 @@ enum AccountRouter {
         var size = MemoryLayout<kinfo_proc>.stride
         guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else { return nil }
         guard size > 0 else { return .some(nil) }
+        // A zombie exited and only waits for its parent to reap it: no process, for the task.
+        guard Int32(info.kp_proc.p_stat) != SZOMB else { return .some(nil) }
         let start = info.kp_proc.p_un.__p_starttime
         return .some((info.kp_eproc.e_ucred.cr_uid,
                       Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)))

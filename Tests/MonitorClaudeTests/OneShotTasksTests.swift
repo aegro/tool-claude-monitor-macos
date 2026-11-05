@@ -66,6 +66,25 @@ struct OneShotTasksTests {
         #expect(!AccountRouter.processAlive(0))
     }
 
+    @Test func zumbiNãoContaComoVivo() throws {
+        // A child that exited and was not reaped yet: still in the process table, same owner and start time.
+        var pid: pid_t = 0
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/usr/bin/true"), nil]
+        defer { argv.forEach { free($0) } }
+        try #require(posix_spawn(&pid, "/usr/bin/true", nil, nil, argv, environ) == 0)
+        defer { var status: Int32 = 0; waitpid(pid, &status, 0) }
+        var zombie = false
+        for _ in 0..<200 where !zombie {
+            var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+            var info = kinfo_proc()
+            var size = MemoryLayout<kinfo_proc>.stride
+            zombie = sysctl(&mib, 4, &info, &size, nil, 0) == 0 && size > 0 && Int32(info.kp_proc.p_stat) == SZOMB
+            if !zombie { usleep(10_000) }
+        }
+        try #require(zombie)
+        #expect(!AccountRouter.processAlive(pid, startedBy: Date()))
+    }
+
     @Test func aListaResolveSeOPaiAindaVive() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("acessos-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

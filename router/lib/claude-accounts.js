@@ -349,7 +349,7 @@ async function main() {
         console.log(tabela([
           ['when', 'from', 'account', 'login', 'tools', 'exit', 'request'],
           ...acessos.map((a) => [horaCurta(a.em), a.de || 'terminal', a.conta, [a.login, a.organizacao].filter(Boolean).join(', '),
-            (a.ferramentas || []).join(','), a.codigo, String(a.pedido || '').replace(/\s+/g, ' ').slice(0, 60)]),
+            (a.ferramentas || []).join(','), a.codigo ?? '–', String(a.pedido || '').replace(/\s+/g, ' ').slice(0, 60)]),
         ]));
       }
       break;

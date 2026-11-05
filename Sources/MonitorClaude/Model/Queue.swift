@@ -177,7 +177,7 @@ struct AccountQueue: Equatable {
             let rule = queue.strategy == .headroom ? "a de mais folga até renovar" : "a primeira da fila com folga"
             let stay = focus.flatMap { queue.entry($0) }.map { agents in
                 queue.strategy == .headroom && queue.pinned == nil
-                    ? "Os agentes ficam na \(agents.label) até ela chegar perto do limite ou outra conta render pelo menos o dobro até renovar."
+                    ? "Os agentes ficam na \(agents.label) até ela chegar perto do limite ou outra conta da rota, com folga de sobra, render pelo menos o dobro até renovar."
                     : "Os agentes ficam na \(agents.label) até ela chegar no limite e só então trocam."
             }
             return (["Cada claude novo no terminal abre na \(entry.label), \(rule)."] + [stay].compactMap { $0 }).joined(separator: " ")

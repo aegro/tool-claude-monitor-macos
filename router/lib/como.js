@@ -32,6 +32,8 @@ const OPCOES = new Set(['--check', '--json', '--tools', '--model']);
 function lerArgs(args) {
   const r = { id: null, ferramentas: FERRAMENTAS_PADRAO, modelo: MODELO_PADRAO, pedido: '', check: false, json: false };
   const resto = [];
+  // O erro leva a conta, quando já foi lida, para o JSON de erro de `rodar`.
+  const falha = (erro) => ({ erro, id: r.id || null });
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (a === '--') {
@@ -43,17 +45,17 @@ function lerArgs(args) {
     // rodar nada. O texto literal vai depois de `--` ("resuma o --check do relatório" num argumento só também passa).
     if (resto.length) {
       if (OPCOES.has(a)) {
-        return { erro: `${a} after the request is not read as an option: put it before the request, or use -- to send it as text` };
+        return falha(`${a} after the request is not read as an option: put it before the request, or use -- to send it as text`);
       }
       resto.push(a);
     } else if (a === '--check' || a === '--json') {
       r[a === '--check' ? 'check' : 'json'] = true;
     } else if (a === '--tools' || a === '--model') {
       const valor = args[i + 1];
-      if (valor === undefined || valor.startsWith('--')) return { erro: `${a} needs a value` };
+      if (valor === undefined || valor.startsWith('--')) return falha(`${a} needs a value`);
       if (a === '--tools') {
         const lista = valor.split(',').map((s) => s.trim()).filter(Boolean);
-        if (!lista.length) return { erro: '--tools needs at least one tool' };
+        if (!lista.length) return falha('--tools needs at least one tool');
         r.ferramentas = lista;
       } else {
         r.modelo = valor;
@@ -65,10 +67,10 @@ function lerArgs(args) {
       resto.push(a);
     }
   }
-  if (!r.id) return { erro: 'usage: claude-accounts as <account> [--check [--json]] [--tools a,b] [--model m] "<request>"' };
+  if (!r.id) return falha('usage: claude-accounts as <account> [--check [--json]] [--tools a,b] [--model m] "<request>"');
   r.pedido = resto.join(' ').trim();
-  if (r.json && !r.check) return { erro: '--json only goes with --check' };
-  if (r.check && r.pedido) return { erro: '--check runs nothing: drop the request, or drop --check to run it' };
+  if (r.json && !r.check) return falha('--json only goes with --check');
+  if (r.check && r.pedido) return falha('--check runs nothing: drop the request, or drop --check to run it');
   return r;
 }
 
@@ -335,7 +337,14 @@ async function avaliar(opcoes, { verificarToken = conferirToken, paraConferir = 
 async function rodar(args, { verificarToken = conferirToken, preparar = contas.prepararSessao, saida } = {}) {
   const opcoes = lerArgs(args);
   if (opcoes.erro) {
-    process.stderr.write(`claude-accounts: ${opcoes.erro}\n`);
+    // Quem pediu --json lê o stdout: o erro de argumento também sai como o objeto da conferência, com ok false.
+    const fim = args.indexOf('--');
+    if ((fim < 0 ? args : args.slice(0, fim)).includes('--json')) {
+      const r = { account: opcoes.id, ok: false, login: null, organization: null, folder: null, token: null, warnings: [], error: opcoes.erro };
+      (saida || process.stdout).write(`${JSON.stringify(r)}\n`);
+    } else {
+      process.stderr.write(`claude-accounts: ${opcoes.erro}\n`);
+    }
     return 2;
   }
   if (opcoes.check) return conferir(opcoes, { verificarToken, saida });

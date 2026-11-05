@@ -331,6 +331,22 @@ const testes = {
     // Nada disso roda o claude nem entra no registro.
     assert.deepStrictEqual(como.lerAcessos(5), []);
     assert.ok(como.lerArgs(['principal', '--json']).erro);
+    // Com --json, erro de argumento também sai como objeto no stdout: a conta vazia de `as "$CLAUDE_AUTO_CONTA"`.
+    assert.strictEqual(await como.rodar(['', '--check', '--json'], ok), 2);
+    const semConta = JSON.parse(escrito.pop());
+    assert.strictEqual(semConta.ok, false);
+    assert.strictEqual(semConta.account, null);
+    assert.match(semConta.error, /^usage: claude-accounts as/);
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json', 'publique'], ok), 2);
+    const comPedido = JSON.parse(escrito.pop());
+    assert.deepStrictEqual(comPedido, {
+      account: 'principal', ok: false, login: null, organization: null, folder: null, token: null, warnings: [],
+      error: '--check runs nothing: drop the request, or drop --check to run it',
+    });
+    // Sem --json, o erro de argumento fica só no stderr.
+    const antes = escrito.length;
+    assert.strictEqual(await como.rodar(['principal', '--check', 'publique'], ok), 2);
+    assert.strictEqual(escrito.length, antes);
     // Opção só vale antes do pedido: depois dele recusa, porque a tarefa rodaria quando quem escreveu --check não queria
     // rodar nada. O texto literal vai depois de `--` ou num argumento só. Com --check, pedido é erro (nada roda).
     assert.match(como.lerArgs(['principal', 'publique', '/x.html', '--check']).erro, /--check after the request .* use --/);

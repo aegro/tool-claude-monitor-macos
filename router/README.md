@@ -114,7 +114,10 @@ claude-accounts as principal "publique /caminho/relatorio.html como artefato pri
 claude-accounts as principal --tools Artifact,Read "leia https://claude.ai/artifact/… e resuma"
 echo "<pedido longo>" | claude-accounts as principal
 claude-accounts accesses          # as últimas tarefas, com quem pediu, em que conta e com que ferramentas
+claude-accounts as principal --check [--json]   # onde a tarefa rodaria, sem rodar nada
 ```
+
+**Antes de publicar, `--check`.** `claude-accounts as <id> --check` faz a mesma conferência que precede uma tarefa (a pasta que uma sessão nova da conta usaria, o login que ela declara e o token no perfil da API) e para aí: não roda o `claude`, não gasta cota e não entra no registro. Sai 0 com uma linha `<id>: <e-mail>, <org> (folder <pasta>, token checked|unchecked)`, ou 2 com o motivo e o conserto quando a tarefa não rodaria. Com `--json`, sai um objeto `{account, ok, login, organization, folder, token, warnings, error}` (no `--json`, também 2 quando não rodaria). É o único jeito confiável de saber a org antes: ler o `.claude.json` à mão erra na conta do `~/.claude`, cuja sessão nova abre na pasta própria, e depois de uma troca dos agentes o `~/.claude.json` fala da conta que entrou no slot. `token unchecked` (token vencido, ou API sem resposta) quer dizer que a org veio só do que a pasta declara.
 
 O `as` roda um `claude -p` de uma vez na pasta em que uma sessão nova da conta abriria (`envDaSessao`), no diretório atual (caminhos relativos funcionam), e devolve a saída. O filho é estreito de propósito:
 

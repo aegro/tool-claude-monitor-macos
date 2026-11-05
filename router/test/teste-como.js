@@ -261,6 +261,38 @@ const testes = {
     assert.strictEqual(recusado, 2);
     assert.strictEqual(como.lerAcessos(50).length, n);
   },
+  async checkDizOndeRodariaSemRodarNemRegistrar() {
+    configurar({ principal: TEAM, max: MAX });
+    fs.rmSync(como.ARQ_ACESSOS, { force: true });
+    const escrito = [];
+    const saida = { write: (t) => escrito.push(t) };
+    const ok = { verificarToken: async () => ({}), saida };
+    // Sem pedido e sem tocar na entrada padrão: a conferência não espera nada.
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json'], ok), 0);
+    const r = JSON.parse(escrito.pop());
+    assert.deepStrictEqual(r, {
+      account: 'principal', ok: true, login: 'thomas@empresa.com', organization: 'Empresa',
+      folder: path.join(raiz, 'pastas', 'principal'), token: 'checked', warnings: [], error: null,
+    });
+    // Token vencido: a org vem do declarado, e a saída diz que o token não foi conferido.
+    assert.strictEqual(await como.rodar(['max', '--check', '--json'], { ...ok, verificarToken: async () => ({ aviso: 'expirou' }) }), 0);
+    const vencido = JSON.parse(escrito.pop());
+    assert.strictEqual(vencido.organization, 'Pessoal');
+    assert.strictEqual(vencido.token, 'unchecked');
+    assert.deepStrictEqual(vencido.warnings, ['expirou']);
+    // A tarefa não rodaria: saída 2, com o motivo no JSON.
+    configurar({ principal: TEAM, max: MAX, copia: MAX });
+    assert.strictEqual(await como.rodar(['copia', '--check', '--json'], ok), 2);
+    assert.match(JSON.parse(escrito.pop()).error, /signed in to thomas@empresa\.com, Pessoal \(max\), not to copia/);
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json'], { ...ok, verificarToken: async () => ({ erro: 'token de outra' }) }), 2);
+    assert.strictEqual(JSON.parse(escrito.pop()).error, 'token de outra');
+    // Em texto, uma linha com o login, a org, a pasta e o token.
+    assert.strictEqual(await como.rodar(['principal', '--check'], ok), 0);
+    assert.strictEqual(escrito.pop(), `principal: thomas@empresa.com, Empresa (folder ${path.join(raiz, 'pastas', 'principal')}, token checked)\n`);
+    // Nada disso roda o claude nem entra no registro.
+    assert.deepStrictEqual(como.lerAcessos(5), []);
+    assert.ok(como.lerArgs(['principal', '--json']).erro);
+  },
 };
 
 (async () => {

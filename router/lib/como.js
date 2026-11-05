@@ -26,9 +26,10 @@ const MAX_ACESSOS = 500;
 const TAMANHO_DO_PEDIDO_NO_REGISTRO = 300;
 const ESPERA_DA_ENTRADA_MS = 5000;
 
-// Lê `<conta> [--tools a,b] [--model m] [--] <pedido...>`. Sem pedido nos argumentos, ele vem da entrada padrão.
+// Lê `<conta> [--check [--json]] [--tools a,b] [--model m] [--] <pedido...>`. Sem pedido nos argumentos, ele vem da
+// entrada padrão. `--check` não roda nada: diz onde a tarefa rodaria (ver `conferir`).
 function lerArgs(args) {
-  const r = { id: null, ferramentas: FERRAMENTAS_PADRAO, modelo: MODELO_PADRAO, pedido: '' };
+  const r = { id: null, ferramentas: FERRAMENTAS_PADRAO, modelo: MODELO_PADRAO, pedido: '', check: false, json: false };
   const resto = [];
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
@@ -36,7 +37,9 @@ function lerArgs(args) {
       resto.push(...args.slice(i + 1));
       break;
     }
-    if (a === '--tools' || a === '--model') {
+    if (a === '--check' || a === '--json') {
+      r[a === '--check' ? 'check' : 'json'] = true;
+    } else if (a === '--tools' || a === '--model') {
       const valor = args[i + 1];
       if (valor === undefined || valor.startsWith('--')) return { erro: `${a} needs a value` };
       if (a === '--tools') {
@@ -53,7 +56,8 @@ function lerArgs(args) {
       resto.push(a);
     }
   }
-  if (!r.id) return { erro: 'usage: claude-accounts as <account> [--tools a,b] [--model m] "<request>"' };
+  if (!r.id) return { erro: 'usage: claude-accounts as <account> [--check [--json]] [--tools a,b] [--model m] "<request>"' };
+  if (r.json && !r.check) return { erro: '--json only goes with --check' };
   r.pedido = resto.join(' ').trim();
   return r;
 }
@@ -264,14 +268,45 @@ function lerEntrada(entrada = process.stdin, esperaMs = ESPERA_DA_ENTRADA_MS) {
   });
 }
 
+// `claude-accounts as <conta> --check`: a mesma conferência que precede uma tarefa (a pasta que uma sessão nova da conta
+// usaria, o login declarado e o token no perfil da API), sem rodar nada, sem gastar cota e sem registro. Existe para
+// quem precisa saber a org ANTES de publicar: ler o .claude.json à mão erra na conta do ~/.claude, cuja sessão nova
+// abre na pasta própria, e depois de uma troca dos agentes o ~/.claude.json fala de outra conta. Saída 0 com o login e
+// a org, 2 quando a tarefa não rodaria (com o motivo e o conserto).
+async function conferir(opcoes, { verificarToken = conferirToken, saida = process.stdout } = {}) {
+  const cfg = contas.carregarConfig();
+  const plano = planejar(opcoes.id, { ...opcoes, pedido: opcoes.pedido || '(check)' }, cfg);
+  const token = plano.erro ? null : await verificarToken(plano, cfg);
+  const erro = plano.erro || (token && token.erro) || null;
+  const avisos = erro ? [] : [plano.aviso, token.aviso].filter(Boolean);
+  const r = {
+    account: opcoes.id,
+    ok: !erro,
+    login: plano.login ? plano.login.email || null : null,
+    organization: plano.login ? plano.login.organizacao || null : null,
+    folder: plano.dir || null,
+    token: erro ? null : token.aviso ? 'unchecked' : 'checked',
+    warnings: avisos,
+    error: erro,
+  };
+  if (opcoes.json) saida.write(`${JSON.stringify(r)}\n`);
+  else if (erro) process.stderr.write(`claude-accounts: ${erro}\n`);
+  else {
+    saida.write(`${r.account}: ${plano.onde} (folder ${r.folder}, token ${r.token})\n`);
+    for (const aviso of avisos) process.stderr.write(`claude-accounts: ${aviso}\n`);
+  }
+  return erro ? 2 : 0;
+}
+
 // `verificarToken` e `preparar` existem para o teste rodar o ciclo inteiro sem ler o Keychain, sem chamar a API de
 // perfil e sem ligar a pasta da conta ao ~/.claude de quem roda os testes.
-async function rodar(args, { verificarToken = conferirToken, preparar = contas.prepararSessao } = {}) {
+async function rodar(args, { verificarToken = conferirToken, preparar = contas.prepararSessao, saida } = {}) {
   const opcoes = lerArgs(args);
   if (opcoes.erro) {
     process.stderr.write(`claude-accounts: ${opcoes.erro}\n`);
     return 2;
   }
+  if (opcoes.check) return conferir(opcoes, { verificarToken, saida });
   if (!opcoes.pedido) opcoes.pedido = await lerEntrada();
   const cfg = contas.carregarConfig();
   const plano = planejar(opcoes.id, opcoes, cfg);
@@ -335,6 +370,7 @@ module.exports = {
   ambienteLimpo,
   planejar,
   conferirToken,
+  conferir,
   registrar,
   lerAcessos,
   lerEntrada,

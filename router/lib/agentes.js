@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const contas = require('./contas');
 
+const { servicoDoDir } = contas;
+
 const SLOT_PADRAO = !process.env.CLAUDE_AUTO_SLOT_DIR;
 const DIR_SLOT = path.resolve(process.env.CLAUDE_AUTO_SLOT_DIR || contas.DIR_PRINCIPAL);
 const SERVICO_SLOT = SLOT_PADRAO ? 'Claude Code-credentials' : servicoDoDir(DIR_SLOT);
@@ -29,9 +31,6 @@ const CONTINUAR =
   '[claude-auto] A conta anterior atingiu o limite e esta sessão foi retomada em outra conta. ' +
   'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
 
-function servicoDoDir(dir) {
-  return `Claude Code-credentials-${crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8)}`;
-}
 
 function servicoGuardado(id) {
   return SLOT_PADRAO ? `claude-auto agents ${id}` : `claude-auto agents ${servicoDoDir(DIR_SLOT).slice(-8)} ${id}`;

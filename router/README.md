@@ -10,6 +10,7 @@ Roteador de contas do Claude Code que vem dentro do Monitor Claude. Escolhe a co
 claude-accounts add <id> [--name N] [--reserve | --pending]
 claude-accounts login <id>
 claude-accounts status | pick | switches | release <id> | sync | env <id> | run <id>
+claude-accounts as <id> "<pedido>" | accesses   # uma tarefa em outra conta, sem trocar a sessão
 claude-accounts on | off      # o mesmo botão de Troca automática do Monitor
 ```
 
@@ -103,6 +104,30 @@ A troca guarda uma impressão (hash) do refresh token que está em `~/.claude` n
 - **`claude agents`**: o login de `~/.claude` é um só para todos os agentes, então ele só volta para a preferida pela regra de volta. A cada 5 minutos, sem agente parado por limite, e a cada `claude agents`/`--bg`, a preferida é conferida; mudar a primeira da fila ou a regra no Monitor dispara a conferência na hora. Se ela não está esgotada, está logada e voltou a ter `limites.voltar` de folga, o login de `~/.claude` volta para ela e os agentes ociosos são reiniciados nela. Agente no meio de um turno não é interrompido: muda quando ficar ocioso. Precisa do login de agentes da preferida.
 - **T3 e stream-json**: no fim de um turno, sem subagente nem Workflow rodando, confere a mesma regra no máximo uma vez por minuto e volta como na troca preventiva, sem mensagem de continuação. Instância com `CLAUDE_AUTO_CONTA` fica na conta pedida.
 - **Terminal já aberto** não volta: fica na conta atual até o próximo limite.
+
+## Tarefa em outra conta (`as`)
+
+Às vezes uma sessão precisa da org de outra conta só por um momento: ler ou publicar um artefato da org da empresa a partir de uma sessão que roda na Max pessoal, por exemplo. Trocar a conta da própria sessão reabriria o processo duas vezes, perderia o cache nas duas e trocaria os conectores do claude.ai no meio do trabalho. Em vez disso:
+
+```bash
+claude-accounts as principal "publique /caminho/relatorio.html como artefato privado e me dê o link"
+claude-accounts as principal --tools Artifact,Read "leia https://claude.ai/artifact/… e resuma"
+echo "<pedido longo>" | claude-accounts as principal
+claude-accounts accesses          # as últimas tarefas, com quem pediu, em que conta e com que ferramentas
+```
+
+O `as` roda um `claude -p` de uma vez na pasta em que uma sessão nova da conta abriria (`envDaSessao`), no diretório atual (caminhos relativos funcionam), e devolve a saída. O filho é estreito de propósito:
+
+- só as ferramentas de `--tools`; padrão `Artifact,ArtifactComments,ArtifactData,Read`. Elas são as únicas liberadas (`--allowedTools`), menos a leitura sem escopo (`Read`, `Glob`, `Grep`): o filho lê artefatos de terceiros, e um com instrução embutida não pode levá-lo a ler `~/.ssh` ou um `.env` e devolver o conteúdo. Sem regra, o `-p` lê só o diretório atual e nega o resto sem perguntar; um caminho absoluto citado no pedido (`publique /caminho/relatorio.html`) que existe ganha a regra só para ele (`Read(//caminho)`, ou `/**` numa pasta), na forma citada e na resolvida. A regra nunca sai para a raiz, o home ou um ancestral dele, para o que está dentro de uma pasta sensível ou a contém (`.ssh`, `.gnupg`, `.aws`, `.claude`, `.claude-accounts`, `.config/aegro`, `Library/Keychains`) nem para pasta com menos de 3 níveis, então um " / " solto no pedido não libera nada. Uma regra com escopo em `--tools` (`Read(//dados/**)`) vale como escrita;
+- sem os settings do usuário (`--setting-sources project`), que podem liberar Bash ou MCP inteiros, e sem os servidores MCP locais (`--strict-mcp-config`);
+- modelo `haiku` (o alias do CLI, que acompanha o Haiku vigente) por padrão (`--model` troca), sem transcrição (`--no-session-persistence`);
+- o prompt de sistema pede que ele termine dizendo em que conta e organização fez a operação e o link de cada artefato.
+
+O pedido vai pela entrada padrão do filho, nunca em argv, então um pedido que começa com `-` funciona. O filho não herda nenhuma credencial da sessão que pediu (`CLAUDE_CODE_*`, `CLAUDECODE`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`), menos o `CLAUDE_CODE_ENTRYPOINT`: as ferramentas de artefato só existem nas sessões do VS Code e do app desktop (`claude-vscode`, `claude-desktop`; no `cli` não), e o `as` avisa quando é chamado de fora delas.
+
+Antes de rodar, ele confere o login da pasta duas vezes: pelo que ela declara (sem login, ou com o login de outra conta da fila, o mesmo e-mail em outra org, recusa com saída 2) e pelo token, no perfil da API, sem renovar nada (token de outra conta também recusa; token vencido, que o CLI renova ao rodar, segue com aviso). Na primeira linha do stderr sai `claude-accounts as <id>: <e-mail>, <org>, …`, para quem pediu ver onde a tarefa rodou. Cada tarefa vai para `.estado/acessos.jsonl` (só do dono, últimas 500, sob a trava de arquivo): a linha nasce antes de o filho rodar e é completada no fim, com quando, a conta da sessão que pediu (`CLAUDE_AUTO_CONTA`), a conta usada, o login, as ferramentas, a pasta, o começo do pedido e o código de saída. A tarefa gasta a cota da conta em que roda.
+
+Artefato criado assim pertence à org daquela conta: mudá-lo depois também passa pelo `as`. Apagar não passa: a exclusão de um artefato pede a confirmação da pessoa, que um `claude -p` não tem como dar (medido em 05/11/2026). Apague pelo link, logado na conta dona, ou pelo `claude.ai`.
 
 ## Login de conta parada
 

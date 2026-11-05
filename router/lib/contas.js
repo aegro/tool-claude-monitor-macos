@@ -261,8 +261,7 @@ function temLoginProprio(id, cfg = carregarConfig(), { fresco = false } = {}) {
   if (process.platform !== 'darwin') return fs.existsSync(path.join(dir, '.credentials.json'));
   const guardado = loginProprioPorDir.get(dir);
   if (!fresco && guardado && Date.now() - guardado.em < PRAZO_DO_LOGIN_PROPRIO_MS) return guardado.tem;
-  const hash = crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8);
-  const r = spawnSync('security', ['find-generic-password', '-s', `Claude Code-credentials-${hash}`], { stdio: 'ignore', timeout: 2000 });
+  const r = spawnSync('security', ['find-generic-password', '-s', servicoDoDir(dir)], { stdio: 'ignore', timeout: 2000 });
   if (r.error || r.signal) return false;
   loginProprioPorDir.set(dir, { tem: r.status === 0, em: Date.now() });
   return r.status === 0;
@@ -471,10 +470,19 @@ function copiarConfigDaPrincipal(id, arquivo) {
   }
 }
 
+// O nome que o CLI dá ao item do Keychain de uma pasta fora do ~/.claude: os 8 primeiros hex do sha256 do caminho. É a
+// única cópia da regra; `agentes` e `como` usam esta.
+function servicoDoDir(dir) {
+  return `Claude Code-credentials-${crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8)}`;
+}
+
+function servicoDaPasta(dir) {
+  return path.resolve(dir) === path.resolve(DIR_PRINCIPAL) ? 'Claude Code-credentials' : servicoDoDir(dir);
+}
+
 function servicoKeychain(id, cfg = carregarConfig()) {
   if (usaDirPadrao(id, cfg)) return 'Claude Code-credentials';
-  const hash = crypto.createHash('sha256').update(dirDaConta(id, cfg)).digest('hex').slice(0, 8);
-  return `Claude Code-credentials-${hash}`;
+  return servicoDoDir(dirDaConta(id, cfg));
 }
 
 function executar(cmd, args, timeout = 8000) {
@@ -483,15 +491,21 @@ function executar(cmd, args, timeout = 8000) {
   });
 }
 
-async function lerCredencial(id, cfg = carregarConfig()) {
-  let bruto = null;
+// O texto da credencial de uma pasta: o item do Keychain no macOS, o `.credentials.json` nos outros sistemas.
+async function lerItemDaPasta(dir, servico = servicoDaPasta(dir)) {
   if (process.platform === 'darwin') {
-    bruto = await executar('security', ['find-generic-password', '-s', servicoKeychain(id, cfg), '-w']);
-  } else {
-    try {
-      bruto = fs.readFileSync(path.join(dirDaConta(id, cfg), '.credentials.json'), 'utf8');
-    } catch {}
+    const saida = await executar('security', ['find-generic-password', '-s', servico, '-w']);
+    return saida ? saida.trim() : null;
   }
+  try {
+    return fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function lerCredencial(id, cfg = carregarConfig()) {
+  const bruto = await lerItemDaPasta(dirDaConta(id, cfg), servicoKeychain(id, cfg));
   if (!bruto) return null;
   try {
     return JSON.parse(bruto.trim()).claudeAiOauth || null;
@@ -1060,6 +1074,9 @@ module.exports = {
   prepararSessao,
   sincronizarConfig,
   servicoKeychain,
+  servicoDoDir,
+  servicoDaPasta,
+  lerItemDaPasta,
   lerCredencial,
   identidade,
   rotuloDoLogin,

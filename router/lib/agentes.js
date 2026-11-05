@@ -402,7 +402,8 @@ function alvoDoEquilibrio(candidatas, atual, cfg, agora = Date.now()) {
 function podeEquilibrar(cfg, estado, agora = Date.now()) {
   if (cfg.fixada || cfg.preferida) return false;
   const manual = estado.escolhaManual;
-  if (manual && manual.conta === contaNoSlot(cfg)) return false;
+  // A escolha à mão vale até a próxima troca: depois dela, mesmo que o slot volte para a mesma conta, já não segura.
+  if (manual && manual.conta === contaNoSlot(cfg) && manual.em >= (estado.ultimaTroca || 0)) return false;
   if (agora - (estado.ultimaTroca || 0) < CALMA_DEPOIS_DA_TROCA) return false;
   return agora - (estado.ultimaChecagemDoEquilibrio || 0) >= INTERVALO_DO_EQUILIBRIO;
 }

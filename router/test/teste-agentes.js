@@ -169,6 +169,10 @@ const testes = {
     const noSlot = agentes.contaNoSlot(cfg);
     assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: { conta: noSlot, em: agora - 2 * HORA } }, agora), false);
     assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: { conta: 'outra', em: agora - 2 * HORA } }, agora), true);
+    // Uma troca depois da escolha à mão encerra a escolha, mesmo que o slot tenha voltado para a mesma conta.
+    const escolhaVencida = { conta: noSlot, em: agora - 2 * HORA };
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: escolhaVencida, ultimaTroca: agora - HORA }, agora), true);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: escolhaVencida, ultimaTroca: escolhaVencida.em }, agora), false);
   },
   equilibrioRespeitaPreferidaFixadaECalma() {
     const lista = [naSemana('principal', 'rota', 92, 43), naSemana('segunda', 'rota', 10, 115), naSemana('extra', 'reserva', 0, 160)];

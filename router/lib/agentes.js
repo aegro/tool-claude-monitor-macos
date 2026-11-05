@@ -645,11 +645,10 @@ function trocarSlot(para, motivo = 'manual') {
   return comTrava(async () => {
     const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
     const troca = await trocarSlotSemTrava(para, motivo, estado);
-    if (troca.mudou) {
-      estado.ultimaTroca = Date.now();
-      if (motivo === 'manual') estado.escolhaManual = { conta: para, em: estado.ultimaTroca };
-      contas.escreverJson(ARQ_ESTADO, estado);
-    }
+    if (troca.mudou) estado.ultimaTroca = Date.now();
+    // Pedir à mão a conta que já está no slot também é uma escolha, e segura o equilíbrio do mesmo jeito.
+    if (motivo === 'manual') estado.escolhaManual = { conta: para, em: Math.max(estado.ultimaTroca || 0, Date.now()) };
+    if (troca.mudou || motivo === 'manual') contas.escreverJson(ARQ_ESTADO, estado);
     return troca;
   });
 }

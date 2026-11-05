@@ -40,6 +40,8 @@ struct AccountQueue: Equatable {
     var strategy: AccountRouter.Strategy
     var enabled: Bool
     var reserveBelow: Double = 3
+    /// `limites.voltar` (see `AccountRouter.Config.comfortableFrom`).
+    var comfortableFrom: Double = 20
     /// The queue comes from the router's config; without one there is a single, implicit entry.
     var configured: Bool
     /// The account in `~/.claude`: with switching off, the router hands everything to plain `claude`, which opens
@@ -77,6 +79,7 @@ struct AccountQueue: Equatable {
             },
             reserveBelow: reserveBelow,
             preferred: strategy == .order ? route.first?.id : nil,
+            comfortableFrom: comfortableFrom,
             pinned: pinned)
     }
 
@@ -87,9 +90,9 @@ struct AccountQueue: Equatable {
             if excluding.contains(e.id) { exhausted[e.id] = .distantFuture }
         }
         return AccountRouter.pick(config,
-                                  headroom: Dictionary(uniqueKeysWithValues: entries.compactMap { e in e.headroom.map { (e.id, $0) } }),
+                                  usage: Dictionary(uniqueKeysWithValues: entries.compactMap { e in e.snapshot.map { (e.id, $0) } }),
                                   available: Set(entries.filter(\.hasLogin).map(\.id)),
-                                  exhausted: exhausted)
+                                  exhausted: exhausted, now: now)
     }
 
     /// Where a session opened now lands. With switching off, always the principal (`~/.claude`).
@@ -171,8 +174,12 @@ struct AccountQueue: Equatable {
     static func terminalNote(queue: AccountQueue, focus: String?, terminal: String?) -> String? {
         guard queue.configured, !queue.isSingle else { return nil }
         if let terminal, terminal != focus, let entry = queue.entry(terminal) {
-            let rule = queue.strategy == .headroom ? "a de mais folga agora" : "a primeira da fila com folga"
-            let stay = focus.flatMap { queue.entry($0) }.map { "Os agentes ficam na \($0.label) até ela chegar no limite e só então trocam." }
+            let rule = queue.strategy == .headroom ? "a de mais folga até renovar" : "a primeira da fila com folga"
+            let stay = focus.flatMap { queue.entry($0) }.map { agents in
+                queue.strategy == .headroom && queue.pinned == nil
+                    ? "Os agentes ficam na \(agents.label) até ela chegar perto do limite ou outra conta render pelo menos o dobro até renovar."
+                    : "Os agentes ficam na \(agents.label) até ela chegar no limite e só então trocam."
+            }
             return (["Cada claude novo no terminal abre na \(entry.label), \(rule)."] + [stay].compactMap { $0 }).joined(separator: " ")
         }
         if let agents = queue.agents, agents != focus, let entry = queue.entry(agents) {
@@ -219,7 +226,7 @@ struct AccountQueue: Equatable {
                 }
             } else if queue.strategy == .headroom, queue.enabled, inUse == queue.newSessions(now: now),
                       let room = entry.headroom, !queue.isSingle {
-                parts.append("É a que tem mais folga agora (\(Fmt.pct(room))).")
+                parts.append("É a que tem mais folga até renovar (\(Fmt.pct(room))).")
             }
         }
         guard queue.configured, !queue.isSingle else { return parts.joined(separator: " ") }

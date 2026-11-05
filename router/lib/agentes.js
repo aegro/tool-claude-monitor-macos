@@ -362,8 +362,66 @@ function alvoPreventivo(folga, ritmo, candidatos, cfg, atual) {
   const seguras = candidatos.filter(
     (c) => c.id !== atual && !c.esgotada && c.logada && c.folga != null && c.folga > folga && !deveTrocarAntes(c.folga, ritmo, cfg),
   );
-  const maisFolgada = (lista) => lista.sort((a, b) => b.folga - a.folga || ordem.indexOf(a.id) - ordem.indexOf(b.id))[0] || null;
+  const maisFolgada = (lista) => lista.sort((a, b) => contas.compararContas(a, b, ordem, cfg))[0] || null;
   return maisFolgada(seguras.filter((c) => c.papel === 'rota')) || maisFolgada(seguras.filter((c) => c.papel !== 'rota'));
+}
+
+// Sem esta regra, os agentes só saíam de uma conta quando ela quase acabava ou batia o limite. Em 05/11/2026 a Team
+// estava em 92% da semana com dois dias até renovar e seguia com os agentes, enquanto a Ultra tinha 90% livres: a
+// Team chegaria ao limite no meio de um turno (com os agentes parados e a troca às pressas) e a Ultra terminaria a
+// semana com sobra. A troca por equilíbrio leva os agentes para a conta da rota que tem pelo menos
+// GANHO_DO_EQUILIBRIO vezes a folga por hora até renovar da atual e folga confortável (`limites.voltar`). Com a
+// preferida ou uma conta fixada à mão, quem decide é a regra delas. Fica na rota: a reserva só entra quando a rota
+// acaba, e os agentes que estão nela voltam para a rota assim que uma conta da rota tem folga confortável.
+const GANHO_DO_EQUILIBRIO = 2;
+// Uma troca dos agentes custa o cache das conversas, e as leituras de uso mudam pouco de um minuto para o outro.
+const INTERVALO_DO_EQUILIBRIO = 15 * 60 * 1000;
+const CALMA_DEPOIS_DA_TROCA = 30 * 60 * 1000;
+
+function alvoDoEquilibrio(candidatas, atual, cfg, agora = Date.now()) {
+  if (cfg.fixada || cfg.preferida) return null;
+  const daVez = candidatas.find((c) => c.id === atual);
+  if (!daVez) return null;
+  const naReserva = daVez.papel !== 'rota';
+  const porHoraAtual = contas.porHoraDe(daVez, agora);
+  if (porHoraAtual == null && !naReserva) return null;
+  const ordem = candidatas.map((c) => c.id);
+  const melhor = candidatas
+    .filter((c) => c.id !== atual && c.papel === 'rota' && !c.esgotada && c.logada && c.folga != null && c.folga >= cfg.limites.voltar)
+    .sort((a, b) => contas.compararContas(a, b, ordem, cfg, agora))[0];
+  if (!melhor) return null;
+  if (naReserva) return melhor;
+  const porHora = contas.porHoraDe(melhor, agora);
+  return porHora != null && porHora >= GANHO_DO_EQUILIBRIO * porHoraAtual && porHora > porHoraAtual ? melhor : null;
+}
+
+function podeEquilibrar(cfg, estado, agora = Date.now()) {
+  if (cfg.fixada || cfg.preferida) return false;
+  if (agora - (estado.ultimaTroca || 0) < CALMA_DEPOIS_DA_TROCA) return false;
+  return agora - (estado.ultimaChecagemDoEquilibrio || 0) >= INTERVALO_DO_EQUILIBRIO;
+}
+
+async function equilibrar(cfg, lista, estado) {
+  if (!lista.some((a) => a.kind === 'background')) return null;
+  const agora = Date.now();
+  if (!podeEquilibrar(cfg, estado, agora)) return null;
+  estado.ultimaChecagemDoEquilibrio = agora;
+  const atual = contaNoSlot(cfg);
+  if (!atual) return null;
+  const candidatas = (await avaliarParaAgentes(cfg)).map((c) => folgaParaVolta(c, estado.saidaPreventiva));
+  const alvo = alvoDoEquilibrio(candidatas, atual, cfg, agora);
+  if (!alvo) return null;
+  const daVez = candidatas.find((c) => c.id === atual);
+  const porHora = (c) => (Math.round(contas.porHoraDe(c, agora) * 100) / 100).toFixed(2);
+  contas.log(`agentes: ${atual} com ${porHora(daVez)} pp/h até renovar e ${alvo.id} com ${porHora(alvo)}; troca por equilíbrio`);
+  try {
+    const troca = await trocarSlotSemTrava(alvo.id, 'equilibrio', estado);
+    estado.ultimaTroca = Date.now();
+    return troca;
+  } catch (e) {
+    contas.log(`agentes: troca por equilíbrio para ${alvo.id} falhou: ${e.message}`);
+    return null;
+  }
 }
 
 let donoDaTrava = null;
@@ -832,7 +890,10 @@ async function vigiar() {
 
     let troca = null;
     if (!novas.length) {
-      troca = (await voltarParaPreferida(cfg, estado)) || (await trocarPreventiva(cfg, lista, estado));
+      troca =
+        (await voltarParaPreferida(cfg, estado)) ||
+        (await trocarPreventiva(cfg, lista, estado)) ||
+        (await equilibrar(cfg, lista, estado));
       const migrados = await migrarOciosos(lista, estado);
       contas.escreverJson(ARQ_ESTADO, estado);
       return { acao: troca || migrados.length ? 'migrou' : 'nada', agentes: lista.length, troca, migrados };
@@ -909,9 +970,19 @@ async function prepararSlot({ prazoDaAvaliacaoMs = 8000, prazoDaTravaMs = 15000 
     const noSlot = prontas.find((c) => c.id === atual);
     const sair = Boolean(noSlot && (noSlot.esgotada || noSlot.folga === 0));
     const paraVolta = prontas.map((c) => folgaParaVolta(c, estado.saidaPreventiva));
-    const escolhida = sair ? contas.decidir(prontas, { excluir: [atual] }) : contas.preferidaDeVolta(paraVolta, atual, cfg);
-    if (!escolhida || escolhida.id === atual) return null;
-    const troca = await trocarSlotSemTrava(escolhida.id, 'ao abrir', estado);
+    const agora = Date.now();
+    let motivo = 'ao abrir';
+    let escolhida = sair ? contas.decidir(prontas, { excluir: [atual] }) : contas.preferidaDeVolta(paraVolta, atual, cfg);
+    if (!escolhida && !sair && podeEquilibrar(cfg, estado, agora)) {
+      estado.ultimaChecagemDoEquilibrio = agora;
+      escolhida = alvoDoEquilibrio(paraVolta, atual, cfg, agora);
+      motivo = 'equilibrio';
+    }
+    if (!escolhida || escolhida.id === atual) {
+      if (motivo === 'equilibrio') contas.escreverJson(ARQ_ESTADO, estado);
+      return null;
+    }
+    const troca = await trocarSlotSemTrava(escolhida.id, motivo, estado);
     estado.ultimaTroca = Date.now();
     contas.escreverJson(ARQ_ESTADO, estado);
     return troca;
@@ -951,6 +1022,9 @@ module.exports = {
   folgaParaVolta,
   deveTrocarAntes,
   alvoPreventivo,
+  alvoDoEquilibrio,
+  podeEquilibrar,
+  GANHO_DO_EQUILIBRIO,
   janelaQueLimita,
   vigiar,
   prepararSlot,

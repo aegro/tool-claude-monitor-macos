@@ -516,8 +516,7 @@ final class Monitor: ObservableObject {
         router = RouterState(
             config: config,
             pick: config.enabled
-                ? AccountRouter.pick(config, headroom: usage.mapValues { AccountRouter.headroom($0) },
-                                     available: available, exhausted: exhausted)
+                ? AccountRouter.pick(config, usage: usage, available: available, exhausted: exhausted)
                 : nil,
             usage: usage,
             lastSwitch: AccountRouter.lastSwitch(),
@@ -1040,7 +1039,8 @@ final class Monitor: ObservableObject {
                 loginRefused: router.keychainRefused.contains(account.id))
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
-                            reserveBelow: router.config.reserveBelow, configured: true,
+                            reserveBelow: router.config.reserveBelow, comfortableFrom: router.config.comfortableFrom,
+                            configured: true,
                             principal: router.config.principal, pinned: router.config.pinned,
                             agents: router.agentsAccount)
     }
@@ -1173,8 +1173,7 @@ final class Monitor: ObservableObject {
         }
         state.config = config
         state.pick = config.enabled
-            ? AccountRouter.pick(config, headroom: state.usage.mapValues { AccountRouter.headroom($0) },
-                                 available: state.available, exhausted: state.exhausted)
+            ? AccountRouter.pick(config, usage: state.usage, available: state.available, exhausted: state.exhausted)
             : nil
         state.switches = AccountRouter.switches(limit: 20)
         router = state

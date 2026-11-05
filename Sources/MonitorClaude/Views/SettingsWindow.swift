@@ -135,11 +135,53 @@ struct AccountsSettings: View {
                     }
                 }
             }
+
+            if let tasks = monitor.router?.oneShotTasks, !tasks.isEmpty {
+                Section {
+                    ForEach(Array(tasks.prefix(8).enumerated()), id: \.offset) { _, t in
+                        OneShotTaskRow(task: t, from: t.from.map { name($0, queue) } ?? "terminal", to: name(t.account, queue))
+                    }
+                } header: {
+                    Text("Tarefas em outra conta")
+                } footer: {
+                    Text("Pedidas por uma sessão com claude-accounts as, cada uma no login da conta de destino. A lista inteira sai em claude-accounts accesses.")
+                        .font(Type.caption).foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
     }
 
     private func name(_ id: String, _ queue: AccountQueue) -> String { queue.entry(id)?.label ?? id }
+}
+
+/// One `claude-accounts as` task: when, from which session's account to which account (and its org), how it ended, and
+/// the start of what was asked.
+struct OneShotTaskRow: View {
+    let task: AccountRouter.OneShotTask
+    let from: String
+    let to: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(Fmt.stamp(task.at)).font(Type.caption).monospacedDigit().foregroundStyle(.secondary)
+                    .frame(width: 84, alignment: .leading)
+                Text("\(from) → \(to)").font(Type.body)
+                if let org = task.organization {
+                    Text(org).font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                Spacer()
+                Text(task.outcome()).font(Type.caption)
+                    .foregroundStyle(task.exitCode == 0 || task.exitCode == nil ? Color.secondary : Ink.alarm)
+            }
+            Text(task.request.isEmpty ? "(sem pedido registrado)" : task.request)
+                .font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                .padding(.leading, 92)
+                .help([task.request, task.tools.isEmpty ? nil : "Ferramentas: \(task.tools.joined(separator: ", "))"]
+                    .compactMap { $0 }.joined(separator: "\n\n"))
+        }
+    }
 }
 
 struct AccountSettingsRow: View {

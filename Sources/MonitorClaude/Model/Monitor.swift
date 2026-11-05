@@ -527,6 +527,7 @@ final class Monitor: ObservableObject {
             agentsLogins: Set(config.accounts.map(\.id).filter(AccountRouter.hasAgentsLogin)),
             agentsAccount: AccountRouter.agentsAccount(config: config),
             switches: AccountRouter.switches(limit: 20),
+            oneShotTasks: AccountRouter.oneShotTasks(limit: 20),
             idleLogins: idle,
             refreshes: AccountRouter.refreshes(),
             plans: credsById.compactMapValues(\.plan),
@@ -1176,6 +1177,7 @@ final class Monitor: ObservableObject {
             ? AccountRouter.pick(config, usage: state.usage, available: state.available, exhausted: state.exhausted)
             : nil
         state.switches = AccountRouter.switches(limit: 20)
+        state.oneShotTasks = AccountRouter.oneShotTasks(limit: 20)
         router = state
     }
 

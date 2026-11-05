@@ -74,6 +74,33 @@ enum AccountRouter {
         var reason: String
     }
 
+    /// One task run with `claude-accounts as` (a line of `.estado/acessos.jsonl`): asked from a session on `from` (nil
+    /// when from a plain terminal), run on `account` with that login and org.
+    struct OneShotTask: Equatable {
+        var at: Date
+        var from: String?
+        var account: String
+        var login: String?
+        var organization: String?
+        var tools: [String]
+        var request: String
+        /// nil while it runs, or when the process that asked died before writing the end.
+        var exitCode: Int?
+
+        /// How the row reads: ended, failed with the exit code, running, or ended without saying so. Exit 0 says the
+        /// process ended, not that the request worked: a delete the child could not confirm also ends with 0.
+        func outcome(now: Date = Date()) -> String {
+            switch exitCode {
+            case 0: return "terminou"
+            case let code?: return "saída \(code)"
+            case nil: return now.timeIntervalSince(at) < AccountRouter.oneShotRunningWindow ? "rodando" : "sem fim registrado"
+            }
+        }
+    }
+
+    /// A task with no exit code past this is not running any more: its parent died before recording the end.
+    static let oneShotRunningWindow: TimeInterval = 30 * 60
+
     static let commandNames = ["claude-auto", "claude-accounts"]
 
     /// `CLAUDE_AUTO_HOME` wins, like in the router, so a test or a second setup never touches the real accounts.
@@ -85,6 +112,7 @@ enum AccountRouter {
     }
     static var configURL: URL { home.appendingPathComponent("config.json") }
     static var switchesURL: URL { home.appendingPathComponent(".estado/trocas.jsonl") }
+    static var oneShotTasksURL: URL { home.appendingPathComponent(".estado/acessos.jsonl") }
     static var exhaustedURL: URL { home.appendingPathComponent(".estado/esgotadas.json") }
     static var slotBurnRateURL: URL { home.appendingPathComponent(".estado/ritmo.json") }
     static var refreshesURL: URL { home.appendingPathComponent(".estado/renovacoes.json") }
@@ -692,6 +720,28 @@ enum AccountRouter {
         return text.split(separator: "\n").suffix(limit).reversed().compactMap { parseSwitch(Data($0.utf8)) }
     }
 
+    /// The latest tasks run with `claude-accounts as`, newest first.
+    static func oneShotTasks(limit: Int = 20, url: URL = oneShotTasksURL) -> [OneShotTask] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").suffix(limit).reversed().compactMap { parseOneShotTask(Data($0.utf8)) }
+    }
+
+    static func parseOneShotTask(_ line: Data) -> OneShotTask? {
+        guard let root = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let ms = (root["em"] as? NSNumber)?.doubleValue,
+              let account = root["conta"] as? String, !account.isEmpty
+        else { return nil }
+        return OneShotTask(at: Date(timeIntervalSince1970: ms / 1000),
+                           from: root["de"] as? String,
+                           account: account,
+                           login: root["login"] as? String,
+                           organization: root["organizacao"] as? String,
+                           tools: root["ferramentas"] as? [String] ?? [],
+                           request: (root["pedido"] as? String ?? "")
+                               .split(whereSeparator: \.isWhitespace).joined(separator: " "),
+                           exitCode: (root["codigo"] as? NSNumber)?.intValue)
+    }
+
     /// The reason the router recorded, in words.
     static func reasonText(_ reason: String) -> String {
         let base = reason.hasPrefix("agents ") ? String(reason.dropFirst("agents ".count)) : reason
@@ -999,6 +1049,8 @@ struct RouterState: Equatable {
     /// The account the agents of `claude agents` run on now (`AccountRouter.agentsAccount`).
     var agentsAccount: String?
     var switches: [AccountRouter.Switch] = []
+    /// The latest tasks run with `claude-accounts as` (`AccountRouter.oneShotTasks`).
+    var oneShotTasks: [AccountRouter.OneShotTask] = []
     /// Accounts whose login exists but whose token expired: nobody ran a session on them for a while. The Monitor never
     /// renews a token itself; the router has the official CLI do it (`refreshes`). Their numbers stay as last read
     /// until then.

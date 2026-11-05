@@ -331,9 +331,13 @@ const testes = {
     // Nada disso roda o claude nem entra no registro.
     assert.deepStrictEqual(como.lerAcessos(5), []);
     assert.ok(como.lerArgs(['principal', '--json']).erro);
-    // Opção só vale antes do pedido; com --check, pedido é erro (nada roda).
-    assert.strictEqual(como.lerArgs(['principal', 'resuma', 'o', '--check', 'do', 'relatório']).pedido, 'resuma o --check do relatório');
-    assert.strictEqual(como.lerArgs(['principal', 'resuma', 'o', '--check', 'do', 'relatório']).check, false);
+    // Opção só vale antes do pedido: depois dele recusa, porque a tarefa rodaria quando quem escreveu --check não queria
+    // rodar nada. O texto literal vai depois de `--` ou num argumento só. Com --check, pedido é erro (nada roda).
+    assert.match(como.lerArgs(['principal', 'publique', '/x.html', '--check']).erro, /--check after the request .* use --/);
+    assert.match(como.lerArgs(['principal', 'resuma', 'o', '--check', 'do', 'relatório']).erro, /--check after the request/);
+    assert.match(como.lerArgs(['principal', 'publique', '--json']).erro, /--json after the request/);
+    assert.strictEqual(como.lerArgs(['principal', '--', 'resuma', 'o', '--check', 'do', 'relatório']).pedido, 'resuma o --check do relatório');
+    assert.strictEqual(como.lerArgs(['principal', 'resuma o --check do relatório']).pedido, 'resuma o --check do relatório');
     assert.match(como.lerArgs(['principal', '--check', 'publique', '/x']).erro, /--check runs nothing/);
   },
 };

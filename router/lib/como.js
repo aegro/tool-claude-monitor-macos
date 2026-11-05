@@ -25,6 +25,7 @@ const ARQ_ACESSOS = path.join(contas.DIR_ESTADO, 'acessos.jsonl');
 const MAX_ACESSOS = 500;
 const TAMANHO_DO_PEDIDO_NO_REGISTRO = 300;
 const ESPERA_DA_ENTRADA_MS = 5000;
+const OPCOES = new Set(['--check', '--json', '--tools', '--model']);
 
 // Lê `<conta> [--check [--json]] [--tools a,b] [--model m] [--] <pedido...>`. Sem pedido nos argumentos, ele vem da
 // entrada padrão. `--check` não roda nada: diz onde a tarefa rodaria (ver `conferir`).
@@ -37,11 +38,11 @@ function lerArgs(args) {
       resto.push(...args.slice(i + 1));
       break;
     }
-    // Opção só vale antes do pedido: "resuma o --check do relatório" é pedido, não opção. `--tools` e `--model` depois
-    // do pedido recusam em vez de virar texto: quem escreveu `as x "leia" --tools Read` quis restringir o filho, e
-    // como texto ele rodaria com as ferramentas padrão, mais do que o pedido. O texto literal vai depois de `--`.
+    // Opção só vale antes do pedido, e uma opção nossa depois dele recusa em vez de virar texto: com `--tools`/`--model`
+    // o filho rodaria mais largo do que quem chamou pediu, e com `--check`/`--json` a tarefa rodaria quando não devia
+    // rodar nada. O texto literal vai depois de `--` ("resuma o --check do relatório" num argumento só também passa).
     if (resto.length) {
-      if (a === '--tools' || a === '--model') {
+      if (OPCOES.has(a)) {
         return { erro: `${a} after the request is not read as an option: put it before the request, or use -- to send it as text` };
       }
       resto.push(a);

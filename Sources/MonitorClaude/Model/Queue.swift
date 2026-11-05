@@ -226,7 +226,8 @@ struct AccountQueue: Equatable {
                 }
             } else if queue.strategy == .headroom, queue.enabled, inUse == queue.newSessions(now: now),
                       let room = entry.headroom, !queue.isSingle {
-                parts.append("É a que tem mais folga até renovar (\(Fmt.pct(room))).")
+                parts.append(room >= queue.comfortableFrom ? "É a que tem mais folga por hora até a semana renovar."
+                                                           : "É a que tem mais folga agora (\(Fmt.pct(room))).")
             }
         }
         guard queue.configured, !queue.isSingle else { return parts.joined(separator: " ") }

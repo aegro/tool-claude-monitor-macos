@@ -146,9 +146,29 @@ const testes = {
     const rotaApertada = [naSemana('principal', 'rota', 92, 43), naSemana('segunda', 'rota', 95, 43), naSemana('extra', 'reserva', 0, 160)];
     assert.strictEqual(agentes.alvoDoEquilibrio(rotaApertada, 'principal', cfg, agora), null);
     // Na reserva, voltam para a rota assim que uma conta dela tem folga confortável, sem exigir o dobro.
-    const rotaVoltou = [naSemana('principal', 'rota', 70, 150), naSemana('segunda', 'rota', 95, 43), naSemana('extra', 'reserva', 0, 160)];
+    const rotaVoltou = [naSemana('principal', 'rota', 40, 150), naSemana('segunda', 'rota', 95, 43), naSemana('extra', 'reserva', 0, 160)];
     assert.strictEqual((agentes.alvoDoEquilibrio(rotaVoltou, 'extra', cfg, agora) || {}).id, 'principal');
     assert.strictEqual(agentes.alvoDoEquilibrio(rotaApertada, 'extra', cfg, agora), null);
+  },
+  destinoDoEquilibrioPrecisaDeMetadeDaFolgaNasDuasJanelas() {
+    const cfg = configurar();
+    // Rende mais que o dobro pela semana, mas a janela de 5h já passou da metade: logo viria uma troca preventiva.
+    const cincoPelaMetade = [naSemana('principal', 'rota', 50, 100), naSemana('segunda', 'rota', 10, 40, 60), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual(agentes.alvoDoEquilibrio(cincoPelaMetade, 'principal', cfg, agora), null);
+    const cincoLivre = [naSemana('principal', 'rota', 50, 100), naSemana('segunda', 'rota', 10, 40, 20), naSemana('extra', 'reserva', 0, 160)];
+    assert.strictEqual((agentes.alvoDoEquilibrio(cincoLivre, 'principal', cfg, agora) || {}).id, 'segunda');
+  },
+  equilibrioNaoTiraDaRotaAContaSemLoginNaPastaPropria() {
+    const cfg = configurar();
+    // A do ~/.claude sem login na pasta própria sairia da rota do terminal; as outras moram na própria pasta.
+    assert.strictEqual(agentes.podeSairDoSlot('principal', cfg), false);
+    assert.strictEqual(agentes.podeSairDoSlot('segunda', cfg), true);
+  },
+  trocaAMaoDosAgentesSegueAteOutraTroca() {
+    const cfg = configurar();
+    const noSlot = agentes.contaNoSlot(cfg);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: { conta: noSlot, em: agora - 2 * HORA } }, agora), false);
+    assert.strictEqual(agentes.podeEquilibrar(cfg, { escolhaManual: { conta: 'outra', em: agora - 2 * HORA } }, agora), true);
   },
   equilibrioRespeitaPreferidaFixadaECalma() {
     const lista = [naSemana('principal', 'rota', 92, 43), naSemana('segunda', 'rota', 10, 115), naSemana('extra', 'reserva', 0, 160)];

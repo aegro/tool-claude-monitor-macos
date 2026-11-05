@@ -929,6 +929,7 @@ enum AccountRouter {
     /// only when the route is out. Between two accounts, the comfortable one (headroom from `comfortableFrom`) comes
     /// first; comfortable ones compete by room per hour until the week renews, the others by headroom now, since they
     /// are close to a limit. Ties keep the queue order.
+    /// The app calls `pick(_:usage:...)`; this form, with the numbers already worked out, is what the tests drive.
     static func pick(_ config: Config, headroom: [String: Double], perHour: [String: Double] = [:],
                      available: Set<String>, exhausted: [String: Date]) -> String? {
         let order = config.accounts.map(\.id)

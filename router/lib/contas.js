@@ -632,7 +632,6 @@ function folgaPorHora(sonda, agora = Date.now()) {
 }
 
 function porHoraDe(c, agora = Date.now()) {
-  if (typeof c.porHora === 'number') return c.porHora;
   const daSonda = folgaPorHora(c.sonda, agora);
   if (daSonda != null) return daSonda;
   return c.folga == null ? null : c.folga / HORAS_DA_SEMANA;
@@ -642,11 +641,14 @@ function porHoraDe(c, agora = Date.now()) {
 // antes, e entre elas vence a de mais folga por hora até renovar. Abaixo disso a conta está perto de um limite (5h ou
 // semana) e o que conta é a folga de agora: mandar uma sessão longa para lá é pedir uma troca no meio dela. Empate fica
 // com a ordem da fila.
+function confortavel(c, cfg = carregarConfig()) {
+  return c.folga != null && c.folga >= cfg.limites.voltar;
+}
+
 function compararContas(a, b, ordem, cfg = carregarConfig(), agora = Date.now()) {
-  const confortavel = (c) => c.folga != null && c.folga >= cfg.limites.voltar;
   const pontos = (c) => (c.folga == null ? 1 : c.folga);
-  if (confortavel(a) !== confortavel(b)) return confortavel(a) ? -1 : 1;
-  const diferenca = confortavel(a) ? porHoraDe(b, agora) - porHoraDe(a, agora) : pontos(b) - pontos(a);
+  if (confortavel(a, cfg) !== confortavel(b, cfg)) return confortavel(a, cfg) ? -1 : 1;
+  const diferenca = confortavel(a, cfg) ? porHoraDe(b, agora) - porHoraDe(a, agora) : pontos(b) - pontos(a);
   if (Math.abs(diferenca) > 1e-9) return diferenca;
   return ordem.indexOf(a.id) - ordem.indexOf(b.id);
 }
@@ -1068,6 +1070,7 @@ module.exports = {
   folgaPorHora,
   porHoraDe,
   compararContas,
+  confortavel,
   HORAS_DA_SEMANA,
   usadoEfetivo,
   avaliarContas,

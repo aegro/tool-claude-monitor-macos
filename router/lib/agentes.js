@@ -824,7 +824,7 @@ async function voltarParaPreferida(cfg, estado) {
   if (!preferida) return null;
   try {
     const troca = await trocarSlotSemTrava(preferida.id, 'preferida', estado);
-    estado.ultimaTroca = Date.now();
+    if (troca.mudou) estado.ultimaTroca = Date.now();
     return troca;
   } catch (e) {
     contas.log(`agentes: voltar para ${preferida.id} falhou: ${e.message}`);
@@ -851,8 +851,10 @@ async function trocarPreventiva(cfg, lista, estado) {
   contas.log(`agentes: folga ${Math.round(folga * 10) / 10}% em ${atual}, ritmo ${ritmoLido}; troca preventiva para ${escolhida.id}`);
   try {
     const troca = await trocarSlotSemTrava(escolhida.id, 'preventiva', estado);
-    estado.ultimaTroca = Date.now();
-    if (troca.mudou) estado.saidaPreventiva = { conta: troca.de, em: estado.ultimaTroca };
+    if (troca.mudou) {
+      estado.ultimaTroca = Date.now();
+      estado.saidaPreventiva = { conta: troca.de, em: estado.ultimaTroca };
+    }
     return troca;
   } catch (e) {
     contas.log(`agentes: troca preventiva para ${escolhida.id} falhou: ${e.message}`);
@@ -999,7 +1001,8 @@ async function prepararSlot({ prazoDaAvaliacaoMs = 8000, prazoDaTravaMs = 15000 
     }
     if (!escolhida || escolhida.id === atual) return null;
     const troca = await trocarSlotSemTrava(escolhida.id, motivo, estado);
-    estado.ultimaTroca = Date.now();
+    // Só uma troca de verdade conta: uma tentativa que não mudou nada não pode encerrar a escolha à mão nem a calma.
+    if (troca.mudou) estado.ultimaTroca = Date.now();
     contas.escreverJson(ARQ_ESTADO, estado);
     return troca;
   }, { prazoMs: prazoDaTravaMs });

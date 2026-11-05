@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 const contas = require('./contas');
 const agentes = require('./agentes');
 const renovar = require('./renovar');
+const como = require('./como');
 
 const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
 
@@ -24,6 +25,10 @@ const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
   release <id>                 clear the exhausted mark
   env <id>                     CLAUDE_CONFIG_DIR export for the shell
   run <id> [args...]           open claude directly on that account
+  as <id> [--tools a,b] [--model m] "<request>"
+                               one task on that account's login, without moving the session that asks
+                               (default tools: Artifact, ArtifactComments, ArtifactData, Read; logged)
+  accesses [-n N]              latest tasks run with as
   refresh [<id>]               renew an expired login through the CLI, when no claude process uses its folder
 `;
 
@@ -36,6 +41,8 @@ const SINONIMOS = {
   trocas: 'switches',
   liberar: 'release',
   rodar: 'run',
+  como: 'as',
+  acessos: 'accesses',
 };
 const PAPEIS = { rota: 'route', reserva: 'reserve' };
 // O login entrou, mas é o de outra conta: o Monitor distingue isso de um login que não terminou.
@@ -332,6 +339,21 @@ async function main() {
     case 'run':
       rodarClaude(exigirConta(args[0]), args.slice(1));
       break;
+    case 'as':
+      process.exitCode = await como.rodar(args);
+      break;
+    case 'accesses': {
+      const acessos = como.lerAcessos(Number(opcao(args, '-n', 20)));
+      if (!acessos.length) console.log('no tasks run with as');
+      else {
+        console.log(tabela([
+          ['when', 'from', 'account', 'login', 'tools', 'exit', 'request'],
+          ...acessos.map((a) => [horaCurta(a.em), a.de || 'terminal', a.conta, [a.login, a.organizacao].filter(Boolean).join(', '),
+            (a.ferramentas || []).join(','), a.codigo, String(a.pedido || '').replace(/\s+/g, ' ').slice(0, 60)]),
+        ]));
+      }
+      break;
+    }
     case '_trocar': {
       const de = opcao(args, '--de');
       const motivo = opcao(args, '--motivo', 'limite');

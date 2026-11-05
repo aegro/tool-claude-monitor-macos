@@ -10,6 +10,7 @@ Roteador de contas do Claude Code que vem dentro do Monitor Claude. Escolhe a co
 claude-accounts add <id> [--name N] [--reserve | --pending]
 claude-accounts login <id>
 claude-accounts status | pick | switches | release <id> | sync | env <id> | run <id>
+claude-accounts as <id> "<pedido>" | accesses   # uma tarefa em outra conta, sem trocar a sessão
 claude-accounts on | off      # o mesmo botão de Troca automática do Monitor
 ```
 
@@ -103,6 +104,28 @@ A troca guarda uma impressão (hash) do refresh token que está em `~/.claude` n
 - **`claude agents`**: o login de `~/.claude` é um só para todos os agentes, então ele só volta para a preferida pela regra de volta. A cada 5 minutos, sem agente parado por limite, e a cada `claude agents`/`--bg`, a preferida é conferida; mudar a primeira da fila ou a regra no Monitor dispara a conferência na hora. Se ela não está esgotada, está logada e voltou a ter `limites.voltar` de folga, o login de `~/.claude` volta para ela e os agentes ociosos são reiniciados nela. Agente no meio de um turno não é interrompido: muda quando ficar ocioso. Precisa do login de agentes da preferida.
 - **T3 e stream-json**: no fim de um turno, sem subagente nem Workflow rodando, confere a mesma regra no máximo uma vez por minuto e volta como na troca preventiva, sem mensagem de continuação. Instância com `CLAUDE_AUTO_CONTA` fica na conta pedida.
 - **Terminal já aberto** não volta: fica na conta atual até o próximo limite.
+
+## Tarefa em outra conta (`as`)
+
+Às vezes uma sessão precisa da org de outra conta só por um momento: ler ou publicar um artefato da org da empresa a partir de uma sessão que roda na Max pessoal, por exemplo. Trocar a conta da própria sessão reabriria o processo duas vezes, perderia o cache nas duas e trocaria os conectores do claude.ai no meio do trabalho. Em vez disso:
+
+```bash
+claude-accounts as principal "publique /caminho/relatorio.html como artefato privado e me dê o link"
+claude-accounts as principal --tools Artifact,Read "leia https://claude.ai/artifact/… e resuma"
+echo "<pedido longo>" | claude-accounts as principal
+claude-accounts accesses          # as últimas tarefas, com quem pediu, em que conta e com que ferramentas
+```
+
+O `as` roda um `claude -p` de uma vez na pasta em que uma sessão nova da conta abriria (`envDaSessao`), no diretório atual (caminhos relativos funcionam), e devolve a saída. O filho é estreito de propósito:
+
+- só as ferramentas de `--tools`, que também são as únicas liberadas (`--allowedTools`); padrão `Artifact,ArtifactComments,ArtifactData,Read`;
+- sem os settings do usuário (`--setting-sources project`), que podem liberar Bash ou MCP inteiros, e sem os servidores MCP locais (`--strict-mcp-config`);
+- modelo `claude-haiku-5-5` por padrão (`--model` troca), sem transcrição (`--no-session-persistence`);
+- o prompt de sistema pede que ele termine dizendo em que conta e organização fez a operação e o link de cada artefato.
+
+Antes de rodar, ele confere o login da pasta: sem login, ou com o login de outra conta da fila (o mesmo e-mail em outra org), recusa com saída 2 e diz como refazer o login. Na primeira linha do stderr sai `claude-accounts as <id>: <e-mail>, <org>, …`, para quem pediu ver onde a tarefa rodou. Cada tarefa vai para `.estado/acessos.jsonl` (só do dono, últimas 500): quando, a conta da sessão que pediu (`CLAUDE_AUTO_CONTA`), a conta usada, o login, as ferramentas, a pasta, o começo do pedido e o código de saída. A tarefa gasta a cota da conta em que roda.
+
+Artefato criado assim pertence à org daquela conta: mudá-lo depois também passa pelo `as`.
 
 ## Login de conta parada
 

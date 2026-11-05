@@ -151,6 +151,12 @@ const testes = {
     const lido = como.lerEntrada(comPedido, 1000);
     comPedido.end('- publique o relatório\n');
     assert.strictEqual(await lido, '- publique o relatório');
+    // Mandou algo e não fechou: vale o que chegou, depois do prazo de inatividade.
+    const aberta = new PassThrough();
+    aberta.isTTY = false;
+    const parcial = como.lerEntrada(aberta, 50);
+    aberta.write('pedido sem fim\n');
+    assert.strictEqual(await parcial, 'pedido sem fim');
   },
   registroGuardaAsUltimasTarefasSoParaODono() {
     const arquivo = path.join(raiz, 'acessos.jsonl');

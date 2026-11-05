@@ -223,22 +223,22 @@ function lerAcessos(limite = 20, arquivo = ARQ_ACESSOS) {
 }
 
 // O pedido pela entrada padrão (`echo … | claude-accounts as <conta>`). Uma entrada que não é terminal mas também não
-// manda nada (um script que herdou um pipe aberto) não segura o comando: sem dado em 5 s, o pedido fica vazio.
+// manda nada (um script que herdou um pipe aberto) não segura o comando: sem dado em 5 s, o pedido fica vazio. O prazo
+// recomeça a cada pedaço, então uma entrada que mandou algo e ficou aberta vale pelo que chegou, 5 s depois do último.
 function lerEntrada(entrada = process.stdin, esperaMs = ESPERA_DA_ENTRADA_MS) {
   if (entrada.isTTY) return Promise.resolve('');
   return new Promise((resolve) => {
     let texto = '';
-    let chegou = false;
-    const espera = setTimeout(() => {
-      if (!chegou) {
-        entrada.pause();
-        resolve('');
-      }
-    }, esperaMs);
+    const parar = () => {
+      entrada.pause();
+      resolve(texto.trim());
+    };
+    let espera = setTimeout(parar, esperaMs);
     entrada.setEncoding('utf8');
     entrada.on('data', (d) => {
-      chegou = true;
       texto += d;
+      clearTimeout(espera);
+      espera = setTimeout(parar, esperaMs);
     });
     entrada.on('end', () => {
       clearTimeout(espera);

@@ -120,7 +120,7 @@ O `as` roda um `claude -p` de uma vez na pasta em que uma sessão nova da conta 
 
 - só as ferramentas de `--tools`; padrão `Artifact,ArtifactComments,ArtifactData,Read`. Elas são as únicas liberadas (`--allowedTools`), menos a leitura sem escopo (`Read`, `Glob`, `Grep`): o filho lê artefatos de terceiros, e um com instrução embutida não pode levá-lo a ler `~/.ssh` ou um `.env` e devolver o conteúdo. Sem regra, o `-p` lê só o diretório atual e nega o resto sem perguntar; um caminho absoluto citado no pedido (`publique /caminho/relatorio.html`) que existe ganha a regra só para ele (`Read(//caminho)`, ou `/**` numa pasta), e uma regra com escopo em `--tools` (`Read(//dados/**)`) vale como escrita;
 - sem os settings do usuário (`--setting-sources project`), que podem liberar Bash ou MCP inteiros, e sem os servidores MCP locais (`--strict-mcp-config`);
-- modelo `claude-haiku-5-5` por padrão (`--model` troca), sem transcrição (`--no-session-persistence`);
+- modelo `haiku` (o alias do CLI, que acompanha o Haiku vigente) por padrão (`--model` troca), sem transcrição (`--no-session-persistence`);
 - o prompt de sistema pede que ele termine dizendo em que conta e organização fez a operação e o link de cada artefato.
 
 O pedido vai pela entrada padrão do filho, nunca em argv, então um pedido que começa com `-` funciona. O filho não herda nenhuma credencial da sessão que pediu (`CLAUDE_CODE_*`, `CLAUDECODE`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`), menos o `CLAUDE_CODE_ENTRYPOINT`: as ferramentas de artefato só existem nas sessões do VS Code e do app desktop (`claude-vscode`, `claude-desktop`; no `cli` não), e o `as` avisa quando é chamado de fora delas.

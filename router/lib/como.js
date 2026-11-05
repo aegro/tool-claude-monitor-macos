@@ -20,7 +20,8 @@ const contas = require('./contas');
 const agentes = require('./agentes');
 
 const FERRAMENTAS_PADRAO = ['Artifact', 'ArtifactComments', 'ArtifactData', 'Read'];
-const MODELO_PADRAO = 'claude-haiku-5-5';
+// O alias do CLI, que acompanha o Haiku vigente: um id fixo faria todo `as` sem --model falhar quando fosse aposentado.
+const MODELO_PADRAO = 'haiku';
 const ARQ_ACESSOS = path.join(contas.DIR_ESTADO, 'acessos.jsonl');
 const MAX_ACESSOS = 500;
 const TAMANHO_DO_PEDIDO_NO_REGISTRO = 300;

@@ -144,7 +144,7 @@ struct AccountsSettings: View {
                 } header: {
                     Text("Tarefas em outra conta")
                 } footer: {
-                    Text("Pedidas com claude-accounts as, de uma sessão ou do terminal, cada uma no login da conta de destino. A lista inteira sai em claude-accounts accesses.")
+                    Text("Pedidas com claude-accounts as, de uma sessão ou do terminal, cada uma no login da conta de destino. O registro guarda as últimas 500, que saem em claude-accounts accesses -n 500.")
                         .font(Type.caption).foregroundStyle(.secondary)
                 }
             }

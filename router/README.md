@@ -127,7 +127,7 @@ O pedido vai pela entrada padrão do filho, nunca em argv, então um pedido que 
 
 Antes de rodar, ele confere o login da pasta duas vezes: pelo que ela declara (sem login, ou com o login de outra conta da fila, o mesmo e-mail em outra org, recusa com saída 2) e pelo token, no perfil da API, sem renovar nada (token de outra conta também recusa; token vencido, que o CLI renova ao rodar, segue com aviso). Na primeira linha do stderr sai `claude-accounts as <id>: <e-mail>, <org>, …`, para quem pediu ver onde a tarefa rodou. Cada tarefa vai para `.estado/acessos.jsonl` (só do dono, últimas 500, sob a trava de arquivo): a linha nasce antes de o filho rodar e é completada no fim, com quando, a conta da sessão que pediu (`CLAUDE_AUTO_CONTA`), a conta usada, o login, as ferramentas, a pasta, o começo do pedido e o código de saída. A tarefa gasta a cota da conta em que roda.
 
-Artefato criado assim pertence à org daquela conta: mudá-lo depois também passa pelo `as`.
+Artefato criado assim pertence à org daquela conta: mudá-lo depois também passa pelo `as`. Apagar não passa: a exclusão de um artefato pede a confirmação da pessoa, que um `claude -p` não tem como dar (medido em 05/11/2026). Apague pelo link, logado na conta dona, ou pelo `claude.ai`.
 
 ## Login de conta parada
 

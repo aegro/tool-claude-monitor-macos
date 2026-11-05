@@ -25,23 +25,37 @@ const ARQ_ACESSOS = path.join(contas.DIR_ESTADO, 'acessos.jsonl');
 const MAX_ACESSOS = 500;
 const TAMANHO_DO_PEDIDO_NO_REGISTRO = 300;
 const ESPERA_DA_ENTRADA_MS = 5000;
+const OPCOES = new Set(['--check', '--json', '--tools', '--model']);
 
-// Lê `<conta> [--tools a,b] [--model m] [--] <pedido...>`. Sem pedido nos argumentos, ele vem da entrada padrão.
+// Lê `<conta> [--check [--json]] [--tools a,b] [--model m] [--] <pedido...>`. Sem pedido nos argumentos, ele vem da
+// entrada padrão. `--check` não roda nada: diz onde a tarefa rodaria (ver `conferir`).
 function lerArgs(args) {
-  const r = { id: null, ferramentas: FERRAMENTAS_PADRAO, modelo: MODELO_PADRAO, pedido: '' };
+  const r = { id: null, ferramentas: FERRAMENTAS_PADRAO, modelo: MODELO_PADRAO, pedido: '', check: false, json: false };
   const resto = [];
+  // O erro leva a conta, quando já foi lida, para o JSON de erro de `rodar`.
+  const falha = (erro) => ({ erro, id: r.id || null });
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (a === '--') {
       resto.push(...args.slice(i + 1));
       break;
     }
-    if (a === '--tools' || a === '--model') {
+    // Opção só vale antes do pedido, e uma opção nossa depois dele recusa em vez de virar texto: com `--tools`/`--model`
+    // o filho rodaria mais largo do que quem chamou pediu, e com `--check`/`--json` a tarefa rodaria quando não devia
+    // rodar nada. O texto literal vai depois de `--` ("resuma o --check do relatório" num argumento só também passa).
+    if (resto.length) {
+      if (OPCOES.has(a)) {
+        return falha(`${a} after the request is not read as an option: put it before the request, or use -- to send it as text`);
+      }
+      resto.push(a);
+    } else if (a === '--check' || a === '--json') {
+      r[a === '--check' ? 'check' : 'json'] = true;
+    } else if (a === '--tools' || a === '--model') {
       const valor = args[i + 1];
-      if (valor === undefined || valor.startsWith('--')) return { erro: `${a} needs a value` };
+      if (valor === undefined || valor.startsWith('--')) return falha(`${a} needs a value`);
       if (a === '--tools') {
         const lista = valor.split(',').map((s) => s.trim()).filter(Boolean);
-        if (!lista.length) return { erro: '--tools needs at least one tool' };
+        if (!lista.length) return falha('--tools needs at least one tool');
         r.ferramentas = lista;
       } else {
         r.modelo = valor;
@@ -53,8 +67,10 @@ function lerArgs(args) {
       resto.push(a);
     }
   }
-  if (!r.id) return { erro: 'usage: claude-accounts as <account> [--tools a,b] [--model m] "<request>"' };
+  if (!r.id) return falha('usage: claude-accounts as <account> [--check [--json]] [--tools a,b] [--model m] "<request>"');
   r.pedido = resto.join(' ').trim();
+  if (r.json && !r.check) return falha('--json only goes with --check');
+  if (r.check && r.pedido) return falha('--check runs nothing: drop the request, or drop --check to run it');
   return r;
 }
 
@@ -89,11 +105,11 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
   // Na pasta do ~/.claude, quem está lá é a conta segundo `identidade` (que corrige o ~/.claude.json regravado por uma
   // sessão antiga depois de uma troca dos agentes); nas outras pastas, o que a pasta declara.
   const login = path.resolve(dir) === path.resolve(contas.DIR_PRINCIPAL) ? { ...contas.identidade(id, cfg) } : declarado;
-  if (!login.chave) return { erro: `${id} has no login in ${dir}: run ${refazerLogin(id, cfg)}` };
+  if (!login.chave) return { erro: `${id} has no login in ${dir}: run ${refazerLogin(id, cfg)}`, dir };
   const outra = contaDaChave(login.chave, id, cfg);
   if (outra || (!contas.usaDirPadrao(id, cfg) && contas.loginDeOutraContaDaFila(id, cfg))) {
     const de = outra ? ` (${contas.nomeDaConta(outra, cfg)})` : '';
-    return { erro: `${dir} is signed in to ${contas.rotuloDoLoginDaPasta(login)}${de}, not to ${id}; fix it with ${refazerLogin(id, cfg)}` };
+    return { erro: `${dir} is signed in to ${contas.rotuloDoLoginDaPasta(login)}${de}, not to ${id}; fix it with ${refazerLogin(id, cfg)}`, dir };
   }
   const onde = contas.rotuloDoLoginDaPasta(login);
   const { ferramentas, liberadas } = permissoes(opcoes.ferramentas, opcoes.pedido);
@@ -111,11 +127,12 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
     `Você roda com o login ${onde} (conta ${id}), a pedido de outra sessão e só para esta tarefa. ` +
       'Termine dizendo em que conta e organização a operação foi feita e o link de cada artefato que criou, mudou ou leu.',
   ];
-  const semArtefato = opcoes.ferramentas.some((f) => DE_ARTEFATO.has(f)) && !ENTRADAS_COM_ARTEFATO.has(env.CLAUDE_CODE_ENTRYPOINT);
+  // Pelos nomes que o filho recebe (`ferramentas`, sem o escopo): `Artifact(x)` em --tools também vira Artifact.
+  const semArtefato = ferramentas.some((f) => DE_ARTEFATO.has(f)) && !ENTRADAS_COM_ARTEFATO.has(env.CLAUDE_CODE_ENTRYPOINT);
   const aviso = semArtefato
     ? 'the Artifact tools only exist in Claude Code sessions from VS Code or the desktop app; run this from one of them'
     : null;
-  return { id, env, dir, login, onde, args, aviso, pedido: opcoes.pedido, ferramentas: opcoes.ferramentas, modelo: opcoes.modelo };
+  return { id, env, dir, login, onde, args, aviso, semArtefato, pedido: opcoes.pedido, ferramentas: opcoes.ferramentas, modelo: opcoes.modelo };
 }
 
 // As ferramentas que o filho tem e as que ele usa sem pedir. Leitura sem escopo (`Read`, `Glob`, `Grep`) fica fora da
@@ -264,24 +281,81 @@ function lerEntrada(entrada = process.stdin, esperaMs = ESPERA_DA_ENTRADA_MS) {
   });
 }
 
+// `claude-accounts as <conta> --check`: a mesma conferência que precede uma tarefa (a pasta que uma sessão nova da conta
+// usaria, o login declarado e o token no perfil da API), sem rodar nada, sem gastar cota e sem registro. Existe para
+// quem precisa saber a org ANTES de publicar: ler o .claude.json à mão erra na conta do ~/.claude, cuja sessão nova
+// abre na pasta própria, e depois de uma troca dos agentes o ~/.claude.json fala de outra conta. Saída 0 com o login e
+// a org, 2 quando a tarefa não rodaria (com o motivo e o conserto).
+//
+// Para a conferência, a falta das ferramentas de artefato (sessão fora do VS Code e do app desktop) é motivo de não
+// rodar, não aviso: quem pergunta antes de publicar precisa saber que a publicação vai falhar. Login e org saem
+// vazios só quando a conferência do login recusou (o que a pasta declara foi desmentido ou não pôde ser confirmado);
+// faltando só o Artifact, o login foi conferido e segue na saída, porque a org é justamente o que se perguntou.
+async function conferir(opcoes, { verificarToken = conferirToken, saida = process.stdout } = {}) {
+  let a;
+  try {
+    a = await avaliar({ ...opcoes, pedido: '' }, { verificarToken, paraConferir: true });
+  } catch (e) {
+    a = { plano: {}, token: null, erro: `could not check ${opcoes.id}: ${e.message}`, avisos: [] };
+  }
+  const { plano, token } = a;
+  const recusado = Boolean(a.erro);
+  const erro = a.erro || (plano.semArtefato ? plano.aviso : null);
+  // O aviso que virou erro não se repete em warnings.
+  const avisos = a.avisos.filter((aviso) => aviso !== erro);
+  const r = {
+    account: opcoes.id,
+    ok: !erro,
+    login: recusado ? null : plano.login.email || null,
+    organization: recusado ? null : plano.login.organizacao || null,
+    folder: plano.dir || null,
+    token: recusado ? null : token.aviso ? 'unchecked' : 'checked',
+    warnings: avisos,
+    error: erro,
+  };
+  if (opcoes.json) saida.write(`${JSON.stringify(r)}\n`);
+  else {
+    if (!recusado) saida.write(`${r.account}: ${plano.onde} (folder ${r.folder}, token ${r.token})\n`);
+    for (const aviso of avisos) process.stderr.write(`claude-accounts: ${aviso}\n`);
+    if (erro) process.stderr.write(`claude-accounts: ${erro}\n`);
+  }
+  return erro ? 2 : 0;
+}
+
+// A pergunta "a tarefa rodaria, e onde?", igual para a conferência e para a tarefa: a pasta e o login declarado
+// (`planejar`), o token (`verificarToken`) e os avisos. Uma recusa nova entra aqui e vale para os dois caminhos.
+async function avaliar(opcoes, { verificarToken = conferirToken, paraConferir = false } = {}) {
+  const cfg = contas.carregarConfig();
+  const plano = planejar(opcoes.id, paraConferir ? { ...opcoes, pedido: '(check)' } : opcoes, cfg);
+  const token = plano.erro ? null : await verificarToken(plano, cfg);
+  const erro = plano.erro || (token && token.erro) || null;
+  const avisos = erro ? [] : [plano.aviso, token.aviso].filter(Boolean);
+  return { cfg, plano, token, erro, avisos };
+}
+
 // `verificarToken` e `preparar` existem para o teste rodar o ciclo inteiro sem ler o Keychain, sem chamar a API de
 // perfil e sem ligar a pasta da conta ao ~/.claude de quem roda os testes.
-async function rodar(args, { verificarToken = conferirToken, preparar = contas.prepararSessao } = {}) {
+async function rodar(args, { verificarToken = conferirToken, preparar = contas.prepararSessao, saida } = {}) {
   const opcoes = lerArgs(args);
   if (opcoes.erro) {
-    process.stderr.write(`claude-accounts: ${opcoes.erro}\n`);
+    // Quem pediu --json lê o stdout: o erro de argumento também sai como o objeto da conferência, com ok false.
+    const fim = args.indexOf('--');
+    if ((fim < 0 ? args : args.slice(0, fim)).includes('--json')) {
+      const r = { account: opcoes.id, ok: false, login: null, organization: null, folder: null, token: null, warnings: [], error: opcoes.erro };
+      (saida || process.stdout).write(`${JSON.stringify(r)}\n`);
+    } else {
+      process.stderr.write(`claude-accounts: ${opcoes.erro}\n`);
+    }
     return 2;
   }
+  if (opcoes.check) return conferir(opcoes, { verificarToken, saida });
   if (!opcoes.pedido) opcoes.pedido = await lerEntrada();
-  const cfg = contas.carregarConfig();
-  const plano = planejar(opcoes.id, opcoes, cfg);
-  const token = plano.erro ? null : await verificarToken(plano, cfg);
-  const erro = plano.erro || (token && token.erro);
+  const { cfg, plano, erro, avisos } = await avaliar(opcoes, { verificarToken });
   if (erro) {
     process.stderr.write(`claude-accounts: ${erro}\n`);
     return 2;
   }
-  for (const aviso of [plano.aviso, token.aviso].filter(Boolean)) process.stderr.write(`claude-accounts: ${aviso}\n`);
+  for (const aviso of avisos) process.stderr.write(`claude-accounts: ${aviso}\n`);
   const de = process.env.CLAUDE_AUTO_CONTA || null;
   process.stderr.write(`claude-accounts as ${plano.id}: ${plano.onde}, one task, tools ${plano.ferramentas.join(', ')}\n`);
   contas.log(`as: ${de || 'terminal'} pediu uma tarefa em ${plano.id} (${plano.onde}), ferramentas ${plano.ferramentas.join(',')}`);
@@ -335,6 +409,7 @@ module.exports = {
   ambienteLimpo,
   planejar,
   conferirToken,
+  conferir,
   registrar,
   lerAcessos,
   lerEntrada,

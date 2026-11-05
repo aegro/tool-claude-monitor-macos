@@ -49,6 +49,10 @@ const testes = {
     assert.ok(como.lerArgs([]).erro);
     assert.ok(como.lerArgs(['principal', '--tools']).erro);
     assert.ok(como.lerArgs(['principal', '--tools', ',']).erro);
+    // --tools/--model depois do pedido recusam: como texto, o filho rodaria com mais ferramentas do que o pedido.
+    assert.match(como.lerArgs(['principal', 'leia', 'X', '--tools', 'Read']).erro, /--tools after the request .* use --/);
+    assert.match(como.lerArgs(['principal', 'resuma', '--model', 'opus']).erro, /--model after the request/);
+    assert.strictEqual(como.lerArgs(['principal', '--', 'leia', 'X', '--tools', 'Read']).pedido, 'leia X --tools Read');
   },
   rodaNaPastaDaContaComOFilhoEstreito() {
     const cfg = configurar({ principal: TEAM, max: MAX });
@@ -150,8 +154,14 @@ const testes = {
     assert.strictEqual(plano.env.PATH, '/bin');
     // Fora do VS Code e do app desktop não há Artifact: o comando avisa em vez de deixar o filho dizer que não achou.
     assert.match(plano.aviso, /only exist in Claude Code sessions from VS Code or the desktop app/);
+    assert.strictEqual(plano.semArtefato, true);
     const doVsCode = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact'], modelo: 'm' }, cfg, { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' });
     assert.strictEqual(doVsCode.aviso, null);
+    assert.strictEqual(doVsCode.semArtefato, false);
+    // Com escopo, a ferramenta ainda é Artifact para o filho: fora do VS Code, também falta.
+    const comEscopo = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact(foo)'], modelo: 'm' }, cfg, {});
+    assert.strictEqual(comEscopo.semArtefato, true);
+    assert.match(comEscopo.aviso, /only exist in Claude Code sessions/);
     const semArtefato = como.planejar('principal', { pedido: 'x', ferramentas: ['Read'], modelo: 'm' }, cfg, {});
     assert.strictEqual(semArtefato.aviso, null);
   },
@@ -260,6 +270,95 @@ const testes = {
     const recusado = await comEnv({}, () => como.rodar(['principal', 'z'], { ...sem, verificarToken: async () => ({ erro: 'token de outra' }) }));
     assert.strictEqual(recusado, 2);
     assert.strictEqual(como.lerAcessos(50).length, n);
+  },
+  async checkDizOndeRodariaSemRodarNemRegistrar() {
+    configurar({ principal: TEAM, max: MAX });
+    fs.rmSync(como.ARQ_ACESSOS, { force: true });
+    // De uma sessão do VS Code, como a skill roda: no CI e num terminal comum não haveria Artifact (ver abaixo).
+    const entradaAntes = process.env.CLAUDE_CODE_ENTRYPOINT;
+    process.env.CLAUDE_CODE_ENTRYPOINT = 'claude-vscode';
+    const escrito = [];
+    const saida = { write: (t) => escrito.push(t) };
+    const ok = { verificarToken: async () => ({}), saida };
+    // Sem pedido e sem tocar na entrada padrão: a conferência não espera nada.
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json'], ok), 0);
+    const r = JSON.parse(escrito.pop());
+    assert.deepStrictEqual(r, {
+      account: 'principal', ok: true, login: 'thomas@empresa.com', organization: 'Empresa',
+      folder: path.join(raiz, 'pastas', 'principal'), token: 'checked', warnings: [], error: null,
+    });
+    // Token vencido: a org vem do declarado, e a saída diz que o token não foi conferido.
+    assert.strictEqual(await como.rodar(['max', '--check', '--json'], { ...ok, verificarToken: async () => ({ aviso: 'expirou' }) }), 0);
+    const vencido = JSON.parse(escrito.pop());
+    assert.strictEqual(vencido.organization, 'Pessoal');
+    assert.strictEqual(vencido.token, 'unchecked');
+    assert.deepStrictEqual(vencido.warnings, ['expirou']);
+    // A tarefa não rodaria: saída 2, com o motivo no JSON.
+    configurar({ principal: TEAM, max: MAX, copia: MAX });
+    assert.strictEqual(await como.rodar(['copia', '--check', '--json'], ok), 2);
+    assert.match(JSON.parse(escrito.pop()).error, /signed in to thomas@empresa\.com, Pessoal \(max\), not to copia/);
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json'], { ...ok, verificarToken: async () => ({ erro: 'token de outra' }) }), 2);
+    const recusado = JSON.parse(escrito.pop());
+    assert.strictEqual(recusado.error, 'token de outra');
+    // O token desmentiu o que a pasta declara: login e org saem vazios, a pasta fica.
+    assert.strictEqual(recusado.organization, null);
+    assert.strictEqual(recusado.login, null);
+    assert.strictEqual(recusado.folder, path.join(raiz, 'pastas', 'principal'));
+    configurar({ principal: TEAM, max: MAX, vazia: null });
+    assert.strictEqual(await como.rodar(['vazia', '--check', '--json'], ok), 2);
+    assert.strictEqual(JSON.parse(escrito.pop()).folder, path.join(raiz, 'pastas', 'vazia'));
+    // Falha inesperada no meio da conferência ainda sai como JSON.
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json'], { ...ok, verificarToken: async () => { throw new Error('rede caiu'); } }), 2);
+    assert.match(JSON.parse(escrito.pop()).error, /could not check principal: rede caiu/);
+    // Em texto, uma linha com o login, a org, a pasta e o token.
+    assert.strictEqual(await como.rodar(['principal', '--check'], ok), 0);
+    assert.strictEqual(escrito.pop(), `principal: thomas@empresa.com, Empresa (folder ${path.join(raiz, 'pastas', 'principal')}, token checked)\n`);
+    // Fora do VS Code e do app desktop, a publicação falharia: para a conferência, isso é "não rodaria".
+    delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json'], ok), 2);
+    const semArtefato = JSON.parse(escrito.pop());
+    assert.strictEqual(semArtefato.ok, false);
+    assert.match(semArtefato.error, /only exist in Claude Code sessions from VS Code or the desktop app/);
+    // O login foi conferido: a org segue na saída, e o aviso que virou erro não se repete.
+    assert.strictEqual(semArtefato.login, 'thomas@empresa.com');
+    assert.strictEqual(semArtefato.organization, 'Empresa');
+    assert.strictEqual(semArtefato.token, 'checked');
+    assert.deepStrictEqual(semArtefato.warnings, []);
+    // Em texto, a linha com a org sai igual, e o motivo vai para o stderr com saída 2.
+    assert.strictEqual(await como.rodar(['principal', '--check'], ok), 2);
+    assert.strictEqual(escrito.pop(), `principal: thomas@empresa.com, Empresa (folder ${path.join(raiz, 'pastas', 'principal')}, token checked)\n`);
+    // Sem ferramenta de artefato pedida, a mesma sessão passa.
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json', '--tools', 'Read'], ok), 0);
+    escrito.pop();
+    if (entradaAntes === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    else process.env.CLAUDE_CODE_ENTRYPOINT = entradaAntes;
+    // Nada disso roda o claude nem entra no registro.
+    assert.deepStrictEqual(como.lerAcessos(5), []);
+    assert.ok(como.lerArgs(['principal', '--json']).erro);
+    // Com --json, erro de argumento também sai como objeto no stdout: a conta vazia de `as "$CLAUDE_AUTO_CONTA"`.
+    assert.strictEqual(await como.rodar(['', '--check', '--json'], ok), 2);
+    const semConta = JSON.parse(escrito.pop());
+    assert.strictEqual(semConta.ok, false);
+    assert.strictEqual(semConta.account, null);
+    assert.match(semConta.error, /^usage: claude-accounts as/);
+    assert.strictEqual(await como.rodar(['principal', '--check', '--json', 'publique'], ok), 2);
+    const comPedido = JSON.parse(escrito.pop());
+    assert.deepStrictEqual(comPedido, {
+      account: 'principal', ok: false, login: null, organization: null, folder: null, token: null, warnings: [],
+      error: '--check runs nothing: drop the request, or drop --check to run it',
+    });
+    // Sem --json, o erro de argumento fica só no stderr.
+    const antes = escrito.length;
+    assert.strictEqual(await como.rodar(['principal', '--check', 'publique'], ok), 2);
+    assert.strictEqual(escrito.length, antes);
+    // Opção só vale antes do pedido: depois dele recusa, porque a tarefa rodaria quando quem escreveu --check não queria
+    // rodar nada. O texto literal vai depois de `--` ou num argumento só. Com --check, pedido é erro (nada roda).
+    assert.match(como.lerArgs(['principal', 'publique', '/x.html', '--check']).erro, /--check after the request .* use --/);
+    assert.match(como.lerArgs(['principal', 'resuma', 'o', '--check', 'do', 'relatório']).erro, /--check after the request/);
+    assert.match(como.lerArgs(['principal', 'publique', '--json']).erro, /--json after the request/);
+    assert.strictEqual(como.lerArgs(['principal', '--', 'resuma', 'o', '--check', 'do', 'relatório']).pedido, 'resuma o --check do relatório');
+    assert.strictEqual(como.lerArgs(['principal', 'resuma o --check do relatório']).pedido, 'resuma o --check do relatório');
+    assert.match(como.lerArgs(['principal', '--check', 'publique', '/x']).erro, /--check runs nothing/);
   },
 };
 

@@ -28,6 +28,7 @@ const AJUDA = `claude-accounts: Claude Code accounts for claude-auto
   as <id> [--tools a,b] [--model m] "<request>"
                                one task on that account's login, without moving the session that asks
                                (default tools: Artifact, ArtifactComments, ArtifactData, Read; logged)
+  as <id> --check [--json]     where a task would run (login, org, folder, token), without running one
   accesses [-n N]              latest tasks run with as
   refresh [<id>]               renew an expired login through the CLI, when no claude process uses its folder
 `;

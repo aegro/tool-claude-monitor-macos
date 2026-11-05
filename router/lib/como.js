@@ -37,8 +37,13 @@ function lerArgs(args) {
       resto.push(...args.slice(i + 1));
       break;
     }
-    // Opção só vale antes do pedido: "resuma o --check do relatório" é pedido, não opção.
+    // Opção só vale antes do pedido: "resuma o --check do relatório" é pedido, não opção. `--tools` e `--model` depois
+    // do pedido recusam em vez de virar texto: quem escreveu `as x "leia" --tools Read` quis restringir o filho, e
+    // como texto ele rodaria com as ferramentas padrão, mais do que o pedido. O texto literal vai depois de `--`.
     if (resto.length) {
+      if (a === '--tools' || a === '--model') {
+        return { erro: `${a} after the request is not read as an option: put it before the request, or use -- to send it as text` };
+      }
       resto.push(a);
     } else if (a === '--check' || a === '--json') {
       r[a === '--check' ? 'check' : 'json'] = true;

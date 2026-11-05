@@ -49,6 +49,10 @@ const testes = {
     assert.ok(como.lerArgs([]).erro);
     assert.ok(como.lerArgs(['principal', '--tools']).erro);
     assert.ok(como.lerArgs(['principal', '--tools', ',']).erro);
+    // --tools/--model depois do pedido recusam: como texto, o filho rodaria com mais ferramentas do que o pedido.
+    assert.match(como.lerArgs(['principal', 'leia', 'X', '--tools', 'Read']).erro, /--tools after the request .* use --/);
+    assert.match(como.lerArgs(['principal', 'resuma', '--model', 'opus']).erro, /--model after the request/);
+    assert.strictEqual(como.lerArgs(['principal', '--', 'leia', 'X', '--tools', 'Read']).pedido, 'leia X --tools Read');
   },
   rodaNaPastaDaContaComOFilhoEstreito() {
     const cfg = configurar({ principal: TEAM, max: MAX });

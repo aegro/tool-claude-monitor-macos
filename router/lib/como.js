@@ -14,8 +14,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
-const { execFile, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const contas = require('./contas');
 const agentes = require('./agentes');
 
@@ -157,31 +156,11 @@ function contaDaChave(chave, exceto, cfg) {
   return [...new Set([...cfg.rota, ...cfg.reserva])].find((o) => o !== exceto && contas.identidade(o, cfg).chave === chave) || null;
 }
 
-function servicoDaPasta(dir) {
-  if (path.resolve(dir) === path.resolve(contas.DIR_PRINCIPAL)) return 'Claude Code-credentials';
-  return `Claude Code-credentials-${crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8)}`;
-}
-
-function lerItemDaPasta(dir) {
-  if (process.platform !== 'darwin') {
-    try {
-      return Promise.resolve(fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8'));
-    } catch {
-      return Promise.resolve(null);
-    }
-  }
-  return new Promise((resolve) => {
-    execFile('security', ['find-generic-password', '-s', servicoDaPasta(dir), '-w'], { timeout: 8000 }, (erro, saida) =>
-      resolve(erro ? null : String(saida).trim()),
-    );
-  });
-}
-
 // A verdade do login é o token, não o .claude.json: uma sessão antiga regrava o arquivo com o login que tem em memória,
 // e a troca dos agentes muda o token do ~/.claude sem mudar o arquivo de quem ainda está aberto. O perfil da API diz de
 // quem é o token, sem renovar nada. Token vencido não dá para conferir (o CLI o renova ao rodar): vale o declarado, com
 // aviso. Sem resposta da API, o mesmo.
-async function conferirToken(plano, cfg = contas.carregarConfig(), { lerItem = lerItemDaPasta, conferir = agentes.conferirLogin } = {}) {
+async function conferirToken(plano, cfg = contas.carregarConfig(), { lerItem = contas.lerItemDaPasta, conferir = agentes.conferirLogin } = {}) {
   const item = await lerItem(plano.dir);
   if (!item) return { erro: `${plano.id} has no login in ${plano.dir}: run ${refazerLogin(plano.id, cfg)}` };
   const r = await conferir(item);
@@ -319,7 +298,6 @@ module.exports = {
   ambienteLimpo,
   planejar,
   conferirToken,
-  servicoDaPasta,
   registrar,
   lerAcessos,
   lerEntrada,

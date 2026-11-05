@@ -261,8 +261,7 @@ function temLoginProprio(id, cfg = carregarConfig(), { fresco = false } = {}) {
   if (process.platform !== 'darwin') return fs.existsSync(path.join(dir, '.credentials.json'));
   const guardado = loginProprioPorDir.get(dir);
   if (!fresco && guardado && Date.now() - guardado.em < PRAZO_DO_LOGIN_PROPRIO_MS) return guardado.tem;
-  const hash = crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8);
-  const r = spawnSync('security', ['find-generic-password', '-s', `Claude Code-credentials-${hash}`], { stdio: 'ignore', timeout: 2000 });
+  const r = spawnSync('security', ['find-generic-password', '-s', servicoDoDir(dir)], { stdio: 'ignore', timeout: 2000 });
   if (r.error || r.signal) return false;
   loginProprioPorDir.set(dir, { tem: r.status === 0, em: Date.now() });
   return r.status === 0;

@@ -7,19 +7,23 @@
 // tarefa roda na outra conta.
 //
 // O filho é estreito de propósito: só as ferramentas pedidas (por padrão, as de artefato e a leitura de arquivo),
-// sem os settings do usuário (que podem liberar Bash ou MCP inteiros) e sem os servidores MCP locais. Quem precisar
-// de mais nomeia com --tools, e o que foi pedido vai para o registro.
+// sem os settings do usuário (que podem liberar Bash ou MCP inteiros), sem os servidores MCP locais e sem nenhuma
+// credencial herdada da sessão que pediu. Quem precisar de mais nomeia com --tools, e o que foi pedido vai para o
+// registro.
 
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const crypto = require('crypto');
+const { execFile, spawn } = require('child_process');
 const contas = require('./contas');
+const agentes = require('./agentes');
 
 const FERRAMENTAS_PADRAO = ['Artifact', 'ArtifactComments', 'ArtifactData', 'Read'];
 const MODELO_PADRAO = 'claude-haiku-5-5';
 const ARQ_ACESSOS = path.join(contas.DIR_ESTADO, 'acessos.jsonl');
 const MAX_ACESSOS = 500;
 const TAMANHO_DO_PEDIDO_NO_REGISTRO = 300;
+const ESPERA_DA_ENTRADA_MS = 5000;
 
 // Lê `<conta> [--tools a,b] [--model m] [--] <pedido...>`. Sem pedido nos argumentos, ele vem da entrada padrão.
 function lerArgs(args) {
@@ -53,27 +57,49 @@ function lerArgs(args) {
   return r;
 }
 
+// O ambiente do filho sem nada que autentique por fora da pasta: um token ou chave herdado da sessão que pediu faria a
+// tarefa rodar na conta dela com o banner dizendo outra. A mesma limpeza que a renovação de login faz, menos o
+// CLAUDE_CODE_ENTRYPOINT: é ele que diz de onde a sessão veio, e as ferramentas de artefato só existem nas sessões do
+// VS Code e do app desktop (medido em 05/11/2026: `claude-vscode` e `claude-desktop` têm o Artifact, `cli` e `sdk-cli`
+// não). Ele não autentica nada.
+const MANTIDAS = new Set(['CLAUDE_CODE_ENTRYPOINT']);
+const DE_ARTEFATO = new Set(['Artifact', 'ArtifactComments', 'ArtifactData']);
+const ENTRADAS_COM_ARTEFATO = new Set(['claude-vscode', 'claude-desktop']);
+
+function ambienteLimpo(base = process.env) {
+  const env = { ...base };
+  for (const chave of Object.keys(env)) {
+    if ((chave.startsWith('CLAUDE_CODE_') && !MANTIDAS.has(chave)) || chave === 'CLAUDECODE') delete env[chave];
+  }
+  for (const chave of ['CLAUDE_AUTO_CONTA', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']) delete env[chave];
+  return env;
+}
+
 // Onde e com que login a tarefa roda, ou o motivo de não rodar. A pasta é a mesma que uma sessão nova da conta usaria
-// (`envDaSessao`), e o login de lá tem que ser o da conta: o mesmo e-mail em duas orgs entra sem aviso na org que o
-// navegador já usa, e uma tarefa "na Team" que rodasse na Max publicaria o artefato no lugar errado sem ninguém notar.
+// (`envDaSessao`). Aqui vale o login que a pasta declara; o token dela é conferido depois, em `conferirToken`.
 function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env) {
   if (!cfg.contas[id] || cfg.contas[id].pendente) {
     return { erro: `unknown account: ${id}. Accounts: ${Object.keys(cfg.contas).filter((c) => !cfg.contas[c].pendente).join(', ')}` };
   }
   if (!opcoes.pedido) return { erro: 'empty request: say what to do on that account' };
-  const env = { ...contas.envDaSessao(id, base, cfg), CLAUDE_AUTO_CONTA: id };
+  const env = { ...contas.envDaSessao(id, ambienteLimpo(base), cfg), CLAUDE_AUTO_CONTA: id };
   const dir = env.CLAUDE_CONFIG_DIR || contas.DIR_PRINCIPAL;
-  const login = contas.loginDaPasta(dir);
+  const declarado = contas.loginDaPasta(dir);
+  // Na pasta do ~/.claude, quem está lá é a conta segundo `identidade` (que corrige o ~/.claude.json regravado por uma
+  // sessão antiga depois de uma troca dos agentes); nas outras pastas, o que a pasta declara.
+  const login = path.resolve(dir) === path.resolve(contas.DIR_PRINCIPAL) ? { ...contas.identidade(id, cfg) } : declarado;
   if (!login.chave) return { erro: `${id} has no login in ${dir}: run claude-accounts login ${id}` };
-  const outra = [...cfg.rota, ...cfg.reserva].find((o) => o !== id && contas.identidade(o, cfg).chave === login.chave);
+  const outra = contaDaChave(login.chave, id, cfg);
   if (outra || (!contas.usaDirPadrao(id, cfg) && contas.loginDeOutraContaDaFila(id, cfg))) {
     const de = outra ? ` (${contas.nomeDaConta(outra, cfg)})` : '';
     return { erro: `${dir} is signed in to ${contas.rotuloDoLoginDaPasta(login)}${de}, not to ${id}; fix it with claude-accounts login ${id}` };
   }
   const onde = contas.rotuloDoLoginDaPasta(login);
   const lista = opcoes.ferramentas.join(',');
+  // O pedido vai pela entrada padrão do filho, nunca em argv: um pedido que começa com "-" (uma lista em markdown)
+  // seria lido como opção do CLI.
   const args = [
-    '-p', opcoes.pedido,
+    '-p',
     '--tools', lista,
     '--allowedTools', lista,
     '--model', opcoes.modelo,
@@ -84,40 +110,105 @@ function planejar(id, opcoes, cfg = contas.carregarConfig(), base = process.env)
     `Você roda com o login ${onde} (conta ${id}), a pedido de outra sessão e só para esta tarefa. ` +
       'Termine dizendo em que conta e organização a operação foi feita e o link de cada artefato que criou, mudou ou leu.',
   ];
-  return { id, env, dir, login, onde, args, ferramentas: opcoes.ferramentas, modelo: opcoes.modelo };
+  const semArtefato = opcoes.ferramentas.some((f) => DE_ARTEFATO.has(f)) && !ENTRADAS_COM_ARTEFATO.has(env.CLAUDE_CODE_ENTRYPOINT);
+  const aviso = semArtefato
+    ? 'the Artifact tools only exist in Claude Code sessions from VS Code or the desktop app; run this from one of them'
+    : null;
+  return { id, env, dir, login, onde, args, aviso, pedido: opcoes.pedido, ferramentas: opcoes.ferramentas, modelo: opcoes.modelo };
+}
+
+function contaDaChave(chave, exceto, cfg) {
+  return [...new Set([...cfg.rota, ...cfg.reserva])].find((o) => o !== exceto && contas.identidade(o, cfg).chave === chave) || null;
+}
+
+function servicoDaPasta(dir) {
+  if (path.resolve(dir) === path.resolve(contas.DIR_PRINCIPAL)) return 'Claude Code-credentials';
+  return `Claude Code-credentials-${crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8)}`;
+}
+
+function lerItemDaPasta(dir) {
+  if (process.platform !== 'darwin') {
+    try {
+      return Promise.resolve(fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8'));
+    } catch {
+      return Promise.resolve(null);
+    }
+  }
+  return new Promise((resolve) => {
+    execFile('security', ['find-generic-password', '-s', servicoDaPasta(dir), '-w'], { timeout: 8000 }, (erro, saida) =>
+      resolve(erro ? null : String(saida).trim()),
+    );
+  });
+}
+
+// A verdade do login é o token, não o .claude.json: uma sessão antiga regrava o arquivo com o login que tem em memória,
+// e a troca dos agentes muda o token do ~/.claude sem mudar o arquivo de quem ainda está aberto. O perfil da API diz de
+// quem é o token, sem renovar nada. Token vencido não dá para conferir (o CLI o renova ao rodar): vale o declarado, com
+// aviso. Sem resposta da API, o mesmo.
+async function conferirToken(plano, cfg = contas.carregarConfig(), { lerItem = lerItemDaPasta, conferir = agentes.conferirLogin } = {}) {
+  const item = await lerItem(plano.dir);
+  if (!item) return { erro: `${plano.id} has no login in ${plano.dir}: run claude-accounts login ${plano.id}` };
+  const r = await conferir(item);
+  if (r.valido === false && !r.chave) return { erro: `the ${plano.id} login in ${plano.dir} no longer works (${r.motivo}): run claude-accounts login ${plano.id}` };
+  if (!r.chave || r.vencido) return { aviso: `could not check the token in ${plano.dir} (${r.vencido ? 'expired, the CLI renews it' : r.motivo}); going by the login the folder declares` };
+  if (r.chave === plano.login.chave) return {};
+  const outra = contaDaChave(r.chave, plano.id, cfg);
+  const dela = outra ? `${contas.nomeDaConta(outra, cfg)} (${outra})` : 'an account outside the queue';
+  return { erro: `the token in ${plano.dir} belongs to ${dela}, not to ${plano.id} (${plano.onde}); fix it with claude-accounts login ${plano.id}` };
 }
 
 // Cada tarefa vira uma linha em `.estado/acessos.jsonl`: quem pediu (a conta da sessão de origem), em que conta rodou,
-// com que ferramentas, de qual pasta e o começo do pedido. O arquivo é só de quem roda (0600) e guarda as últimas 500.
+// com que ferramentas, de qual pasta e o começo do pedido. A linha nasce antes de o filho rodar (`codigo: null`) e é
+// completada no fim, para que uma tarefa cujo pai morreu no meio ainda apareça. Só do dono (0600), últimas 500, sob a
+// trava de arquivo do roteador para duas tarefas paralelas não se apagarem.
 function registrar(entrada, arquivo = ARQ_ACESSOS) {
   try {
-    fs.mkdirSync(path.dirname(arquivo), { recursive: true });
-    const linhas = fs.existsSync(arquivo) ? fs.readFileSync(arquivo, 'utf8').split('\n').filter(Boolean) : [];
-    linhas.push(JSON.stringify(entrada));
-    const tmp = `${arquivo}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, linhas.slice(-MAX_ACESSOS).join('\n') + '\n', { mode: 0o600 });
-    fs.renameSync(tmp, arquivo);
+    contas.comTravaDeArquivo(arquivo, () => {
+      const linhas = fs.existsSync(arquivo) ? fs.readFileSync(arquivo, 'utf8').split('\n').filter(Boolean) : [];
+      const i = entrada.id ? linhas.findIndex((l) => l.includes(`"id":${JSON.stringify(entrada.id)}`)) : -1;
+      if (i >= 0) linhas[i] = JSON.stringify(entrada);
+      else linhas.push(JSON.stringify(entrada));
+      const tmp = `${arquivo}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, linhas.slice(-MAX_ACESSOS).join('\n') + '\n', { mode: 0o600 });
+      fs.renameSync(tmp, arquivo);
+    });
   } catch (e) {
     contas.log(`as: não deu para registrar o acesso: ${e.message}`);
   }
 }
 
 function lerAcessos(limite = 20, arquivo = ARQ_ACESSOS) {
+  const n = Number.isInteger(limite) && limite > 0 ? limite : 20;
   try {
-    return fs.readFileSync(arquivo, 'utf8').split('\n').filter(Boolean).slice(-limite).reverse()
+    return fs.readFileSync(arquivo, 'utf8').split('\n').filter(Boolean).slice(-n).reverse()
       .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   } catch {
     return [];
   }
 }
 
-function lerEntrada() {
-  if (process.stdin.isTTY) return Promise.resolve('');
+// O pedido pela entrada padrão (`echo … | claude-accounts as <conta>`). Uma entrada que não é terminal mas também não
+// manda nada (um script que herdou um pipe aberto) não segura o comando: sem dado em 5 s, o pedido fica vazio.
+function lerEntrada(entrada = process.stdin, esperaMs = ESPERA_DA_ENTRADA_MS) {
+  if (entrada.isTTY) return Promise.resolve('');
   return new Promise((resolve) => {
     let texto = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (d) => (texto += d));
-    process.stdin.on('end', () => resolve(texto.trim()));
+    let chegou = false;
+    const espera = setTimeout(() => {
+      if (!chegou) {
+        entrada.pause();
+        resolve('');
+      }
+    }, esperaMs);
+    entrada.setEncoding('utf8');
+    entrada.on('data', (d) => {
+      chegou = true;
+      texto += d;
+    });
+    entrada.on('end', () => {
+      clearTimeout(espera);
+      resolve(texto.trim());
+    });
   });
 }
 
@@ -128,26 +219,22 @@ async function rodar(args) {
     return 2;
   }
   if (!opcoes.pedido) opcoes.pedido = await lerEntrada();
-  const plano = planejar(opcoes.id, opcoes);
-  if (plano.erro) {
-    process.stderr.write(`claude-accounts: ${plano.erro}\n`);
+  const cfg = contas.carregarConfig();
+  const plano = planejar(opcoes.id, opcoes, cfg);
+  const token = plano.erro ? null : await conferirToken(plano, cfg);
+  const erro = plano.erro || (token && token.erro);
+  if (erro) {
+    process.stderr.write(`claude-accounts: ${erro}\n`);
     return 2;
   }
+  for (const aviso of [plano.aviso, token.aviso].filter(Boolean)) process.stderr.write(`claude-accounts: ${aviso}\n`);
   const de = process.env.CLAUDE_AUTO_CONTA || null;
   process.stderr.write(`claude-accounts as ${plano.id}: ${plano.onde}, one task, tools ${plano.ferramentas.join(', ')}\n`);
   contas.log(`as: ${de || 'terminal'} pediu uma tarefa em ${plano.id} (${plano.onde}), ferramentas ${plano.ferramentas.join(',')}`);
-  contas.prepararConta(plano.id);
+  contas.prepararSessao(plano.id, plano.env, cfg);
   const inicio = Date.now();
-  const codigo = await new Promise((resolve) => {
-    const filho = spawn(contas.resolverClaude(), plano.args, { env: plano.env, stdio: ['ignore', 'inherit', 'inherit'] });
-    process.on('SIGINT', () => filho.kill('SIGINT'));
-    filho.on('error', (e) => {
-      process.stderr.write(`claude-accounts: could not start claude: ${e.message}\n`);
-      resolve(1);
-    });
-    filho.on('exit', (c) => resolve(c ?? 1));
-  });
-  registrar({
+  const entrada = {
+    id: `${process.pid}-${inicio}`,
     em: inicio,
     de,
     conta: plano.id,
@@ -156,11 +243,47 @@ async function rodar(args) {
     ferramentas: plano.ferramentas,
     modelo: plano.modelo,
     cwd: process.cwd(),
-    pedido: opcoes.pedido.slice(0, TAMANHO_DO_PEDIDO_NO_REGISTRO),
-    codigo,
-    ms: Date.now() - inicio,
+    pedido: plano.pedido.slice(0, TAMANHO_DO_PEDIDO_NO_REGISTRO),
+    codigo: null,
+    ms: null,
+  };
+  registrar(entrada);
+  const codigo = await new Promise((resolve) => {
+    let filho;
+    try {
+      filho = spawn(contas.resolverClaude(), plano.args, { env: plano.env, stdio: ['pipe', 'inherit', 'inherit'] });
+    } catch (e) {
+      process.stderr.write(`claude-accounts: could not start claude: ${e.message}\n`);
+      resolve(1);
+      return;
+    }
+    // O Ctrl-C do terminal já chega ao filho, que está no mesmo grupo; o resto (o Bash de uma sessão que estourou o
+    // prazo, um terminal fechado) só chega ao pai, que repassa.
+    process.on('SIGINT', () => {});
+    for (const sinal of ['SIGTERM', 'SIGHUP']) process.on(sinal, () => filho.kill(sinal));
+    filho.on('error', (e) => {
+      process.stderr.write(`claude-accounts: could not start claude: ${e.message}\n`);
+      resolve(1);
+    });
+    filho.on('exit', (c, sinal) => resolve(c ?? (sinal ? 128 : 1)));
+    filho.stdin.on('error', () => {});
+    filho.stdin.end(plano.pedido);
   });
+  registrar({ ...entrada, codigo, ms: Date.now() - inicio });
   return codigo;
 }
 
-module.exports = { lerArgs, planejar, registrar, lerAcessos, rodar, FERRAMENTAS_PADRAO, MODELO_PADRAO, ARQ_ACESSOS };
+module.exports = {
+  lerArgs,
+  ambienteLimpo,
+  planejar,
+  conferirToken,
+  servicoDaPasta,
+  registrar,
+  lerAcessos,
+  lerEntrada,
+  rodar,
+  FERRAMENTAS_PADRAO,
+  MODELO_PADRAO,
+  ARQ_ACESSOS,
+};

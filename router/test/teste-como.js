@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
+const { PassThrough } = require('stream');
 const path = require('path');
 
 require('./ambiente-limpo');
@@ -57,7 +58,10 @@ const testes = {
     assert.strictEqual(plano.env.CLAUDE_AUTO_CONTA, 'principal');
     assert.strictEqual(plano.onde, 'thomas@empresa.com, Empresa');
     const a = plano.args;
-    assert.strictEqual(a[a.indexOf('-p') + 1], 'leia o artefato');
+    // O pedido vai pela entrada padrão do filho: em argv, um pedido começando com "-" viraria opção do CLI.
+    assert.strictEqual(plano.pedido, 'leia o artefato');
+    assert.ok(!a.includes('leia o artefato'));
+    assert.strictEqual(a[0], '-p');
     assert.strictEqual(a[a.indexOf('--tools') + 1], 'Artifact,ArtifactComments,ArtifactData,Read');
     assert.strictEqual(a[a.indexOf('--allowedTools') + 1], 'Artifact,ArtifactComments,ArtifactData,Read');
     // Sem os settings do usuário (que podem liberar Bash), sem MCP local, sem transcrição.
@@ -75,6 +79,48 @@ const testes = {
     assert.match(pedir('sumiu').erro, /unknown account: sumiu/);
     assert.match(pedir('principal', '').erro, /empty request/);
   },
+  filhoNaoHerdaCredencialDaSessaoQuePediu() {
+    const env = como.ambienteLimpo({
+      PATH: '/bin', CLAUDECODE: '1', CLAUDE_CODE_OAUTH_TOKEN: 't', CLAUDE_CODE_ENTRYPOINT: 'claude-vscode',
+      CLAUDE_CODE_SESSION_ID: 's', ANTHROPIC_API_KEY: 'k', ANTHROPIC_AUTH_TOKEN: 'a', CLAUDE_CONFIG_DIR: '/outra',
+      CLAUDE_AUTO_CONTA: 'max',
+    });
+    // De onde a sessão veio fica: é o que dá as ferramentas de artefato ao filho, e não autentica nada.
+    assert.deepStrictEqual(env, { PATH: '/bin', CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' });
+    const cfg = configurar({ principal: TEAM, max: MAX });
+    const plano = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact'], modelo: 'm' }, cfg, { PATH: '/bin', ANTHROPIC_API_KEY: 'k' });
+    assert.strictEqual(plano.env.ANTHROPIC_API_KEY, undefined);
+    assert.strictEqual(plano.env.PATH, '/bin');
+    // Fora do VS Code e do app desktop não há Artifact: o comando avisa em vez de deixar o filho dizer que não achou.
+    assert.match(plano.aviso, /only exist in Claude Code sessions from VS Code or the desktop app/);
+    const doVsCode = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact'], modelo: 'm' }, cfg, { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' });
+    assert.strictEqual(doVsCode.aviso, null);
+    const semArtefato = como.planejar('principal', { pedido: 'x', ferramentas: ['Read'], modelo: 'm' }, cfg, {});
+    assert.strictEqual(semArtefato.aviso, null);
+  },
+  async tokenDeOutraContaNaPastaRecusa() {
+    const cfg = configurar({ principal: TEAM, max: MAX });
+    const plano = como.planejar('principal', { pedido: 'x', ferramentas: ['Artifact'], modelo: 'm' }, cfg, {});
+    const com = (r, item = '{}') => como.conferirToken(plano, cfg, { lerItem: async () => item, conferir: async () => r });
+    assert.deepStrictEqual(await com({ valido: true, chave: 'u1:org-team' }), {});
+    // O arquivo diz Team, o token é da Max: rodaria na Max com o banner dizendo Team.
+    assert.match((await com({ valido: true, chave: 'u1:org-max' })).erro, /token .* belongs to max \(max\), not to principal/);
+    assert.match((await com({ valido: true, chave: 'u9:org-x' })).erro, /belongs to an account outside the queue/);
+    assert.match((await com({ valido: false, motivo: 'HTTP 401' })).erro, /no longer works \(HTTP 401\)/);
+    assert.match((await com({ valido: true, chave: null, vencido: true })).aviso, /expired, the CLI renews it/);
+    assert.match((await com({ valido: null, motivo: 'timeout' })).aviso, /could not check the token .*timeout/);
+    assert.match((await com({}, null)).erro, /has no login/);
+  },
+  async entradaSemDadoNaoSeguraOComando() {
+    const parada = new PassThrough();
+    parada.isTTY = false;
+    assert.strictEqual(await como.lerEntrada(parada, 50), '');
+    const comPedido = new PassThrough();
+    comPedido.isTTY = false;
+    const lido = como.lerEntrada(comPedido, 1000);
+    comPedido.end('- publique o relatório\n');
+    assert.strictEqual(await lido, '- publique o relatório');
+  },
   registroGuardaAsUltimasTarefasSoParaODono() {
     const arquivo = path.join(raiz, 'acessos.jsonl');
     for (let i = 0; i < 505; i += 1) como.registrar({ em: i, conta: 'principal', pedido: `p${i}` }, arquivo);
@@ -85,18 +131,28 @@ const testes = {
     const ultimas = como.lerAcessos(2, arquivo);
     assert.deepStrictEqual(ultimas.map((a) => a.em), [504, 503]);
     assert.deepStrictEqual(como.lerAcessos(5, path.join(raiz, 'nao-existe.jsonl')), []);
+    assert.strictEqual(como.lerAcessos(0, arquivo).length, 20);
+    assert.strictEqual(como.lerAcessos(NaN, arquivo).length, 20);
+    // A linha nasce antes do filho e é completada no fim, no mesmo lugar.
+    como.registrar({ id: 'x-1', em: 1000, codigo: null }, arquivo);
+    como.registrar({ id: 'x-1', em: 1000, codigo: 0, ms: 5 }, arquivo);
+    const fim = como.lerAcessos(3, arquivo);
+    assert.deepStrictEqual(fim[0], { id: 'x-1', em: 1000, codigo: 0, ms: 5 });
+    assert.strictEqual(fim.filter((a) => a.id === 'x-1').length, 1);
   },
 };
 
-let falhas = 0;
-for (const [nome, teste] of Object.entries(testes)) {
-  try {
-    teste();
-    console.log(`ok    ${nome}`);
-  } catch (e) {
-    falhas += 1;
-    console.log(`FALHA ${nome}\n${e.stack}`);
+(async () => {
+  let falhas = 0;
+  for (const [nome, teste] of Object.entries(testes)) {
+    try {
+      await teste();
+      console.log(`ok    ${nome}`);
+    } catch (e) {
+      falhas += 1;
+      console.log(`FALHA ${nome}\n${e.stack}`);
+    }
   }
-}
-fs.rmSync(raiz, { recursive: true, force: true });
-process.exit(falhas ? 1 : 0);
+  fs.rmSync(raiz, { recursive: true, force: true });
+  process.exit(falhas ? 1 : 0);
+})();

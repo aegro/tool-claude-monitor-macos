@@ -212,7 +212,9 @@ function lerEntrada(entrada = process.stdin, esperaMs = ESPERA_DA_ENTRADA_MS) {
   });
 }
 
-async function rodar(args) {
+// `verificarToken` e `preparar` existem para o teste rodar o ciclo inteiro sem ler o Keychain, sem chamar a API de
+// perfil e sem ligar a pasta da conta ao ~/.claude de quem roda os testes.
+async function rodar(args, { verificarToken = conferirToken, preparar = contas.prepararSessao } = {}) {
   const opcoes = lerArgs(args);
   if (opcoes.erro) {
     process.stderr.write(`claude-accounts: ${opcoes.erro}\n`);
@@ -221,7 +223,7 @@ async function rodar(args) {
   if (!opcoes.pedido) opcoes.pedido = await lerEntrada();
   const cfg = contas.carregarConfig();
   const plano = planejar(opcoes.id, opcoes, cfg);
-  const token = plano.erro ? null : await conferirToken(plano, cfg);
+  const token = plano.erro ? null : await verificarToken(plano, cfg);
   const erro = plano.erro || (token && token.erro);
   if (erro) {
     process.stderr.write(`claude-accounts: ${erro}\n`);
@@ -231,7 +233,7 @@ async function rodar(args) {
   const de = process.env.CLAUDE_AUTO_CONTA || null;
   process.stderr.write(`claude-accounts as ${plano.id}: ${plano.onde}, one task, tools ${plano.ferramentas.join(', ')}\n`);
   contas.log(`as: ${de || 'terminal'} pediu uma tarefa em ${plano.id} (${plano.onde}), ferramentas ${plano.ferramentas.join(',')}`);
-  contas.prepararSessao(plano.id, plano.env, cfg);
+  preparar(plano.id, plano.env, cfg);
   const inicio = Date.now();
   const entrada = {
     id: `${process.pid}-${inicio}`,
@@ -248,6 +250,9 @@ async function rodar(args) {
     ms: null,
   };
   registrar(entrada);
+  // O Ctrl-C do terminal já chega ao filho, que está no mesmo grupo; o resto (o Bash de uma sessão que estourou o
+  // prazo, um terminal fechado) só chega ao pai, que repassa. Os ouvintes saem quando o filho acaba.
+  const ouvintes = [];
   const codigo = await new Promise((resolve) => {
     let filho;
     try {
@@ -257,10 +262,9 @@ async function rodar(args) {
       resolve(1);
       return;
     }
-    // O Ctrl-C do terminal já chega ao filho, que está no mesmo grupo; o resto (o Bash de uma sessão que estourou o
-    // prazo, um terminal fechado) só chega ao pai, que repassa.
-    process.on('SIGINT', () => {});
-    for (const sinal of ['SIGTERM', 'SIGHUP']) process.on(sinal, () => filho.kill(sinal));
+    ouvintes.push(['SIGINT', () => {}]);
+    for (const sinal of ['SIGTERM', 'SIGHUP']) ouvintes.push([sinal, () => filho.kill(sinal)]);
+    for (const [sinal, f] of ouvintes) process.on(sinal, f);
     filho.on('error', (e) => {
       process.stderr.write(`claude-accounts: could not start claude: ${e.message}\n`);
       resolve(1);
@@ -269,6 +273,7 @@ async function rodar(args) {
     filho.stdin.on('error', () => {});
     filho.stdin.end(plano.pedido);
   });
+  for (const [sinal, f] of ouvintes) process.removeListener(sinal, f);
   registrar({ ...entrada, codigo, ms: Date.now() - inicio });
   return codigo;
 }

@@ -140,6 +140,58 @@ const testes = {
     assert.deepStrictEqual(fim[0], { id: 'x-1', em: 1000, codigo: 0, ms: 5 });
     assert.strictEqual(fim.filter((a) => a.id === 'x-1').length, 1);
   },
+  async rodarEntregaOPedidoAoFilhoERegistraOFim() {
+    configurar({ principal: TEAM, max: MAX });
+    const saida = path.join(raiz, 'filho.json');
+    const preparadas = [];
+    const sem = { verificarToken: async () => ({}), preparar: (id) => preparadas.push(id) };
+    const ouvintes = () => ['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => process.listenerCount(s));
+    const antes = ouvintes();
+    const env = { CLAUDE_AUTO_CLAUDE_BIN: path.join(__dirname, 'fake-claude-como.js'), COMO_FAKE_SAIDA: saida };
+    const comEnv = async (extra, fn) => {
+      Object.assign(process.env, env, extra);
+      try {
+        return await fn();
+      } finally {
+        for (const k of Object.keys({ ...env, ...extra })) delete process.env[k];
+      }
+    };
+    fs.rmSync(como.ARQ_ACESSOS, { force: true });
+
+    // O pedido chega inteiro pela entrada padrão, mesmo começando com "-", e o código do filho é o do comando.
+    const codigo = await comEnv({ COMO_FAKE_CODIGO: '3' }, () => como.rodar(['principal', '--tools', 'Read', '--', '- publique', 'o relatório'], sem));
+    assert.strictEqual(codigo, 3);
+    const recebido = JSON.parse(fs.readFileSync(saida, 'utf8'));
+    assert.strictEqual(recebido.pedido, '- publique o relatório');
+    assert.ok(!recebido.args.includes('- publique o relatório'));
+    assert.strictEqual(recebido.configDir, path.join(raiz, 'pastas', 'principal'));
+    assert.strictEqual(recebido.conta, 'principal');
+    assert.deepStrictEqual(preparadas, ['principal']);
+    const [registro] = como.lerAcessos(5);
+    assert.strictEqual(registro.conta, 'principal');
+    assert.strictEqual(registro.pedido, '- publique o relatório');
+    assert.strictEqual(registro.codigo, 3);
+    assert.ok(Number.isInteger(registro.ms));
+    assert.strictEqual(como.lerAcessos(5).length, 1);
+    assert.deepStrictEqual(ouvintes(), antes);
+
+    // Filho morto por sinal: 128, como no shell sem o número do sinal.
+    assert.strictEqual(await comEnv({ COMO_FAKE_SINAL: 'SIGKILL' }, () => como.rodar(['principal', '--tools', 'Read', 'x'], sem)), 128);
+
+    // Binário que não sobe (interpretador inexistente): 1, e o registro fecha mesmo assim.
+    const quebrado = path.join(raiz, 'claude-quebrado');
+    fs.writeFileSync(quebrado, '#!/nao/existe/interpretador\n', { mode: 0o755 });
+    const falhou = await comEnv({ CLAUDE_AUTO_CLAUDE_BIN: quebrado }, () => como.rodar(['principal', '--tools', 'Read', 'y'], sem));
+    assert.strictEqual(falhou, 1);
+    assert.strictEqual(como.lerAcessos(1)[0].codigo, 1);
+    assert.deepStrictEqual(ouvintes(), antes);
+
+    // Token de outra conta: nada roda e nada é registrado.
+    const n = como.lerAcessos(50).length;
+    const recusado = await comEnv({}, () => como.rodar(['principal', 'z'], { ...sem, verificarToken: async () => ({ erro: 'token de outra' }) }));
+    assert.strictEqual(recusado, 2);
+    assert.strictEqual(como.lerAcessos(50).length, n);
+  },
 };
 
 (async () => {

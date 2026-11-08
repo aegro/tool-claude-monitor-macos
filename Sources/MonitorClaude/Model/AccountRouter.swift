@@ -751,6 +751,8 @@ enum AccountRouter {
         return parseExhaustedReasons(data, now: now)
     }
 
+    /// The `motivo` of each entry of `esgotadas.json` whose `ate` is still after `now`, without the `agents ` prefix
+    /// (as in `reasonText`), so a reason reads the same whoever set the account aside. Unreadable data is no reason.
     static func parseExhaustedReasons(_ data: Data, now: Date) -> [String: String] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
         var result: [String: String] = [:]

@@ -292,6 +292,8 @@ struct AccountSettingsRow: View {
         .onDisappear(perform: save)
     }
 
+    /// Saves the name and monogram as typed, trimmed and with the monogram in capitals. An empty name is not saved
+    /// and the field goes back to the saved one; an unchanged pair does not call `renameAccount`.
     private func save() {
         let n = name.trimmingCharacters(in: .whitespaces)
         let m = monogram.trimmingCharacters(in: .whitespaces).uppercased()

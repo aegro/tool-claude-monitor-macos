@@ -389,6 +389,7 @@ struct AccountRow: View {
         }
     }
 
+    /// The row as of `now`, the minute the `TimelineView` in `body` is drawing.
     @ViewBuilder
     private func content(now: Date) -> some View {
         let exhausted = entry.isExhausted(at: now)
@@ -463,6 +464,7 @@ struct AccountRow: View {
         }
     }
 
+    /// The state chip as of `now`: set aside (with its reason), without a login, in use, the terminal's or next in line.
     @ViewBuilder
     private func chip(now: Date) -> some View {
         if entry.isExhausted(at: now) {
@@ -478,6 +480,8 @@ struct AccountRow: View {
         }
     }
 
+    /// The line under the bars as of `now`: what to do when it is set aside or without a login, else the renewals and
+    /// how old the numbers are.
     private func subline(now: Date) -> String {
         // Set aside, the line is only when it comes back (or what to do): the renewal that frees it is that same
         // time, and "semana renova ter 12:00" after "volta às 10/11 12:00" said it twice.
@@ -497,6 +501,7 @@ struct AccountRow: View {
         return parts.joined(separator: " · ")
     }
 
+    /// When the 5h and weekly windows renew, leaving out a window already renewed at `now`.
     private func renewals(now: Date) -> String {
         var parts: [String] = []
         if let s = entry.snapshot?.fiveHour {

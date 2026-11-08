@@ -380,9 +380,18 @@ struct AccountRow: View {
 
     @State private var hovering = false
 
-    private var exhausted: Bool { entry.exhaustedUntil.map { $0 > Date() } ?? false }
-
     var body: some View {
+        // The bars, the chip and the line under them change with the clock alone (a week that renewed while nothing
+        // else did): without a time input, SwiftUI kept a child whose stored values had not changed, and an account
+        // whose week had renewed at 12:00 still showed 67 % at 20:10 (08/11/2026).
+        TimelineView(.everyMinute) { context in
+            content(now: context.date)
+        }
+    }
+
+    @ViewBuilder
+    private func content(now: Date) -> some View {
+        let exhausted = entry.isExhausted(at: now)
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "line.3.horizontal")
@@ -403,7 +412,7 @@ struct AccountRow: View {
                                 .help("Escolhida por você para as sessões novas")
                         }
                         Spacer(minLength: 4)
-                        chip
+                        chip(now: now)
                         // Says the row opens: without it, the detail under a click was a secret.
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
@@ -415,11 +424,11 @@ struct AccountRow: View {
                     }
                     HStack(spacing: 14) {
                         if entry.snapshot == nil || entry.snapshot?.fiveHour != nil {
-                            MiniLimit(label: "5h", window: entry.snapshot?.fiveHour)
+                            MiniLimit(label: "5h", window: entry.snapshot?.fiveHour, now: now)
                         }
-                        MiniLimit(label: "Semana", window: entry.snapshot?.weekly)
+                        MiniLimit(label: "Semana", window: entry.snapshot?.weekly, now: now)
                     }
-                    Text(subline)
+                    Text(subline(now: now))
                         .font(Type.mini)
                         .foregroundStyle(exhausted || !entry.hasLogin ? Ink.alarm : Color.secondary.opacity(0.85))
                         .lineLimit(2)
@@ -446,7 +455,7 @@ struct AccountRow: View {
             .accessibilityHint("Abre o detalhe dos limites")
 
             if expanded {
-                AccountDetail(entry: entry, monitor: monitor)
+                AccountDetail(entry: entry, monitor: monitor, now: now)
                     .padding(.leading, 47)
                     .padding(.trailing, 9)
                     .padding(.vertical, 8)
@@ -455,9 +464,9 @@ struct AccountRow: View {
     }
 
     @ViewBuilder
-    private var chip: some View {
-        if exhausted {
-            StateChip(text: "esgotada", tone: .gone)
+    private func chip(now: Date) -> some View {
+        if entry.isExhausted(at: now) {
+            StateChip(text: entry.asideChip, tone: .gone)
         } else if !entry.hasLogin {
             StateChip(text: entry.loginRefused ? "sem acesso" : "sem login", tone: .gone)
         } else if inUse {
@@ -469,13 +478,13 @@ struct AccountRow: View {
         }
     }
 
-    private var subline: String {
-        if let until = entry.exhaustedUntil, until > Date() {
-            return "volta às \(Fmt.stamp(until)) · " + renewals
-        }
+    private func subline(now: Date) -> String {
+        // Set aside, the line is only when it comes back (or what to do): the renewal that frees it is that same
+        // time, and "semana renova ter 12:00" after "volta às 10/11 12:00" said it twice.
+        if let until = entry.exhaustedUntil, until > now { return entry.asideLine(until: until) }
         if !entry.hasLogin, entry.loginRefused { return "o macOS não liberou o login: Ler de novo em Acessos" }
         if !entry.hasLogin { return "sem login: autorize de novo em Contas e logins" }
-        var parts = [renewals]
+        var parts = [renewals(now: now)]
         // Numbers this old say so, and why when the reason is known.
         if let at = entry.snapshot?.fetchedAt, Date().timeIntervalSince(at) > 15 * 60 {
             parts.append(entry.loginIdle ? "lido \(Fmt.ago(at)), \(AccountQueue.idleReason(entry.refresh, id: entry.id, renewable: entry.renewable))" : "lido \(Fmt.ago(at))")
@@ -488,14 +497,14 @@ struct AccountRow: View {
         return parts.joined(separator: " · ")
     }
 
-    private var renewals: String {
+    private func renewals(now: Date) -> String {
         var parts: [String] = []
         if let s = entry.snapshot?.fiveHour {
-            if let at = s.resetsAt, !s.hasReset() { parts.append("5h renova \(Fmt.clock(at))") } else { parts.append("5h livre") }
+            if let at = s.resetsAt, !s.hasReset(at: now) { parts.append("5h renova \(Fmt.clock(at))") } else { parts.append("5h livre") }
         } else if entry.snapshot != nil {
             parts.append("sem limite de 5h")
         }
-        if let w = entry.snapshot?.weekly, let at = w.resetsAt, !w.hasReset() {
+        if let w = entry.snapshot?.weekly, let at = w.resetsAt, !w.hasReset(at: now) {
             parts.append("semana renova \(Fmt.weekday(at))")
         }
         if entry.snapshot == nil { return "sem leitura ainda" }
@@ -507,6 +516,7 @@ struct AccountRow: View {
 struct AccountDetail: View {
     let entry: AccountQueue.Entry
     let monitor: Monitor
+    var now = Date()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -530,8 +540,8 @@ struct AccountDetail: View {
                 Text(monitor.liveIsCurrent ? "Lido agora, com o login do terminal." : "Última leitura \(Fmt.ago(monitor.liveSeenAt ?? usage.fetchedAt)).")
                     .font(Type.mini).foregroundStyle(.tertiary)
             } else if let snap = entry.snapshot {
-                if let session = snap.fiveHour { StaleLimitRow(window: session, seenAt: snap.fetchedAt) }
-                ForEach(snap.windows.filter { !$0.isSession }) { StaleLimitRow(window: $0, seenAt: snap.fetchedAt) }
+                if let session = snap.fiveHour { StaleLimitRow(window: session, seenAt: snap.fetchedAt, now: now) }
+                ForEach(snap.windows.filter { !$0.isSession }) { StaleLimitRow(window: $0, seenAt: snap.fetchedAt, now: now) }
             } else {
                 Text("Sem leitura desta conta ainda. Ela aparece aqui quando o Monitor conseguir ler o login dela.")
                     .font(Type.caption).foregroundStyle(.tertiary)

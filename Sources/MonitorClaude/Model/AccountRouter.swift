@@ -743,6 +743,26 @@ enum AccountRouter {
         return parseExhausted(data, now: now)
     }
 
+    /// Why the router set each account aside (`motivo`), for the ones still set aside at `now`. A limit is not the only
+    /// reason: the server refusing the login (`auth`), a billing error or a suspended account also set it aside for a
+    /// while, and those do not come back at that time by themselves.
+    static func exhaustedReasons(now: Date = Date()) -> [String: String] {
+        guard let data = try? Data(contentsOf: exhaustedURL) else { return [:] }
+        return parseExhaustedReasons(data, now: now)
+    }
+
+    static func parseExhaustedReasons(_ data: Data, now: Date) -> [String: String] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        var result: [String: String] = [:]
+        for (id, value) in root {
+            guard let entry = value as? [String: Any], let ms = (entry["ate"] as? NSNumber)?.doubleValue,
+                  Date(timeIntervalSince1970: ms / 1000) > now, let reason = entry["motivo"] as? String
+            else { continue }
+            result[id] = reason.hasPrefix("agents ") ? String(reason.dropFirst("agents ".count)) : reason
+        }
+        return result
+    }
+
     static func parseExhausted(_ data: Data, now: Date) -> [String: Date] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
         var result: [String: Date] = [:]
@@ -1109,6 +1129,8 @@ struct RouterState: Equatable {
     var read: Set<String> = []
     var available: Set<String> = []
     var exhausted: [String: Date] = [:]
+    /// Why each of `exhausted` was set aside (`AccountRouter.exhaustedReasons`).
+    var exhaustedReasons: [String: String] = [:]
     var agentsLogins: Set<String> = []
     /// The account the agents of `claude agents` run on now (`AccountRouter.agentsAccount`).
     var agentsAccount: String?

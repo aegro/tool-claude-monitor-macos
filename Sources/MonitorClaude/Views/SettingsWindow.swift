@@ -197,25 +197,33 @@ struct AccountSettingsRow: View {
     @State private var name = ""
     @State private var monogram = ""
     @State private var confirmingRemoval = false
+    @FocusState private var editing: NameField?
+
+    private enum NameField { case name, monogram }
 
     var body: some View {
         HStack(spacing: 10) {
             Avatar(monogram: monogram.isEmpty ? entry.monogram : monogram.uppercased(), active: entry.isLive, size: 28)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
+                    // Saved on Return and on leaving the field: with Return only, an edit followed by a click elsewhere
+                    // (or closing the window) was dropped without a word (08/11/2026). Bordered, so it reads as editable.
                     TextField("", text: $name, prompt: Text("Nome"))
                         .labelsHidden()
-                        .textFieldStyle(.plain)
+                        .textFieldStyle(.roundedBorder)
                         .font(Type.strong)
+                        .focused($editing, equals: .name)
                         .onSubmit(save)
                         .disabled(!queue.configured)
+                        .help("Nome da conta no painel. Salva ao apertar Return ou sair do campo.")
                     TextField("", text: $monogram, prompt: Text("Sigla"))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 44)
+                        .focused($editing, equals: .monogram)
                         .onSubmit(save)
                         .disabled(!queue.configured)
-                        .help("Até três caracteres para a barra de menu")
+                        .help("Até três caracteres para a barra de menu. Vazia, vem do nome.")
                 }
                 Text([entry.email, entry.organization, entry.plan?.capitalized].compactMap { $0 }.joined(separator: " · "))
                     .font(Type.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -273,17 +281,23 @@ struct AccountSettingsRow: View {
                  ?? AccountQueue.removalConsequence)
         }
         .onAppear {
+            // A row the form recreates while it is being edited keeps what was typed.
+            guard editing == nil else { return }
             name = entry.label
             monogram = entry.monogram
         }
-        .onChange(of: entry.label) { _, v in name = v }
-        .onChange(of: entry.monogram) { _, v in monogram = v }
+        .onChange(of: entry.label) { _, v in if editing != .name { name = v } }
+        .onChange(of: entry.monogram) { _, v in if editing != .monogram { monogram = v } }
+        .onChange(of: editing) { old, new in if old != nil, new != old { save() } }
+        .onDisappear(perform: save)
     }
 
     private func save() {
         let n = name.trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty, n != entry.label || monogram.uppercased() != entry.monogram else { return }
-        Task { await monitor.renameAccount(entry.id, name: n, monogram: monogram) }
+        let m = monogram.trimmingCharacters(in: .whitespaces).uppercased()
+        guard !n.isEmpty else { name = entry.label; return }
+        guard n != entry.label || m != entry.monogram else { return }
+        Task { await monitor.renameAccount(entry.id, name: n, monogram: m) }
     }
 
     private func status(_ text: String, ok: Bool) -> some View {

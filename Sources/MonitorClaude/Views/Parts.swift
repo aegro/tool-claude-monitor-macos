@@ -161,18 +161,24 @@ struct PaceBar: View {
 struct MiniLimit: View {
     let label: String
     let window: LimitWindow?
+    /// Passed in so a window that renews while nothing else changes is redrawn (see `AccountRow.body`).
+    var now = Date()
 
-    private var used: Double { window.map { $0.hasReset() ? 0 : $0.utilization } ?? 0 }
+    private var renewed: Bool { window?.hasReset(at: now) ?? false }
+    private var used: Double { window.map { renewed ? 0 : $0.utilization } ?? 0 }
 
     var body: some View {
         HStack(spacing: 6) {
             Text(label).font(.system(size: 10.5)).foregroundStyle(.tertiary)
-            PaceBar(used: used, pace: window.map { $0.hasReset() ? 0 : $0.paceTarget } ?? 0,
-                    critical: window?.isCritical == true && !(window?.hasReset() ?? false))
+            PaceBar(used: used, pace: window.map { renewed ? 0 : $0.paceTarget } ?? 0,
+                    critical: window?.isCritical == true && !renewed)
             Text(window == nil ? "—" : Fmt.pct(used))
                 .font(Type.captionStrong)
-                .foregroundStyle(window?.isCritical == true && !(window?.hasReset() ?? false) ? Ink.alarm : Color.primary)
-                .frame(width: 32, alignment: .trailing)
+                .foregroundStyle(window?.isCritical == true && !renewed ? Ink.alarm : Color.primary)
+                // "100%" broke into "100" and "%" on two lines at this width.
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 32, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label): \(window == nil ? "sem leitura" : Fmt.pct(used))")

@@ -15,6 +15,9 @@ struct AccountQueue: Equatable {
         var hasLogin: Bool
         var agentsLogin: Bool
         var exhaustedUntil: Date?
+        /// Why the router set it aside until `exhaustedUntil` (`esgotadas.json`): a limit, or `auth`, `cobranca`,
+        /// `conta_suspensa`.
+        var exhaustedReason: String? = nil
         var sessions: Int = 0
         /// Sessions running with this account's folder as their config directory, whatever account they were opened
         /// on: the account cannot leave the queue while they run, since its folder would go to the Trash under them.
@@ -34,6 +37,31 @@ struct AccountQueue: Equatable {
         var loginRefused = false
 
         var headroom: Double? { snapshot.map { AccountRouter.headroom($0) } }
+
+        /// Set aside until `exhaustedUntil`, as of `now`.
+        func isExhausted(at now: Date = Date()) -> Bool { exhaustedUntil.map { $0 > now } ?? false }
+
+        /// What set it aside, in a word for the state chip: a limit is "esgotada", but a login the server refused is
+        /// not a limit and does not come back at `exhaustedUntil` by itself (07/11/2026: "esgotada, volta às 02:10"
+        /// on an account that had lost its login).
+        var asideChip: String {
+            switch exhaustedReason {
+            case "auth": "pediu login"
+            case "cobranca": "cobrança"
+            case "conta_suspensa": "suspensa"
+            default: "esgotada"
+            }
+        }
+
+        /// The line under a set-aside account: when it comes back, or what to do when a time is not the answer.
+        func asideLine(until: Date) -> String {
+            switch exhaustedReason {
+            case "auth": "o servidor recusou o login: autorize de novo em Contas e logins"
+            case "cobranca": "erro de cobrança nesta conta · tenta de novo às \(Fmt.stamp(until))"
+            case "conta_suspensa": "conta suspensa · tenta de novo às \(Fmt.stamp(until))"
+            default: "volta às \(Fmt.stamp(until))"
+            }
+        }
     }
 
     var entries: [Entry]
@@ -204,7 +232,10 @@ struct AccountQueue: Equatable {
         var parts: [String] = []
         if let entry = queue.entry(inUse) {
             if let until = entry.exhaustedUntil, until > now {
-                parts.append("Esgotada até \(Fmt.clock(until)).")
+                parts.append(entry.exhaustedReason == "auth" ? "O servidor recusou o login desta conta."
+                             : entry.exhaustedReason == "cobranca" ? "Erro de cobrança até \(Fmt.clock(until))."
+                             : entry.exhaustedReason == "conta_suspensa" ? "Conta suspensa até \(Fmt.clock(until))."
+                             : "Esgotada até \(Fmt.clock(until)).")
             } else if entry.isLive, let outlook {
                 switch outlook {
                 case .safe(_, let reset, let window):

@@ -293,12 +293,14 @@ struct AccountSettingsRow: View {
     }
 
     /// Saves the name and monogram as typed, trimmed and with the monogram in capitals. An empty name is not saved
-    /// and the field goes back to the saved one; an unchanged pair does not call `renameAccount`.
+    /// and the field goes back to the saved one; an unchanged pair does not call `renameAccount`, unless a save is
+    /// still in flight: `entry` is only read back after it lands, so going from A to B and back to A before then
+    /// would compare against the stale A, skip, and leave B written. Saves run in order, so the last one wins.
     private func save() {
         let n = name.trimmingCharacters(in: .whitespaces)
         let m = monogram.trimmingCharacters(in: .whitespaces).uppercased()
         guard !n.isEmpty else { name = entry.label; return }
-        guard n != entry.label || m != entry.monogram else { return }
+        guard monitor.savingRouter || n != entry.label || m != entry.monogram else { return }
         Task { await monitor.renameAccount(entry.id, name: n, monogram: m) }
     }
 

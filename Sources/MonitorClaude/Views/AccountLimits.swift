@@ -7,8 +7,10 @@ struct StaleLimitRow: View {
     let window: LimitWindow
     let seenAt: Date
     var note: String?
+    /// Passed in so a window that renews while nothing else changes is redrawn (see `AccountRow.body`).
+    var now = Date()
 
-    private var renewed: Bool { window.hasReset() }
+    private var renewed: Bool { window.hasReset(at: now) }
 
     /// The left caption only carries "visto" when there is no reset time, so with one the stamp moves here,
     /// next to the note, and every row keeps saying when it was seen.

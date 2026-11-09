@@ -512,7 +512,10 @@ final class Monitor: ObservableObject {
             }
         }
 
-        let exhausted = AccountRouter.exhausted()
+        // One read of `esgotadas.json` for both: the router can rewrite it between two reads.
+        let exhaustedData = try? Data(contentsOf: AccountRouter.exhaustedURL)
+        let exhausted = exhaustedData.map { AccountRouter.parseExhausted($0, now: now) } ?? [:]
+        let exhaustedReasons = exhaustedData.map { AccountRouter.parseExhaustedReasons($0, now: now) } ?? [:]
         router = RouterState(
             config: config,
             pick: config.enabled
@@ -524,6 +527,7 @@ final class Monitor: ObservableObject {
             read: read,
             available: available,
             exhausted: exhausted,
+            exhaustedReasons: exhaustedReasons,
             agentsLogins: Set(config.accounts.map(\.id).filter(AccountRouter.hasAgentsLogin)),
             agentsAccount: AccountRouter.agentsAccount(config: config),
             switches: AccountRouter.switches(limit: 20),
@@ -1030,6 +1034,7 @@ final class Monitor: ObservableObject {
                 snapshot: snapshot, hasLogin: router.available.contains(account.id),
                 agentsLogin: account.id == router.config.principal || router.agentsLogins.contains(account.id),
                 exhaustedUntil: router.exhausted[account.id].flatMap { $0 > now ? $0 : nil },
+                exhaustedReason: router.exhaustedReasons[account.id],
                 sessions: sessions.filter { $0.accountId == account.id }.count,
                 sessionsInFolder: sessions.filter { $0.folderAccountId == account.id }.count,
                 runsAgents: account.id == router.agentsAccount,
@@ -1131,7 +1136,7 @@ final class Monitor: ObservableObject {
     }
 
     func renameAccount(_ id: String, name: String, monogram: String) async {
-        await save { try AccountRouter.renameAccount(id, name: name, monogram: monogram) }
+        await save { try AccountRouter.renameAccount(id, name: name, monogram: monogram, onlyIfListed: true) }
     }
 
     /// One router edit at a time, then the config is read back into the panel right away. The usage stays as it

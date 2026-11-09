@@ -31,12 +31,28 @@ struct AsideReasonTests {
 
         let limit = entry(reason: "seven_day", until: until)
         #expect(limit.asideChip == "esgotada")
-        #expect(limit.asideLine(until: until) == "volta às \(Fmt.stamp(until))")
+        #expect(limit.asideLine(until: until) == "volta \(Fmt.at(until))")
         // Only the time it comes back: the renewal that frees it is that same time.
         #expect(!limit.asideLine(until: until).contains("renova"))
 
         #expect(entry(reason: nil, until: until).asideChip == "esgotada")
         #expect(entry(reason: "conta_suspensa", until: until).asideChip == "suspensa")
+    }
+
+    /// Coming back on another day names the weekday and the date; today, only the time.
+    @Test func voltaDizODiaDaSemana() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        let now = cal.date(from: DateComponents(year: 2026, month: 11, day: 8, hour: 21, minute: 50))!
+        let tuesday = cal.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 12))!
+        let tonight = cal.date(from: DateComponents(year: 2026, month: 11, day: 8, hour: 23, minute: 5))!
+        let limit = entry(reason: "seven_day", until: tuesday)
+        #expect(limit.asideLine(until: tuesday, now: now) == "volta ter 10/11 às 12:00")
+        #expect(limit.asideLine(until: tonight, now: now) == "volta às 23:05")
+        #expect(entry(reason: "cobranca", until: tuesday).asideLine(until: tuesday, now: now)
+                == "erro de cobrança nesta conta · tenta de novo ter 10/11 às 12:00")
+        #expect(Fmt.weekday(cal.date(from: DateComponents(year: 2026, month: 11, day: 20, hour: 12))!, now: now)
+                == "sex 20/11 12:00")
     }
 
     @Test func linhaDeStatusDaContaEmUsoDizOMotivo() {

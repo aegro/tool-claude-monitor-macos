@@ -484,8 +484,8 @@ struct AccountRow: View {
     /// how old the numbers are.
     private func subline(now: Date) -> String {
         // Set aside, the line is only when it comes back (or what to do): the renewal that frees it is that same
-        // time, and "semana renova ter 12:00" after "volta às 10/11 12:00" said it twice.
-        if let until = entry.exhaustedUntil, until > now { return entry.asideLine(until: until) }
+        // time, and "semana renova ter 12:00" after "volta ter 10/11 às 12:00" said it twice.
+        if let until = entry.exhaustedUntil, until > now { return entry.asideLine(until: until, now: now) }
         if !entry.hasLogin, entry.loginRefused { return "o macOS não liberou o login: Ler de novo em Acessos" }
         if !entry.hasLogin { return "sem login: autorize de novo em Contas e logins" }
         var parts = [renewals(now: now)]

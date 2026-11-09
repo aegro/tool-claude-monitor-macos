@@ -54,12 +54,12 @@ struct AccountQueue: Equatable {
         }
 
         /// The line under a set-aside account: when it comes back, or what to do when a time is not the answer.
-        func asideLine(until: Date) -> String {
+        func asideLine(until: Date, now: Date = Date()) -> String {
             switch exhaustedReason {
             case "auth": "o servidor recusou o login: autorize de novo em Contas e logins"
-            case "cobranca": "erro de cobrança nesta conta · tenta de novo às \(Fmt.stamp(until))"
-            case "conta_suspensa": "conta suspensa · tenta de novo às \(Fmt.stamp(until))"
-            default: "volta às \(Fmt.stamp(until))"
+            case "cobranca": "erro de cobrança nesta conta · tenta de novo \(Fmt.at(until, now: now))"
+            case "conta_suspensa": "conta suspensa · tenta de novo \(Fmt.at(until, now: now))"
+            default: "volta \(Fmt.at(until, now: now))"
             }
         }
     }
@@ -246,9 +246,9 @@ struct AccountQueue: Equatable {
             if let until = entry.exhaustedUntil, until > now {
                 switch entry.exhaustedReason {
                 case "auth": parts.append("O servidor recusou o login desta conta.")
-                case "cobranca": parts.append("Erro de cobrança até \(Fmt.clock(until)).")
-                case "conta_suspensa": parts.append("Conta suspensa até \(Fmt.clock(until)).")
-                default: parts.append("Esgotada até \(Fmt.clock(until)).")
+                case "cobranca": parts.append("Erro de cobrança até \(Fmt.at(until, now: now)).")
+                case "conta_suspensa": parts.append("Conta suspensa até \(Fmt.at(until, now: now)).")
+                default: parts.append("Esgotada até \(Fmt.at(until, now: now)).")
                 }
             } else if entry.isLive, let outlook {
                 switch outlook {

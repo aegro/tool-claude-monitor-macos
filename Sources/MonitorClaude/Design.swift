@@ -116,16 +116,26 @@ enum Fmt {
         return f.string(from: d)
     }
 
-    /// "sáb 07:59" within the coming week, "13/10 12:00" further out: a weekly reset reads by its day.
+    /// "sáb 07:59" within the coming week, "ter 13/10 12:00" further out: a weekly reset reads by its day.
     static func weekday(_ d: Date, now: Date = Date()) -> String {
         let f = DateFormatter()
         f.locale = br
         if d.timeIntervalSince(now) < 6 * 86_400, d > now {
             f.dateFormat = Calendar.current.isDate(d, inSameDayAs: now) ? "HH:mm" : "EEE HH:mm"
-            return f.string(from: d).replacingOccurrences(of: ".", with: "")
+        } else {
+            f.dateFormat = "EEE dd/MM HH:mm"
         }
-        f.dateFormat = "dd/MM HH:mm"
-        return f.string(from: d)
+        return f.string(from: d).replacingOccurrences(of: ".", with: "")
+    }
+
+    /// "às 12:00" today, "ter 10/11 às 12:00" any other day: when something comes back, the day of the week is
+    /// what a person plans by, and the date keeps it unambiguous (08/11/2026: "volta às 10/11 12:00" made the
+    /// reader work out it was a Tuesday).
+    static func at(_ d: Date, now: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = br
+        f.dateFormat = Calendar.current.isDate(d, inSameDayAs: now) ? "'às' HH:mm" : "EEE dd/MM 'às' HH:mm"
+        return f.string(from: d).replacingOccurrences(of: ".", with: "")
     }
 
     /// "há 3h05" — the one phrasing for a relative age, so the several places that show one all

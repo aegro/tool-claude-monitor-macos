@@ -512,7 +512,10 @@ final class Monitor: ObservableObject {
             }
         }
 
-        let exhausted = AccountRouter.exhausted()
+        // One read of `esgotadas.json` for both: the router can rewrite it between two reads.
+        let exhaustedData = try? Data(contentsOf: AccountRouter.exhaustedURL)
+        let exhausted = exhaustedData.map { AccountRouter.parseExhausted($0, now: now) } ?? [:]
+        let exhaustedReasons = exhaustedData.map { AccountRouter.parseExhaustedReasons($0, now: now) } ?? [:]
         router = RouterState(
             config: config,
             pick: config.enabled
@@ -524,7 +527,7 @@ final class Monitor: ObservableObject {
             read: read,
             available: available,
             exhausted: exhausted,
-            exhaustedReasons: AccountRouter.exhaustedReasons(),
+            exhaustedReasons: exhaustedReasons,
             agentsLogins: Set(config.accounts.map(\.id).filter(AccountRouter.hasAgentsLogin)),
             agentsAccount: AccountRouter.agentsAccount(config: config),
             switches: AccountRouter.switches(limit: 20),

@@ -197,6 +197,8 @@ struct AccountSettingsRow: View {
     @State private var name = ""
     @State private var monogram = ""
     @State private var confirmingRemoval = false
+    /// The pair this row last sent to `renameAccount`, while that save may still be in flight.
+    @State private var submitted: (name: String, monogram: String)?
     @FocusState private var editing: NameField?
 
     private enum NameField { case name, monogram }
@@ -293,14 +295,19 @@ struct AccountSettingsRow: View {
     }
 
     /// Saves the name and monogram as typed, trimmed and with the monogram in capitals. An empty name is not saved
-    /// and the field goes back to the saved one; an unchanged pair does not call `renameAccount`, unless a save is
-    /// still in flight: `entry` is only read back after it lands, so going from A to B and back to A before then
-    /// would compare against the stale A, skip, and leave B written. Saves run in order, so the last one wins.
+    /// (the field goes back to the saved one), but a monogram edited with it still is. An unchanged pair does not call
+    /// `renameAccount`. While a router save is in flight, `entry` is only read back after it lands, so this row
+    /// compares against the pair it last sent itself: going from A to B and back to A before then would compare
+    /// against the stale A, skip, and leave B written. A row with no save of its own compares against `entry`, so
+    /// another account's save does not turn its derived monogram into a stored one. Saves run in order.
     private func save() {
-        let n = name.trimmingCharacters(in: .whitespaces)
+        let typed = name.trimmingCharacters(in: .whitespaces)
         let m = monogram.trimmingCharacters(in: .whitespaces).uppercased()
-        guard !n.isEmpty else { name = entry.label; return }
-        guard monitor.savingRouter || n != entry.label || m != entry.monogram else { return }
+        let base = (monitor.savingRouter ? submitted : nil) ?? (name: entry.label, monogram: entry.monogram)
+        let n = typed.isEmpty ? base.name : typed
+        if typed.isEmpty { name = n }
+        guard n != base.name || m != base.monogram else { return }
+        submitted = (name: n, monogram: m)
         Task { await monitor.renameAccount(entry.id, name: n, monogram: m) }
     }
 

@@ -232,10 +232,12 @@ struct AccountQueue: Equatable {
         var parts: [String] = []
         if let entry = queue.entry(inUse) {
             if let until = entry.exhaustedUntil, until > now {
-                parts.append(entry.exhaustedReason == "auth" ? "O servidor recusou o login desta conta."
-                             : entry.exhaustedReason == "cobranca" ? "Erro de cobrança até \(Fmt.clock(until))."
-                             : entry.exhaustedReason == "conta_suspensa" ? "Conta suspensa até \(Fmt.clock(until))."
-                             : "Esgotada até \(Fmt.clock(until)).")
+                switch entry.exhaustedReason {
+                case "auth": parts.append("O servidor recusou o login desta conta.")
+                case "cobranca": parts.append("Erro de cobrança até \(Fmt.clock(until)).")
+                case "conta_suspensa": parts.append("Conta suspensa até \(Fmt.clock(until)).")
+                default: parts.append("Esgotada até \(Fmt.clock(until)).")
+                }
             } else if entry.isLive, let outlook {
                 switch outlook {
                 case .safe(_, let reset, let window):

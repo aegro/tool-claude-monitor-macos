@@ -1136,7 +1136,7 @@ final class Monitor: ObservableObject {
     }
 
     func renameAccount(_ id: String, name: String, monogram: String) async {
-        await save { try AccountRouter.renameAccount(id, name: name, monogram: monogram) }
+        await save { try AccountRouter.renameAccount(id, name: name, monogram: monogram, onlyIfListed: true) }
     }
 
     /// One router edit at a time, then the config is read back into the panel right away. The usage stays as it

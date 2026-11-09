@@ -321,11 +321,15 @@ enum AccountRouter {
         }
     }
 
-    static func renameAccount(_ id: String, name: String, monogram: String, at url: URL = configURL) throws {
+    /// `onlyIfListed` leaves the config alone when `id` is no longer in it (not in `contas` and not the principal):
+    /// a rename queued behind the account's removal must not bring back an orphan entry.
+    static func renameAccount(_ id: String, name: String, monogram: String, onlyIfListed: Bool = false,
+                              at url: URL = configURL) throws {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let sigla = String(monogram.trimmingCharacters(in: .whitespacesAndNewlines).prefix(3)).uppercased()
         try updateConfig(at: url) { root in
             var contas = root["contas"] as? [String: Any] ?? [:]
+            if onlyIfListed, contas[id] == nil, id != (root["principal"] as? String ?? "principal") { return }
             var entry = contas[id] as? [String: Any] ?? [:]
             if !name.isEmpty { entry["nome"] = name }
             if sigla.isEmpty { entry.removeValue(forKey: "sigla") } else { entry["sigla"] = sigla }

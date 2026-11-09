@@ -120,6 +120,17 @@ struct QueueAndAccountsTests {
         #expect(entry["sigla"] == nil)
     }
 
+    @Test func renomearContaQueSaiuDaConfigNaoCriaEntradaOrfa() throws {
+        let url = try tempConfig(#"{ "principal": "principal", "contas": { "max": { "nome": "max" } } }"#)
+        try AccountRouter.renameAccount("removida", name: "X", monogram: "", onlyIfListed: true, at: url)
+        #expect((try read(url)["contas"] as? [String: Any])?["removida"] == nil)
+        try AccountRouter.renameAccount("max", name: "Max", monogram: "", onlyIfListed: true, at: url)
+        #expect(((try read(url)["contas"] as? [String: Any])?["max"] as? [String: Any])?["nome"] as? String == "Max")
+        // The principal can live outside `contas` and is still renamed.
+        try AccountRouter.renameAccount("principal", name: "Eu", monogram: "", onlyIfListed: true, at: url)
+        #expect(((try read(url)["contas"] as? [String: Any])?["principal"] as? [String: Any])?["nome"] as? String == "Eu")
+    }
+
     @Test func configIlegivelNaoESobrescrita() throws {
         let url = try tempConfig("{ quebrado")
         #expect(throws: AccountRouter.UnreadableConfig.self) {

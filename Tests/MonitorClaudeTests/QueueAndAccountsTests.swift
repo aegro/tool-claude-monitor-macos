@@ -131,6 +131,22 @@ struct QueueAndAccountsTests {
         #expect(((try read(url)["contas"] as? [String: Any])?["principal"] as? [String: Any])?["nome"] as? String == "Eu")
     }
 
+    @Test func linhaSoSalvaQuandoAPessoaEditou() {
+        // Nothing typed: no save, whatever the fields show (a derived monogram, a 4-letter one, an empty one).
+        #expect(AccountQueue.renameToSave(name: "Foo", monogram: "FO", edited: false) == nil)
+        #expect(AccountQueue.renameToSave(name: "Foo", monogram: "", edited: false) == nil)
+        #expect(AccountQueue.renameToSave(name: "Foo", monogram: "abcd", edited: false) == nil)
+        // An edit always saves, normalized the way the config stores it, even back to the saved pair (A, B, A).
+        let pair = AccountQueue.renameToSave(name: "  Foo ", monogram: " abcd ", edited: true)
+        #expect(pair?.name == "Foo")
+        #expect(pair?.monogram == "ABC")
+        #expect(AccountQueue.renameToSave(name: "Foo", monogram: "FO", edited: true)?.monogram == "FO")
+        // An empty name stays empty, which keeps the saved one; an empty monogram goes back to the derived one.
+        let cleared = AccountQueue.renameToSave(name: "  ", monogram: " ", edited: true)
+        #expect(cleared?.name == "")
+        #expect(cleared?.monogram == "")
+    }
+
     @Test func configIlegivelNaoESobrescrita() throws {
         let url = try tempConfig("{ quebrado")
         #expect(throws: AccountRouter.UnreadableConfig.self) {

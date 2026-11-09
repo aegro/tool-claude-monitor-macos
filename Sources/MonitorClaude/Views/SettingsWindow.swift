@@ -197,8 +197,8 @@ struct AccountSettingsRow: View {
     @State private var name = ""
     @State private var monogram = ""
     @State private var confirmingRemoval = false
-    /// The pair this row last sent to `renameAccount`, while that save may still be in flight.
-    @State private var submitted: (name: String, monogram: String)?
+    /// The person typed in the name or monogram since this row last saved (see `AccountQueue.renameToSave`).
+    @State private var edited = false
     @FocusState private var editing: NameField?
 
     private enum NameField { case name, monogram }
@@ -210,7 +210,7 @@ struct AccountSettingsRow: View {
                 HStack(spacing: 6) {
                     // Saved on Return and on leaving the field: with Return only, an edit followed by a click elsewhere
                     // (or closing the window) was dropped without a word (08/11/2026). Bordered, so it reads as editable.
-                    TextField("", text: $name, prompt: Text("Nome"))
+                    TextField("", text: typed($name), prompt: Text("Nome"))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .font(Type.strong)
@@ -218,7 +218,7 @@ struct AccountSettingsRow: View {
                         .onSubmit(save)
                         .disabled(!queue.configured)
                         .help("Nome da conta no painel. Salva ao apertar Return ou sair do campo.")
-                    TextField("", text: $monogram, prompt: Text("Sigla"))
+                    TextField("", text: typed($monogram), prompt: Text("Sigla"))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 44)
@@ -294,21 +294,22 @@ struct AccountSettingsRow: View {
         .onDisappear(perform: save)
     }
 
-    /// Saves the name and monogram as typed, trimmed and with the monogram in capitals. An empty name is not saved
-    /// (the field goes back to the saved one), but a monogram edited with it still is. An unchanged pair does not call
-    /// `renameAccount`. While a router save is in flight, `entry` is only read back after it lands, so this row
-    /// compares against the pair it last sent itself: going from A to B and back to A before then would compare
-    /// against the stale A, skip, and leave B written. A row with no save of its own compares against `entry`, so
-    /// another account's save does not turn its derived monogram into a stored one. Saves run in order.
+    /// A field binding that marks the row as edited when the person types: the row's own updates (from `entry`, or
+    /// an empty name going back to the saved one) write `name` and `monogram` directly and never count as edits.
+    private func typed(_ field: Binding<String>) -> Binding<String> {
+        Binding(get: { field.wrappedValue }, set: { field.wrappedValue = $0; edited = true })
+    }
+
+    /// Saves what the person typed, once per edit (see `AccountQueue.renameToSave`): a row nobody touched never
+    /// writes, so leaving its fields or closing the window does not rewrite the config, and another account's save
+    /// cannot turn this row's derived monogram into a stored one. An empty name is not saved (the field goes back to
+    /// the saved one), but a monogram edited with it still is. Saves run in order; one that lands after the account
+    /// left the config does nothing (`onlyIfListed`).
     private func save() {
-        let typed = name.trimmingCharacters(in: .whitespaces)
-        let m = monogram.trimmingCharacters(in: .whitespaces).uppercased()
-        let base = (monitor.savingRouter ? submitted : nil) ?? (name: entry.label, monogram: entry.monogram)
-        let n = typed.isEmpty ? base.name : typed
-        if typed.isEmpty { name = n }
-        guard n != base.name || m != base.monogram else { return }
-        submitted = (name: n, monogram: m)
-        Task { await monitor.renameAccount(entry.id, name: n, monogram: m) }
+        guard let pair = AccountQueue.renameToSave(name: name, monogram: monogram, edited: edited) else { return }
+        edited = false
+        if pair.name.isEmpty { name = entry.label }
+        Task { await monitor.renameAccount(entry.id, name: pair.name, monogram: pair.monogram) }
     }
 
     private func status(_ text: String, ok: Bool) -> some View {

@@ -90,6 +90,18 @@ struct AccountQueue: Equatable {
         }
     }
 
+    /// What a settings row sends to `renameAccount` when it leaves editing, or nil when there is nothing to save.
+    /// Only an edit by the person saves (`edited`): a row nobody touched never writes, whatever another account's
+    /// save did to what it shows, and an edit always does, even one that goes back to the saved pair before an
+    /// earlier save of it has landed. The name is trimmed, and an empty one stays empty, which `renameAccount` reads
+    /// as "keep the saved name" (so a stale copy of it is never written back); the monogram is trimmed, cut to three
+    /// characters and put in capitals, as `renameAccount` stores it (empty = derived from the name).
+    static func renameToSave(name: String, monogram: String, edited: Bool) -> (name: String, monogram: String)? {
+        guard edited else { return nil }
+        let sigla = String(monogram.trimmingCharacters(in: .whitespacesAndNewlines).prefix(3)).uppercased()
+        return (name.trimmingCharacters(in: .whitespacesAndNewlines), sigla)
+    }
+
     /// What removing an account does, said the same way wherever the removal is confirmed.
     static let removalConsequence = "A pasta da conta vai para o Lixo e o login fica no Keychain: trazer a pasta de volta traz a conta."
 

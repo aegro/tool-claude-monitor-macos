@@ -95,6 +95,20 @@ const testes = {
     assert.strictEqual(troca.mudou, false);
     assert.deepStrictEqual(keychain(), antes);
   },
+  async loginDaPastaGuardadoEApagadoSoNaContaDoUsuario() {
+    const dir = path.join(raiz, 'login-novo');
+    const servico = contas.servicoDoDir(dir);
+    cenario([
+      { conta: 'unknown', servico, texto: itemSemLogin },
+      { conta: usuario, servico, texto: loginDaSegunda },
+    ]);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: contaDe('segunda') }));
+    assert.deepStrictEqual(await agentes.guardarLoginDoDir('segunda', dir), contaDe('segunda'));
+    assert.strictEqual(JSON.parse(itemDe(usuario, servicoDaSegunda)).claudeAiOauth.accessToken, 'token-segunda');
+    assert.strictEqual(itemDe(usuario, servico), undefined);
+    assert.strictEqual(itemDe('unknown', servico), itemSemLogin);
+  },
   credencialDaPastaLidaPelaContaDoUsuario: async () => {
     if (process.platform !== 'darwin') return;
     const dir = path.join(raiz, 'pasta-da-conta');

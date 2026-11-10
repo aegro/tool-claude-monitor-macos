@@ -678,6 +678,10 @@ function compararContas(a, b, ordem, cfg = carregarConfig(), agora = Date.now())
 
 async function sondar(id, cfg = carregarConfig(), credencialDada = null) {
   const inicio = Date.now();
+  // Com o login de outra conta da fila na pasta, o token dela leria os números da outra com o nome desta.
+  if (!credencialDada && loginDeOutraContaDaFila(id, cfg)) {
+    return { ok: false, erro: 'login de outra conta da fila na pasta', semLogin: true, loginDeOutraConta: true, verificadoEm: Date.now() };
+  }
   const credencial = credencialDada || (await lerCredencial(id, cfg));
   if (!credencial || !credencial.accessToken) {
     return { ok: false, erro: 'sem login', semLogin: true, verificadoEm: Date.now() };
@@ -712,10 +716,12 @@ async function lerUso(id, { maxIdadeMs, credencial = null, chaveDoCache = id } =
   const cfg = carregarConfig();
   const limite = maxIdadeMs ?? cfg.cacheUsoSegundos * 1000;
   const anterior = lerJson(ARQ_USO, {})[chaveDoCache];
-  if (anterior && anterior.ok && Date.now() - anterior.verificadoEm < limite) return anterior;
-  if (anterior && anterior.esperarAte && Date.now() < anterior.esperarAte) return anterior;
+  // Uma leitura guardada antes de o login da pasta virar o de outra conta é dessa outra: não vale nem como cache.
+  const cruzada = !credencial && loginDeOutraContaDaFila(id, cfg);
+  if (!cruzada && anterior && anterior.ok && Date.now() - anterior.verificadoEm < limite) return anterior;
+  if (!cruzada && anterior && anterior.esperarAte && Date.now() < anterior.esperarAte) return anterior;
   const atual = await sondar(id, cfg, credencial);
-  if (!atual.ok && anterior && anterior.uso) {
+  if (!atual.ok && !atual.loginDeOutraConta && anterior && anterior.uso) {
     atual.uso = anterior.uso;
     atual.usoDe = anterior.usoDe || anterior.verificadoEm;
   }
@@ -783,7 +789,15 @@ function loginDeOutraContaDaFila(id, cfg = carregarConfig()) {
   if (usaDirPadrao(id, cfg)) return null;
   const outra = loginProprioDeOutraConta(id, cfg);
   if (!outra) return null;
-  return outrasDaFila(id, cfg).some((o) => identidade(o, cfg).chave === outra.chave) ? outra : null;
+  return outrasDaFila(id, cfg).some((o) => chavesDaConta(o, cfg).includes(outra.chave)) ? outra : null;
+}
+
+// As chaves pelas quais uma conta da fila é reconhecida: o login da pasta dela (ou do ~/.claude) e o que a troca dos
+// agentes guardou para ela. Só a pasta não basta: quando duas pastas trocam de login entre si, cada uma passa a
+// nomear a outra, e o login que saiu de uma só é reconhecido pelo guardado (10/11: a pasta da Squad Compare ficou
+// com o login da Aegro enquanto a pasta da Aegro já estava na Max).
+function chavesDaConta(id, cfg = carregarConfig()) {
+  return [identidade(id, cfg).chave, chaveDaConta(loginGuardadoDaConta(id))].filter(Boolean);
 }
 
 function decidir(candidatos, { excluir = [], agora = Date.now() } = {}) {

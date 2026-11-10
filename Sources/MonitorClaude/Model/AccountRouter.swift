@@ -579,10 +579,12 @@ enum AccountRouter {
         return key
     }
 
-    /// The login found in an account's own folder when it is another queue account's, and whose it is.
+    /// The login found in an account's own folder when it is another queue account's, whose it is, and the login the
+    /// router saved for the account itself.
     struct CrossedLogin: Equatable {
         var found: AccountIdentity
         var owner: String
+        var own: AccountIdentity?
     }
 
     /// An account folder signed in to another account of the queue, read like the router's `loginDeOutraContaDaFila`:
@@ -593,12 +595,13 @@ enum AccountRouter {
     /// `~/.claude` is the router's to judge (`envDaSessao`); a folder or an account with no login on file proves nothing.
     static func crossedLogin(for account: Account, config: Config, in dir: URL = savedLoginsDirectory) -> CrossedLogin? {
         guard !account.usesDefaultDirectory, let found = folderIdentity(account) else { return nil }
-        let others = config.accounts.filter { $0.id != account.id && $0.role != .pending }
+        let own = savedLogin(account.id, in: dir)
+        let others = config.accounts.filter { $0.id != account.id }
         let owner = resolveCrossedLogin(
-            found: found.key, own: savedLogin(account.id, in: dir)?.key,
+            found: found.key, own: own?.key,
             saved: others.map { ($0.id, savedLogin($0.id, in: dir)?.key) },
             current: others.map { ($0.id, identity(for: $0, config: config)?.key) })
-        return owner.map { CrossedLogin(found: found, owner: $0) }
+        return owner.map { CrossedLogin(found: found, owner: $0, own: own) }
     }
 
     /// Whose login `found` is when it is not `own`: the first account whose saved login it is, else the first whose

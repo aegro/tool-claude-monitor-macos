@@ -449,9 +449,16 @@ final class Monitor: ObservableObject {
             date.map { now.timeIntervalSince($0) < interval } ?? false
         }
 
+        // Another queue account's login in a folder: its token would read that account's numbers and plan, so it is
+        // not read at all (nor asked of macOS). The row keeps the account's own login on file and its last own numbers,
+        // and the router leaves it out of the queue.
+        let crossed = config.accounts.reduce(into: [String: AccountRouter.CrossedLogin]()) { out, account in
+            out[account.id] = AccountRouter.crossedLogin(for: account, config: config)
+        }
+
         // Every login at once: a Keychain read waiting on a dialog holds only its own account, not the queue.
         let credsById: [String: Keychain.Credentials] = await withTaskGroup(of: (String, Keychain.Credentials?).self) { group in
-            for account in config.accounts {
+            for account in config.accounts where crossed[account.id] == nil {
                 group.addTask { @MainActor in (account.id, await self.routerCredentials(for: account)) }
             }
             var out: [String: Keychain.Credentials] = [:]
@@ -459,16 +466,11 @@ final class Monitor: ObservableObject {
             return out
         }
         var refused: Set<String> = []
-        var crossed: [String: AccountRouter.CrossedLogin] = [:]
 
         for account in config.accounts {
-            // Another queue account's login in this folder: its token reads that account's numbers and plan. The row
-            // keeps the account's own login on file and its last own numbers, and the router leaves it out of the queue.
-            if let login = AccountRouter.crossedLogin(for: account, config: config) {
-                crossed[account.id] = login
-                let own = AccountRouter.savedLogin(account.id)
-                logins[account.id] = own
-                usage[account.id] = own.flatMap { accounts.records[$0.key]?.snapshot }
+            if let login = crossed[account.id] {
+                logins[account.id] = login.own
+                usage[account.id] = login.own.flatMap { accounts.records[$0.key]?.snapshot }
                 continue
             }
             let identity = AccountRouter.identity(for: account, config: config)
@@ -545,7 +547,7 @@ final class Monitor: ObservableObject {
             oneShotTasks: AccountRouter.oneShotTasks(),
             idleLogins: idle,
             refreshes: AccountRouter.refreshes(),
-            plans: credsById.filter { crossed[$0.key] == nil }.compactMapValues(\.plan),
+            plans: credsById.compactMapValues(\.plan),
             keychainRefused: refused,
             crossedLogins: crossed)
     }

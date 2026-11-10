@@ -423,7 +423,7 @@ enum AccessBuilder {
             guard let owner = account.loginOf else { continue }
             items.append(AccessItem(id: "conta.\(account.id).trocado", badge: AccountRouter.monogram(for: account.label),
                                     title: "\(account.label): login de outra conta",
-                                    detail: "A pasta desta conta tem o login da \(owner). Até você autorizar de novo com o login certo, a troca não usa esta conta e o Monitor não mostra números dela.",
+                                    detail: "A pasta desta conta tem o login da \(owner). Até você autorizar de novo com o login certo, a troca não usa esta conta e os números dela param na última leitura feita com o login dela.",
                                     kind: .needsYou, action: .reauthorize(account: account.id, agents: false),
                                     actionLabel: "Autorizar"))
         }

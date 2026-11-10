@@ -252,7 +252,8 @@ final class Monitor: ObservableObject {
                     id: account.id, label: account.label,
                     hasLogin: router.available.contains(account.id),
                     agentsLoginWorks: (bgSessions > 0 && !isSlot) ? router.agentsLogins.contains(account.id) : nil,
-                    keychainRefused: router.keychainRefused.contains(account.id)))
+                    keychainRefused: router.keychainRefused.contains(account.id),
+                    loginOf: router.crossedLogins[account.id].map { router.label(for: $0.owner) }))
             }
         }
         access = AccessBuilder.build(.init(
@@ -458,8 +459,18 @@ final class Monitor: ObservableObject {
             return out
         }
         var refused: Set<String> = []
+        var crossed: [String: AccountRouter.CrossedLogin] = [:]
 
         for account in config.accounts {
+            // Another queue account's login in this folder: its token reads that account's numbers and plan. The row
+            // keeps the account's own login on file and its last own numbers, and the router leaves it out of the queue.
+            if let login = AccountRouter.crossedLogin(for: account, config: config) {
+                crossed[account.id] = login
+                let own = AccountRouter.savedLogin(account.id)
+                logins[account.id] = own
+                usage[account.id] = own.flatMap { accounts.records[$0.key]?.snapshot }
+                continue
+            }
             let identity = AccountRouter.identity(for: account, config: config)
             logins[account.id] = identity
             let stored = identity.flatMap { accounts.records[$0.key]?.snapshot }
@@ -534,8 +545,9 @@ final class Monitor: ObservableObject {
             oneShotTasks: AccountRouter.oneShotTasks(),
             idleLogins: idle,
             refreshes: AccountRouter.refreshes(),
-            plans: credsById.compactMapValues(\.plan),
-            keychainRefused: refused)
+            plans: credsById.filter { crossed[$0.key] == nil }.compactMapValues(\.plan),
+            keychainRefused: refused,
+            crossedLogins: crossed)
     }
 
     /// The live numbers of one account, only when the router saved them under its current login: the slot may have
@@ -1042,7 +1054,8 @@ final class Monitor: ObservableObject {
                 loginIdle: router.idleLogins.contains(account.id),
                 refresh: router.refreshes[account.id],
                 renewable: !account.usesDefaultDirectory,
-                loginRefused: router.keychainRefused.contains(account.id))
+                loginRefused: router.keychainRefused.contains(account.id),
+                loginOf: router.crossedLogins[account.id].map { router.label(for: $0.owner) })
         }
         return AccountQueue(entries: entries, strategy: router.config.strategy, enabled: router.config.enabled,
                             reserveBelow: router.config.reserveBelow, comfortableFrom: router.config.comfortableFrom,

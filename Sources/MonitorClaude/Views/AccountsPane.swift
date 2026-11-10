@@ -488,7 +488,7 @@ struct AccountRow: View {
         // Set aside, the line is only when it comes back (or what to do): the renewal that frees it is that same
         // time, and "semana renova ter 12:00" after "volta ter 10/11 às 12:00" said it twice.
         if let until = entry.exhaustedUntil, until > now { return entry.asideLine(until: until, now: now) }
-        if let owner = entry.loginOf { return "a pasta tem o login da \(owner): autorize de novo em Contas e logins" }
+        if !entry.hasLogin, let owner = entry.loginOf { return "a pasta tem o login da \(owner): autorize de novo em Contas e logins" }
         if !entry.hasLogin, entry.loginRefused { return "o macOS não liberou o login: Ler de novo em Acessos" }
         if !entry.hasLogin { return "sem login: autorize de novo em Contas e logins" }
         var parts = [renewals(now: now)]

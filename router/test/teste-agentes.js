@@ -561,6 +561,16 @@ const testes = {
     assert.strictEqual(agentes.deveProcurarAlvoPreventivo(estado, 'principal', agora + 5 * 60 * 1000), true);
     assert.strictEqual(agentes.deveProcurarAlvoPreventivo(estado, 'segunda', agora + 1000), true);
   },
+  preventivaNaoDesfazTrocaAMaoComLeituraDeAntes() {
+    const estado = { escolhaManual: { conta: 'principal', em: agora }, ultimaTroca: agora };
+    const falhou = { ok: false, erro: 'HTTP 429', verificadoEm: agora + 60000, usoDe: agora - HORA };
+    assert.strictEqual(agentes.leituraDeAntesDaEscolhaManual(falhou, estado, 'principal'), true);
+    assert.strictEqual(agentes.leituraDeAntesDaEscolhaManual({ ok: true, verificadoEm: agora - 30000 }, estado, 'principal'), true);
+    assert.strictEqual(agentes.leituraDeAntesDaEscolhaManual({ ok: true, verificadoEm: agora + 30000 }, estado, 'principal'), false);
+    assert.strictEqual(agentes.leituraDeAntesDaEscolhaManual(falhou, estado, 'segunda'), false);
+    assert.strictEqual(agentes.leituraDeAntesDaEscolhaManual(falhou, {}, 'principal'), false);
+    assert.strictEqual(agentes.leituraDeAntesDaEscolhaManual(falhou, { ...estado, ultimaTroca: agora + 1000 }, 'principal'), false);
+  },
   ritmoDeUsoMedeOsUltimosDezMinutos() {
     const leituras = [leitura(-12, 10), leitura(-8, 50), leitura(-4, 54), leitura(0, 58)];
     assert.strictEqual(agentes.ritmoDeUso(leituras, 'cinco', agora), 1);

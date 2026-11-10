@@ -88,6 +88,39 @@ const testes = {
     assert.deepStrictEqual(config.oauthAccount, contaDe('segunda'));
     assert.strictEqual(await comPerfis(() => agentes.contaRealNoSlot()), 'segunda');
   },
+  async preventivaEsperaLeituraNovaDepoisDaTrocaAMao() {
+    const usoQuaseNoLimite = { cinco: { usado: 98, renovaEm: Date.now() + 3600000 }, sete: { usado: 50, renovaEm: Date.now() + 86400000 }, janelas: [] };
+    const usoComFolga = { cinco: { usado: 10, renovaEm: Date.now() + 3600000 }, sete: { usado: 10, renovaEm: Date.now() + 86400000 }, janelas: [] };
+    const preparar = () => {
+      cenario(comItemDeOutraContaNaFrente());
+      const recusada = { ok: false, erro: 'HTTP 429', limitada: true, esperarAte: Date.now() + 3600000, verificadoEm: Date.now(), uso: usoQuaseNoLimite, usoDe: Date.now() - 3600000 };
+      const fresca = { ok: true, verificadoEm: Date.now(), uso: usoComFolga };
+      fs.writeFileSync(
+        path.join(contas.DIR_ESTADO, 'uso.json'),
+        JSON.stringify({ principal: recusada, segunda: fresca, 'agents principal': recusada, 'agents segunda': fresca }),
+      );
+    };
+    const preventiva = (estado) => comPerfis(() => agentes.trocarPreventiva(contas.carregarConfig(), [{ kind: 'background' }], estado));
+
+    preparar();
+    const comEscolha = { escolhaManual: { conta: 'principal', em: Date.now() - 1000 } };
+    assert.strictEqual(await preventiva(comEscolha), null);
+    assert.strictEqual(JSON.parse(itemDe(usuario, agentes.SERVICO_SLOT)).claudeAiOauth.accessToken, 'token-principal');
+
+    preparar();
+    const chave = `${contaDe('principal').accountUuid}:${contaDe('principal').organizationUuid}`;
+    fs.writeFileSync(
+      path.join(contas.DIR_ESTADO, 'ritmo.json'),
+      JSON.stringify({ conta: chave, janela: 'cinco', ppPorMinuto: 0, em: Date.now(), usado: 10, usadoEm: Date.now() }),
+    );
+    assert.strictEqual(await preventiva({ escolhaManual: { conta: 'principal', em: Date.now() - 1000 } }), null);
+    assert.strictEqual(JSON.parse(itemDe(usuario, agentes.SERVICO_SLOT)).claudeAiOauth.accessToken, 'token-principal');
+    fs.rmSync(path.join(contas.DIR_ESTADO, 'ritmo.json'));
+
+    preparar();
+    const troca = await preventiva({});
+    assert.deepStrictEqual({ de: troca.de, para: troca.para, mudou: troca.mudou }, { de: 'principal', para: 'segunda', mudou: true });
+  },
   async trocaParaAContaQueJaEstaNoSlotNaoGrava() {
     cenario(comItemDeOutraContaNaFrente());
     const antes = keychain();

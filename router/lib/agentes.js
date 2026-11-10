@@ -17,7 +17,7 @@ const DIR_LOGINS = path.join(contas.DIR_ESTADO, 'agentes');
 const ARQ_ESTADO = path.join(contas.DIR_ESTADO, 'agentes.json');
 const DIR_TRAVA = path.join(contas.DIR_ESTADO, 'agentes.trava');
 const ARQ_RITMO_DO_MONITOR = path.join(contas.DIR_ESTADO, 'ritmo.json');
-const CONTA_KEYCHAIN = os.userInfo().username;
+const { CONTA_KEYCHAIN } = contas;
 const LIMITE_DA_LINHA_DO_SECURITY = 4032;
 const JANELA_DE_RETOMADA_MS = 6 * 3600 * 1000;
 const TENTATIVAS_DE_RETOMADA = 3;
@@ -69,7 +69,7 @@ function esperar(ms) {
 }
 
 async function lerItem(servico) {
-  const r = await rodar('security', ['find-generic-password', '-s', servico, '-w']);
+  const r = await rodar('security', ['find-generic-password', '-a', CONTA_KEYCHAIN, '-s', servico, '-w']);
   return r.ok ? r.saida.replace(/\n$/, '') : null;
 }
 
@@ -110,7 +110,7 @@ async function gravarItem(servico, texto) {
 }
 
 async function apagarItem(servico) {
-  await rodar('security', ['delete-generic-password', '-s', servico]);
+  await rodar('security', ['delete-generic-password', '-a', CONTA_KEYCHAIN, '-s', servico]);
 }
 
 function ehObjeto(valor) {

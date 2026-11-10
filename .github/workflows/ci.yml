@@ -34,6 +34,7 @@ jobs:
         run: |
           node router/test/teste-proxy.js
           node router/test/teste-agentes.js
+          node router/test/teste-keychain.js
           node router/test/teste-wrapper.js
           node router/test/teste-renovar.js
           node router/test/teste-como.js

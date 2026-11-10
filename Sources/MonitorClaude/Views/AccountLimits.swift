@@ -41,10 +41,8 @@ struct StaleLimitRow: View {
             .frame(height: 5)
 
             HStack(spacing: 5) {
-                if renewed, let at = window.resetsAt {
-                    Text("renovou às \(Fmt.clock(at))").font(Type.labelTiny).foregroundStyle(.tertiary)
-                } else if window.resetsAt != nil {
-                    ResetCaption(window: window)
+                if window.resetsAt != nil {
+                    ResetCaption(window: window, now: now)
                 } else {
                     Text("visto \(Fmt.stamp(seenAt))").font(Type.labelTiny).foregroundStyle(.tertiary)
                 }

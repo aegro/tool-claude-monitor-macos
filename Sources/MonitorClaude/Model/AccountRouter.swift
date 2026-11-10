@@ -1035,10 +1035,9 @@ enum AccountRouter {
 
     // MARK: choice
 
+    /// How much of `window` counts at `now`: 0 when there is no window or its reset has passed (see `LimitWindow.asOf`).
     static func used(_ window: LimitWindow?, now: Date = Date()) -> Double {
-        guard let window else { return 0 }
-        if let reset = window.resetsAt, reset <= now { return 0 }
-        return window.utilization
+        window?.asOf(now).utilization ?? 0
     }
 
     static func headroom(_ snapshot: UsageSnapshot, now: Date = Date()) -> Double {

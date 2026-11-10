@@ -323,7 +323,7 @@ function conflitoDoLogin(id, dir, cfg = carregarConfig()) {
   const login = loginDaPasta(dir);
   if (!login.chave) return null;
   const onde = rotuloDoLoginDaPasta(login);
-  const outra = outrasDaFila(id, cfg).find((outro) => identidade(outro, cfg).chave === login.chave);
+  const outra = outrasDaFila(id, cfg).find((outro) => chavesDaConta(outro, cfg).includes(login.chave));
   if (outra) return { login, outra, texto: `this sign-in went to ${onde}, which is ${nomeDaConta(outra, cfg)} (${outra})` };
   if (usaDirPadrao(id, cfg) && path.resolve(dir) === path.resolve(dirPropria(id, cfg))) {
     const esperada = identidade(id, cfg);
@@ -678,10 +678,6 @@ function compararContas(a, b, ordem, cfg = carregarConfig(), agora = Date.now())
 
 async function sondar(id, cfg = carregarConfig(), credencialDada = null) {
   const inicio = Date.now();
-  // Com o login de outra conta da fila na pasta, o token dela leria os números da outra com o nome desta.
-  if (!credencialDada && loginDeOutraContaDaFila(id, cfg)) {
-    return { ok: false, erro: 'login de outra conta da fila na pasta', semLogin: true, loginDeOutraConta: true, verificadoEm: Date.now() };
-  }
   const credencial = credencialDada || (await lerCredencial(id, cfg));
   if (!credencial || !credencial.accessToken) {
     return { ok: false, erro: 'sem login', semLogin: true, verificadoEm: Date.now() };
@@ -716,12 +712,15 @@ async function lerUso(id, { maxIdadeMs, credencial = null, chaveDoCache = id } =
   const cfg = carregarConfig();
   const limite = maxIdadeMs ?? cfg.cacheUsoSegundos * 1000;
   const anterior = lerJson(ARQ_USO, {})[chaveDoCache];
-  // Uma leitura guardada antes de o login da pasta virar o de outra conta é dessa outra: não vale nem como cache.
+  // Com o login de outra conta da fila na pasta, o token dela leria os números da outra com o nome desta, e uma
+  // leitura guardada desde a troca também é dela: nem sonda, nem cache, nem os números de antes.
   const cruzada = !credencial && loginDeOutraContaDaFila(id, cfg);
   if (!cruzada && anterior && anterior.ok && Date.now() - anterior.verificadoEm < limite) return anterior;
   if (!cruzada && anterior && anterior.esperarAte && Date.now() < anterior.esperarAte) return anterior;
-  const atual = await sondar(id, cfg, credencial);
-  if (!atual.ok && !atual.loginDeOutraConta && anterior && anterior.uso) {
+  const atual = cruzada
+    ? { ok: false, erro: 'login de outra conta da fila na pasta', semLogin: true, loginDeOutraConta: true, verificadoEm: Date.now() }
+    : await sondar(id, cfg, credencial);
+  if (!atual.ok && !cruzada && anterior && anterior.uso) {
     atual.uso = anterior.uso;
     atual.usoDe = anterior.usoDe || anterior.verificadoEm;
   }
@@ -778,7 +777,7 @@ async function avaliarContas({ maxIdadeMs } = {}) {
     sonda: sondas[i],
     folga: folgaDe(sondas[i]),
     esgotada: esgotadas[id] || null,
-    logada: !sondas[i].semLogin && !loginDeOutraContaDaFila(id, cfg),
+    logada: !sondas[i].semLogin,
   }));
 }
 

@@ -77,6 +77,11 @@ const testes = {
     assert.strictEqual((contas.loginDeOutraContaDaFila('compare', cfg) || {}).chave, chaveDe('aegro'));
     assert.strictEqual((contas.loginDeOutraContaDaFila('aegro', cfg) || {}).chave, chaveDe('max'));
   },
+  loginNaContaErradaERecusadoNaHoraMesmoQuandoSoOGuardadoODenuncia() {
+    // `claude-accounts login compare` caindo na org da Aegro enquanto a pasta da Aegro está com o login da Max.
+    const cfg = cenario({ aegro: 'max', max: 'max', compare: 'aegro' });
+    assert.strictEqual((contas.conflitoDoLogin('compare', dirDe('compare'), cfg) || {}).outra, 'aegro');
+  },
   pastaComOProprioLoginContinuaNaFila() {
     const cfg = cenario({ aegro: 'aegro', max: 'max', compare: 'compare' });
     for (const id of ['aegro', 'compare']) assert.strictEqual(contas.loginDeOutraContaDaFila(id, cfg), null);

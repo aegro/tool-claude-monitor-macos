@@ -384,12 +384,14 @@ struct AccountRow: View {
         // The bars, the chip and the line under them change with the clock alone (a week that renewed while nothing
         // else did): without a time input, SwiftUI kept a child whose stored values had not changed, and an account
         // whose week had renewed at 12:00 still showed 67 % at 20:10 (08/11/2026).
+        // The later of the minute and the real clock: an `everyMinute` context can carry the minute's start, and the
+        // gauge in the detail already reads the real clock, so the bars beside it must too (one clock for the row).
         TimelineView(.everyMinute) { context in
-            content(now: context.date)
+            content(now: max(context.date, Date()))
         }
     }
 
-    /// The row as of `now`, the minute the `TimelineView` in `body` is drawing.
+    /// The row as of `now`: the minute the `TimelineView` in `body` is drawing, or the real clock once past it.
     @ViewBuilder
     private func content(now: Date) -> some View {
         let exhausted = entry.isExhausted(at: now)

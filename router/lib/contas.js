@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 
 const HOME = os.homedir();
+const CONTA_KEYCHAIN = process.env.USER || os.userInfo().username;
 const PRINCIPAL_PADRAO = 'principal';
 const DIR_PRINCIPAL = path.join(HOME, '.claude');
 const ARQ_CONFIG_PRINCIPAL = path.join(HOME, '.claude.json');
@@ -55,6 +56,14 @@ const CONFIG_PADRAO = {
   cacheUsoSegundos: 60,
   notificar: true,
 };
+
+function garantirUsuario(env) {
+  if (!env.USER) env.USER = CONTA_KEYCHAIN;
+  if (!env.LOGNAME) env.LOGNAME = CONTA_KEYCHAIN;
+  return env;
+}
+
+garantirUsuario(process.env);
 
 function lerJson(arquivo, padrao) {
   try {
@@ -261,7 +270,7 @@ function temLoginProprio(id, cfg = carregarConfig(), { fresco = false } = {}) {
   if (process.platform !== 'darwin') return fs.existsSync(path.join(dir, '.credentials.json'));
   const guardado = loginProprioPorDir.get(dir);
   if (!fresco && guardado && Date.now() - guardado.em < PRAZO_DO_LOGIN_PROPRIO_MS) return guardado.tem;
-  const r = spawnSync('security', ['find-generic-password', '-s', servicoDoDir(dir)], { stdio: 'ignore', timeout: 2000 });
+  const r = spawnSync('security', ['find-generic-password', '-a', CONTA_KEYCHAIN, '-s', servicoDoDir(dir)], { stdio: 'ignore', timeout: 2000 });
   if (r.error || r.signal) return false;
   loginProprioPorDir.set(dir, { tem: r.status === 0, em: Date.now() });
   return r.status === 0;
@@ -494,7 +503,7 @@ function executar(cmd, args, timeout = 8000) {
 // O texto da credencial de uma pasta: o item do Keychain no macOS, o `.credentials.json` nos outros sistemas.
 async function lerItemDaPasta(dir, servico = servicoDaPasta(dir)) {
   if (process.platform === 'darwin') {
-    const saida = await executar('security', ['find-generic-password', '-s', servico, '-w']);
+    const saida = await executar('security', ['find-generic-password', '-a', CONTA_KEYCHAIN, '-s', servico, '-w']);
     return saida ? saida.trim() : null;
   }
   try {
@@ -1041,6 +1050,8 @@ function registrarLimiteAoVivo(id, info, agora = Date.now(), dir = null) {
 }
 
 module.exports = {
+  CONTA_KEYCHAIN,
+  garantirUsuario,
   envDaSessao,
   temLoginProprio,
   loginDaPasta,

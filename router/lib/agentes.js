@@ -807,6 +807,13 @@ function deveChecarVolta(estado, preferida, agora = Date.now()) {
 
 const INTERVALO_SEM_ALVO = 5 * 60 * 1000;
 
+function leituraDeAntesDaEscolhaManual(sonda, monitor, manual, atual) {
+  if (!manual || manual.conta !== atual) return false;
+  const daSonda = (sonda && (sonda.ok ? sonda.verificadoEm : sonda.usoDe)) || 0;
+  const doMonitor = monitor && Number.isFinite(monitor.usadoEm) ? monitor.usadoEm : 0;
+  return Math.max(daSonda, doMonitor) < manual.em;
+}
+
 function deveProcurarAlvoPreventivo(estado, atual, agora = Date.now()) {
   const semAlvo = estado.semAlvoPreventivo;
   return !semAlvo || semAlvo.conta !== atual || agora - semAlvo.em >= INTERVALO_SEM_ALVO;
@@ -841,6 +848,13 @@ async function trocarPreventiva(cfg, lista, estado) {
   const monitor = ritmoDoMonitor(contas.lerJson(ARQ_RITMO_DO_MONITOR, null), chaveDoSlot(), agora);
   const { folga, ritmo, fonte } = folgaERitmo(sonda, estado.leituras[atual], monitor, agora);
   if (!deveTrocarAntes(folga, ritmo, cfg) || !deveProcurarAlvoPreventivo(estado, atual, agora)) return null;
+  if (leituraDeAntesDaEscolhaManual(sonda, monitor, estado.escolhaManual, atual)) {
+    if (!estado.escolhaManual.leituraVelhaAvisada) {
+      contas.log(`agentes: folga ${Math.round(folga * 10) / 10}% em ${atual} vem de uma leitura de antes da troca à mão; a preventiva espera uma leitura nova`);
+      estado.escolhaManual = { ...estado.escolhaManual, leituraVelhaAvisada: true };
+    }
+    return null;
+  }
   const escolhida = alvoPreventivo(folga, ritmo, await avaliarParaAgentes(cfg), cfg, atual);
   if (!escolhida) {
     estado.semAlvoPreventivo = { conta: atual, em: agora };
@@ -1054,4 +1068,6 @@ module.exports = {
   comTravaEsperando,
   deveChecarVolta,
   deveProcurarAlvoPreventivo,
+  leituraDeAntesDaEscolhaManual,
+  trocarPreventiva,
 };

@@ -55,6 +55,18 @@ struct LimitWindow: Equatable, Identifiable, Codable {
 
     var timeToReset: TimeInterval? { resetsAt.map { max(0, $0.timeIntervalSinceNow) } }
     func hasReset(at now: Date = Date()) -> Bool { resetsAt.map { $0 <= now } ?? false }
+
+    /// This window as it stands at `now`. Once the reset has passed, the last reading is the old window's and none of
+    /// it still counts: 0 % and no severity, until a read brings the new one. The one rule every surface draws by, so
+    /// none of them keeps a dead 100 % next to another already saying 0 % (10/11/2026: the account row read 0 % and
+    /// its detail, under it, 100 % with "em 0 s" and "no ritmo").
+    func asOf(_ now: Date = Date()) -> LimitWindow {
+        guard hasReset(at: now) else { return self }
+        var renewed = self
+        renewed.utilization = 0
+        renewed.severity = "normal"
+        return renewed
+    }
     var isCritical: Bool { utilization >= 90 || severity == "critical" }
 }
 

@@ -1036,9 +1036,7 @@ enum AccountRouter {
     // MARK: choice
 
     static func used(_ window: LimitWindow?, now: Date = Date()) -> Double {
-        guard let window else { return 0 }
-        if let reset = window.resetsAt, reset <= now { return 0 }
-        return window.utilization
+        window?.asOf(now).utilization ?? 0
     }
 
     static func headroom(_ snapshot: UsageSnapshot, now: Date = Date()) -> Double {

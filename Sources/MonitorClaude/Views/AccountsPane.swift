@@ -528,13 +528,16 @@ struct AccountDetail: View {
             if entry.isLive, let usage = monitor.usage {
                 let headline = usage.headline
                 if let headline {
-                    LimitGauge(window: headline, burn: monitor.burn(of: headline))
-                    if monitor.blockTrail.count >= 2, let start = headline.startsAt, let end = headline.resetsAt {
+                    LimitGauge(window: headline, burn: monitor.burn(of: headline), now: now)
+                    if monitor.blockTrail.count >= 2, !headline.hasReset(),
+                       let start = headline.startsAt, let end = headline.resetsAt {
                         Trail(points: monitor.blockTrail, span: start...end)
                             .accessibilityLabel(headline.isSession ? "Evolução da janela de 5h" : "Evolução da semana")
                     }
                 }
-                ForEach(usage.windows.filter { !$0.isSession && $0.key != headline?.key }) { LimitGauge(window: $0, dense: true) }
+                ForEach(usage.windows.filter { !$0.isSession && $0.key != headline?.key }) {
+                    LimitGauge(window: $0, dense: true, now: now)
+                }
                 if usage.extraUsageEnabled, let extra = usage.extraUsageUtilization {
                     HStack {
                         Text("Crédito extra").font(Type.caption).foregroundStyle(.secondary)

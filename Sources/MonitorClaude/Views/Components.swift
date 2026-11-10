@@ -11,10 +11,16 @@ struct LimitGauge: View {
     var burn: BurnRate?
     var trail: [(Date, Double)] = []
     var dense = false
+    /// Passed in so a window that renews while nothing else changes is redrawn (see `AccountRow.body`).
+    var now = Date()
 
-    private var target: Double { window.paceTarget }
-    private var used: Double { window.utilization }
-    private var critical: Bool { window.isCritical }
+    /// The later of the minute being drawn and the real clock: the pace and the countdown below read the real clock,
+    /// and a reset inside the current minute must not leave the old window up, at "em 0 s", until the next tick.
+    private var clock: Date { max(now, Date()) }
+    private var renewed: Bool { window.hasReset(at: clock) }
+    private var target: Double { renewed ? 0 : window.paceTarget }
+    private var used: Double { window.asOf(clock).utilization }
+    private var critical: Bool { window.asOf(clock).isCritical }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -23,9 +29,10 @@ struct LimitGauge: View {
                     .font(Type.label)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text(Fmt.pct(used, decimals: used < 10 ? 1 : 0))
+                // "—", like `StaleLimitRow`: the new window has no reading yet, and "0,0 %" would claim one.
+                Text(renewed ? "—" : Fmt.pct(used, decimals: used < 10 ? 1 : 0))
                     .font(dense ? Type.value : Type.valueBig)
-                    .foregroundStyle(critical ? Ink.alarm : .primary)
+                    .foregroundStyle(renewed ? AnyShapeStyle(.tertiary) : AnyShapeStyle(critical ? Ink.alarm : Color.primary))
                     .contentTransition(.numericText())
             }
 
@@ -69,9 +76,9 @@ struct LimitGauge: View {
             .animation(.easeOut(duration: 0.22), value: used)
 
             HStack(spacing: 5) {
-                ResetCaption(window: window)
+                ResetCaption(window: window, now: clock)
                 Spacer(minLength: 2)
-                paceVerdict
+                if !renewed { paceVerdict }
             }
         }
     }
@@ -228,9 +235,15 @@ struct Hairline: View {
 
 struct ResetCaption: View {
     let window: LimitWindow
+    var now = Date()
 
     var body: some View {
-        if let reset = window.timeToReset, let at = window.resetsAt {
+        if window.hasReset(at: now), let at = window.resetsAt {
+            // With the day once it is not today: the reading behind it can be days old.
+            Text("renovou \(Fmt.at(at, now: now))")
+                .font(Type.labelTiny)
+                .foregroundStyle(.tertiary)
+        } else if let reset = window.timeToReset, let at = window.resetsAt {
             // "≈" whenever the reset was reconstructed rather than reported. It is a small
             // mark for a real distinction: an inferred boundary can be one grid step out,
             // and the pace marker sitting above is drawn off exactly this number.

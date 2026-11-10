@@ -28,7 +28,7 @@ struct MenuBarLabel: View {
     /// Alarm only from what describes the number shown: its own window, and the pace forecast only when that
     /// forecast is about this account (the live one).
     private func alarmed(_ reading: Monitor.MenuBarReading) -> Bool? {
-        guard let window = reading.window, reading.current else { return nil }
+        guard let window = reading.window?.asOf(), reading.current else { return nil }
         if window.isCritical { return true }
         if reading.isLive, case .willHitCap(_, _, _, _, true, _) = monitor.outlook { return true }
         return false
@@ -37,7 +37,8 @@ struct MenuBarLabel: View {
     var body: some View {
         let reading = monitor.menuBarReading
         let current = reading.current
-        let window = showLimit ? reading.window : nil
+        // A window whose reset passed draws as renewed (0 %), not as the old window's last number.
+        let window = showLimit ? reading.window?.asOf() : nil
         let hot = !showCPU && monitor.system.cpuPercent > 60
         let attention = monitor.access.attention > 0
         let art = MenuBarArt.Content(

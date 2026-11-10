@@ -165,16 +165,16 @@ struct MiniLimit: View {
     var now = Date()
 
     private var renewed: Bool { window?.hasReset(at: now) ?? false }
-    private var used: Double { window.map { renewed ? 0 : $0.utilization } ?? 0 }
+    private var used: Double { window?.asOf(now).utilization ?? 0 }
 
     var body: some View {
         HStack(spacing: 6) {
             Text(label).font(.system(size: 10.5)).foregroundStyle(.tertiary)
             PaceBar(used: used, pace: window.map { renewed ? 0 : $0.paceTarget } ?? 0,
-                    critical: window?.isCritical == true && !renewed)
+                    critical: window?.asOf(now).isCritical == true)
             Text(window == nil ? "—" : Fmt.pct(used))
                 .font(Type.captionStrong)
-                .foregroundStyle(window?.isCritical == true && !renewed ? Ink.alarm : Color.primary)
+                .foregroundStyle(window?.asOf(now).isCritical == true ? Ink.alarm : Color.primary)
                 // "100%" broke into "100" and "%" on two lines at this width.
                 .lineLimit(1)
                 .fixedSize()

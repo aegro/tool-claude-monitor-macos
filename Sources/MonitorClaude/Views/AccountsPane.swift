@@ -529,7 +529,7 @@ struct AccountDetail: View {
                 let headline = usage.headline
                 if let headline {
                     LimitGauge(window: headline, burn: monitor.burn(of: headline), now: now)
-                    if monitor.blockTrail.count >= 2, !headline.hasReset(),
+                    if monitor.blockTrail.count >= 2, !headline.hasReset(at: max(now, Date())),
                        let start = headline.startsAt, let end = headline.resetsAt {
                         Trail(points: monitor.blockTrail, span: start...end)
                             .accessibilityLabel(headline.isSession ? "Evolução da janela de 5h" : "Evolução da semana")

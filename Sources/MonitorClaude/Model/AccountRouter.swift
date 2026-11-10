@@ -587,12 +587,14 @@ enum AccountRouter {
         var own: AccountIdentity?
     }
 
-    /// An account folder signed in to another account of the queue, read like the router's `loginDeOutraContaDaFila`:
-    /// the folder's login is not the one the router saved for this account, and it is one another queue account is known
-    /// by (its saved login first, then the login in its folder or in `~/.claude`). The same e-mail in two organizations
-    /// goes through a login with no warning, and on 10/11/2026 the Aegro and Squad Compare folders ended up with the
-    /// Max login: the panel tagged both Ultra and showed the Max's numbers under their names. The account in
-    /// `~/.claude` is the router's to judge (`envDaSessao`); a folder or an account with no login on file proves nothing.
+    /// An account folder signed in to another account of the queue, the same yes or no as the router's
+    /// `loginDeOutraContaDaFila`: the folder's login is not the one the router saved for this account, and it is one
+    /// another queue account is known by (its saved login, or the login in its folder or in `~/.claude`). The router
+    /// only needs the yes or no; the owner the panel names is picked here (`resolveCrossedLogin`), saved logins first.
+    /// The same e-mail in two organizations goes through a login with no warning, and on 10/11/2026 the Aegro and Squad
+    /// Compare folders ended up with the Max login: the panel tagged both Ultra and showed the Max's numbers under their
+    /// names. The account in `~/.claude` is the router's to judge (`envDaSessao`); a folder or an account with no login
+    /// on file proves nothing.
     static func crossedLogin(for account: Account, config: Config, in dir: URL = savedLoginsDirectory) -> CrossedLogin? {
         guard !account.usesDefaultDirectory, let found = folderIdentity(account) else { return nil }
         let own = savedLogin(account.id, in: dir)

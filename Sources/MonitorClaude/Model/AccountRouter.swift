@@ -579,6 +579,42 @@ enum AccountRouter {
         return key
     }
 
+    /// The login found in an account's own folder when it is another queue account's, whose it is, and the login the
+    /// router saved for the account itself.
+    struct CrossedLogin: Equatable {
+        var found: AccountIdentity
+        var owner: String
+        var own: AccountIdentity?
+    }
+
+    /// An account folder signed in to another account of the queue, the same yes or no as the router's
+    /// `loginDeOutraContaDaFila`: the folder's login is not the one the router saved for this account, and it is one
+    /// another queue account is known by (its saved login, or the login in its folder or in `~/.claude`). The router
+    /// only needs the yes or no; the owner the panel names is picked here (`resolveCrossedLogin`), saved logins first.
+    /// The same e-mail in two organizations goes through a login with no warning, and on 10/11/2026 the Aegro and Squad
+    /// Compare folders ended up with the Max login: the panel tagged both Ultra and showed the Max's numbers under their
+    /// names. The account in `~/.claude` is the router's to judge (`envDaSessao`); a folder or an account with no login
+    /// on file proves nothing.
+    static func crossedLogin(for account: Account, config: Config, in dir: URL = savedLoginsDirectory) -> CrossedLogin? {
+        guard !account.usesDefaultDirectory, let found = folderIdentity(account) else { return nil }
+        let own = savedLogin(account.id, in: dir)
+        let others = config.accounts.filter { $0.id != account.id }
+        let owner = resolveCrossedLogin(
+            found: found.key, own: own?.key,
+            saved: others.map { ($0.id, savedLogin($0.id, in: dir)?.key) },
+            current: others.map { ($0.id, identity(for: $0, config: config)?.key) })
+        return owner.map { CrossedLogin(found: found, owner: $0, own: own) }
+    }
+
+    /// Whose login `found` is when it is not `own`: the first account whose saved login it is, else the first whose
+    /// current login it is. The saved ones go first because, when two folders swap logins, each current login names
+    /// the other account.
+    static func resolveCrossedLogin(found: String, own: String?, saved: [(String, String?)],
+                                    current: [(String, String?)]) -> String? {
+        guard let own, own != found else { return nil }
+        return (saved.first { $0.1 == found } ?? current.first { $0.1 == found })?.0
+    }
+
     static func credentials(for account: Account, timeout: TimeInterval = 8) -> Keychain.Credentials? {
         try? Keychain.credentials(service: keychainService(for: account), timeout: timeout)
     }
@@ -1151,6 +1187,13 @@ struct RouterState: Equatable {
     var plans: [String: String] = [:]
     /// Accounts whose Keychain read waits for "Ler de novo": macOS asked to let it through and got no, or no answer.
     var keychainRefused: Set<String> = []
+    /// Accounts whose folder holds another queue account's login (`AccountRouter.crossedLogin`).
+    var crossedLogins: [String: AccountRouter.CrossedLogin] = [:]
+
+    /// The name the queue gives `id`, or the id itself.
+    func label(for id: String) -> String {
+        config.accounts.first { $0.id == id }?.label ?? id
+    }
 
     func loginLabel(for id: String) -> String {
         guard available.contains(id) else { return "sem login: claude-accounts login \(id)" }

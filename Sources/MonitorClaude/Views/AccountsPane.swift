@@ -472,7 +472,7 @@ struct AccountRow: View {
         if entry.isExhausted(at: now) {
             StateChip(text: entry.asideChip, tone: .gone)
         } else if !entry.hasLogin {
-            StateChip(text: entry.loginRefused ? "sem acesso" : "sem login", tone: .gone)
+            StateChip(text: entry.loginOf != nil ? "login trocado" : entry.loginRefused ? "sem acesso" : "sem login", tone: .gone)
         } else if inUse {
             StateChip(text: "em uso", tone: .inUse)
         } else if terminal {
@@ -488,6 +488,7 @@ struct AccountRow: View {
         // Set aside, the line is only when it comes back (or what to do): the renewal that frees it is that same
         // time, and "semana renova ter 12:00" after "volta ter 10/11 às 12:00" said it twice.
         if let until = entry.exhaustedUntil, until > now { return entry.asideLine(until: until, now: now) }
+        if !entry.hasLogin, let owner = entry.loginOf { return "a pasta tem o login da \(owner): autorize de novo em Contas e logins" }
         if !entry.hasLogin, entry.loginRefused { return "o macOS não liberou o login: Ler de novo em Acessos" }
         if !entry.hasLogin { return "sem login: autorize de novo em Contas e logins" }
         var parts = [renewals(now: now)]
@@ -527,7 +528,9 @@ struct AccountDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if entry.isLive, let usage = monitor.usage {
+            // The live gauges only while the live feed is the reading the row shows: with the terminal read failing, a
+            // newer reading saved for this account wins the row, and the detail then shows that same one.
+            if entry.isLive, let usage = monitor.usage, usage.fetchedAt >= (entry.snapshot?.fetchedAt ?? .distantPast) {
                 let headline = usage.headline
                 if let headline {
                     LimitGauge(window: headline, burn: monitor.burn(of: headline), now: now)

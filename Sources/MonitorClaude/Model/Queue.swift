@@ -35,6 +35,9 @@ struct AccountQueue: Equatable {
         var renewable = true
         /// macOS was asked to let its login be read and refused (or nobody answered): "Ler de novo" asks again.
         var loginRefused = false
+        /// The queue account whose login is in this account's folder (`AccountRouter.crossedLogin`): no login of its
+        /// own until it is authorized again.
+        var loginOf: String? = nil
 
         var headroom: Double? { snapshot.map { AccountRouter.headroom($0) } }
 

@@ -380,6 +380,8 @@ enum AccessBuilder {
         var agentsLoginWorks: Bool?
         /// The Keychain read of its login waits for "Ler de novo" after a refused or unanswered prompt.
         var keychainRefused = false
+        /// The queue account whose login is in this account's folder: logging in again is the way out.
+        var loginOf: String? = nil
     }
 
     struct Inputs {
@@ -417,7 +419,15 @@ enum AccessBuilder {
                                     detail: "O macOS pediu para liberar o login desta conta e o pedido foi recusado ou ficou sem resposta. Clique em Ler de novo e autorize (Sempre Permitir, quando ele oferecer).",
                                     kind: .needsYou, action: .readAgain, actionLabel: "Ler de novo"))
         }
-        for account in inputs.accounts where !account.hasLogin && !account.keychainRefused {
+        for account in inputs.accounts {
+            guard let owner = account.loginOf else { continue }
+            items.append(AccessItem(id: "conta.\(account.id).trocado", badge: AccountRouter.monogram(for: account.label),
+                                    title: "\(account.label): login de outra conta",
+                                    detail: "A pasta desta conta tem o login da \(owner). Até você autorizar de novo com o login certo, a troca não usa esta conta e os números dela param na última leitura feita com o login dela.",
+                                    kind: .needsYou, action: .reauthorize(account: account.id, agents: false),
+                                    actionLabel: "Autorizar"))
+        }
+        for account in inputs.accounts where !account.hasLogin && !account.keychainRefused && account.loginOf == nil {
             items.append(AccessItem(id: "conta.\(account.id)", badge: AccountRouter.monogram(for: account.label),
                                     title: "\(account.label) sem login",
                                     detail: "A troca não usa esta conta até você autorizar de novo.",

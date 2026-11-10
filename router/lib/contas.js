@@ -323,7 +323,7 @@ function conflitoDoLogin(id, dir, cfg = carregarConfig()) {
   const login = loginDaPasta(dir);
   if (!login.chave) return null;
   const onde = rotuloDoLoginDaPasta(login);
-  const outra = outrasDaFila(id, cfg).find((outro) => identidade(outro, cfg).chave === login.chave);
+  const outra = outrasDaFila(id, cfg).find((outro) => chavesDaConta(outro, cfg).includes(login.chave));
   if (outra) return { login, outra, texto: `this sign-in went to ${onde}, which is ${nomeDaConta(outra, cfg)} (${outra})` };
   if (usaDirPadrao(id, cfg) && path.resolve(dir) === path.resolve(dirPropria(id, cfg))) {
     const esperada = identidade(id, cfg);
@@ -712,10 +712,15 @@ async function lerUso(id, { maxIdadeMs, credencial = null, chaveDoCache = id } =
   const cfg = carregarConfig();
   const limite = maxIdadeMs ?? cfg.cacheUsoSegundos * 1000;
   const anterior = lerJson(ARQ_USO, {})[chaveDoCache];
-  if (anterior && anterior.ok && Date.now() - anterior.verificadoEm < limite) return anterior;
-  if (anterior && anterior.esperarAte && Date.now() < anterior.esperarAte) return anterior;
-  const atual = await sondar(id, cfg, credencial);
-  if (!atual.ok && anterior && anterior.uso) {
+  // Com o login de outra conta da fila na pasta, o token dela leria os números da outra com o nome desta, e uma
+  // leitura guardada desde a troca também é dela: nem sonda, nem cache, nem os números de antes.
+  const cruzada = !credencial && loginDeOutraContaDaFila(id, cfg);
+  if (!cruzada && anterior && anterior.ok && Date.now() - anterior.verificadoEm < limite) return anterior;
+  if (!cruzada && anterior && anterior.esperarAte && Date.now() < anterior.esperarAte) return anterior;
+  const atual = cruzada
+    ? { ok: false, erro: 'login de outra conta da fila na pasta', semLogin: true, loginDeOutraConta: true, verificadoEm: Date.now() }
+    : await sondar(id, cfg, credencial);
+  if (!atual.ok && !cruzada && anterior && anterior.uso) {
     atual.uso = anterior.uso;
     atual.usoDe = anterior.usoDe || anterior.verificadoEm;
   }
@@ -772,7 +777,7 @@ async function avaliarContas({ maxIdadeMs } = {}) {
     sonda: sondas[i],
     folga: folgaDe(sondas[i]),
     esgotada: esgotadas[id] || null,
-    logada: !sondas[i].semLogin && !loginDeOutraContaDaFila(id, cfg),
+    logada: !sondas[i].semLogin,
   }));
 }
 
@@ -783,7 +788,15 @@ function loginDeOutraContaDaFila(id, cfg = carregarConfig()) {
   if (usaDirPadrao(id, cfg)) return null;
   const outra = loginProprioDeOutraConta(id, cfg);
   if (!outra) return null;
-  return outrasDaFila(id, cfg).some((o) => identidade(o, cfg).chave === outra.chave) ? outra : null;
+  return outrasDaFila(id, cfg).some((o) => chavesDaConta(o, cfg).includes(outra.chave)) ? outra : null;
+}
+
+// As chaves pelas quais uma conta da fila é reconhecida: o login da pasta dela (ou do ~/.claude) e o que a troca dos
+// agentes guardou para ela. Só a pasta não basta: quando duas pastas trocam de login entre si, cada uma passa a
+// nomear a outra, e o login que saiu de uma só é reconhecido pelo guardado (10/11: a pasta da Squad Compare ficou
+// com o login da Aegro enquanto a pasta da Aegro já estava na Max).
+function chavesDaConta(id, cfg = carregarConfig()) {
+  return [identidade(id, cfg).chave, chaveDaConta(loginGuardadoDaConta(id))].filter(Boolean);
 }
 
 function decidir(candidatos, { excluir = [], agora = Date.now() } = {}) {

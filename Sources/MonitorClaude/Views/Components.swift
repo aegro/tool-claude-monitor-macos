@@ -239,10 +239,14 @@ struct ResetCaption: View {
 
     var body: some View {
         if window.hasReset(at: now), let at = window.resetsAt {
-            // With the day once it is not today: the reading behind it can be days old.
-            Text("renovou \(Fmt.at(at, now: now))")
+            // With the day once it is not today: the reading behind it can be days old. "≈" as in the countdown below,
+            // since an inferred reset stays inferred after it passes.
+            Text("renovou \(window.resetIsExact ? "" : "≈ ")\(Fmt.at(at, now: now))")
                 .font(Type.labelTiny)
                 .foregroundStyle(.tertiary)
+                .help(window.resetIsExact
+                      ? "Horário informado pelo servidor."
+                      : "Deduzido da série do app do Claude — pode variar em até 10 min.")
         } else if let reset = window.timeToReset, let at = window.resetsAt {
             // "≈" whenever the reset was reconstructed rather than reported. It is a small
             // mark for a real distinction: an inferred boundary can be one grid step out,

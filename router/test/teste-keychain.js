@@ -108,6 +108,16 @@ const testes = {
     assert.strictEqual(JSON.parse(itemDe(usuario, agentes.SERVICO_SLOT)).claudeAiOauth.accessToken, 'token-principal');
 
     preparar();
+    const chave = `${contaDe('principal').accountUuid}:${contaDe('principal').organizationUuid}`;
+    fs.writeFileSync(
+      path.join(contas.DIR_ESTADO, 'ritmo.json'),
+      JSON.stringify({ conta: chave, janela: 'cinco', ppPorMinuto: 0, em: Date.now(), usado: 10, usadoEm: Date.now() }),
+    );
+    assert.strictEqual(await preventiva({ escolhaManual: { conta: 'principal', em: Date.now() - 1000 } }), null);
+    assert.strictEqual(JSON.parse(itemDe(usuario, agentes.SERVICO_SLOT)).claudeAiOauth.accessToken, 'token-principal');
+    fs.rmSync(path.join(contas.DIR_ESTADO, 'ritmo.json'));
+
+    preparar();
     const troca = await preventiva({});
     assert.deepStrictEqual({ de: troca.de, para: troca.para, mudou: troca.mudou }, { de: 'principal', para: 'segunda', mudou: true });
   },

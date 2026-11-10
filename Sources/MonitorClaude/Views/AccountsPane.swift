@@ -528,7 +528,9 @@ struct AccountDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if entry.isLive, let usage = monitor.usage {
+            // The live gauges only while the live feed is the reading the row shows: with the terminal read failing, a
+            // newer reading saved for this account wins the row, and the detail then shows that same one.
+            if entry.isLive, let usage = monitor.usage, usage.fetchedAt >= (entry.snapshot?.fetchedAt ?? .distantPast) {
                 let headline = usage.headline
                 if let headline {
                     LimitGauge(window: headline, burn: monitor.burn(of: headline), now: now)

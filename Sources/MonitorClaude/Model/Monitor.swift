@@ -1063,7 +1063,8 @@ final class Monitor: ObservableObject {
                             reserveBelow: router.config.reserveBelow, comfortableFrom: router.config.comfortableFrom,
                             configured: true,
                             principal: router.config.principal, pinned: router.config.pinned,
-                            agents: router.agentsAccount)
+                            agents: router.agentsAccount,
+                            agentsRunning: sessions.contains(where: \.isBackground))
     }
 
     /// The window the menu bar shows (`UsageSnapshot.headline`: the 5h one, or the week on an account without it), and

@@ -101,7 +101,8 @@ struct WithoutFiveHourTests {
     }
 }
 
-/// The widget is about the account the agents run on; the terminal's new sessions are the second line.
+/// The widget is about the account in use: the agents' while a background agent runs, else where the sessions run;
+/// the other accounts at work are the second line.
 struct FocusAndRefreshTests {
     private func entry(_ id: String) -> AccountQueue.Entry {
         AccountQueue.Entry(id: id, label: id.capitalized, monogram: String(id.prefix(2)).uppercased(), role: .route, plan: nil,
@@ -110,7 +111,7 @@ struct FocusAndRefreshTests {
 
     @Test func topoDizOndeOsAgentesRodamEOTerminalVemEmSegundo() {
         let q = AccountQueue(entries: [entry("financeiro"), entry("financeiro2")], strategy: .order, enabled: true,
-                             configured: true, agents: "financeiro2")
+                             configured: true, agents: "financeiro2", agentsRunning: true)
         #expect(q.newSessions() == "financeiro")
         #expect(q.focus() == "financeiro2")
         #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Agentes e sessões em segundo plano rodam na")
@@ -129,7 +130,55 @@ struct FocusAndRefreshTests {
                              configured: true, pinned: "financeiro", agents: "financeiro2")
         #expect(q.focus() == "financeiro")
         #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Você escolheu: sessões novas abrem na")
-        #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions()) == "Os agentes continuam na Financeiro2 até ela chegar no limite.")
+        #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions()) == "Os agentes ficam na Financeiro2 até ela chegar no limite e só então trocam.")
+    }
+
+    /// 11/11/2026: the agents' account showed "em uso" with no session on it, while the 6 sessions open ran on the
+    /// terminal's account.
+    @Test func semAgenteRodandoOTopoÉOndeAsSessõesRodam() {
+        var compare = entry("compare")
+        compare.sessions = 6
+        let q = AccountQueue(entries: [entry("ultra"), compare], strategy: .headroom, enabled: true,
+                             configured: true, agents: "ultra")
+        #expect(q.focus() == "compare")
+        #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Suas sessões rodam na")
+        #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions())
+                == "Cada claude novo no terminal abre na Ultra, a de mais folga até renovar. Os agentes ficam na Ultra até ela chegar perto do limite ou outra conta da rota, com folga de sobra, render pelo menos o dobro até renovar.")
+
+        // A background agent running takes the top back to the agents' account.
+        var running = q
+        running.agentsRunning = true
+        #expect(running.focus() == "ultra")
+        #expect(AccountQueue.focusCaption(queue: running, focus: running.focus()) == "Agentes e sessões em segundo plano rodam na")
+    }
+
+    @Test func sessõesNaContaDasNovasDizemAsDuasCoisas() {
+        var aberta = entry("financeiro")
+        aberta.sessions = 2
+        let q = AccountQueue(entries: [aberta, entry("financeiro2")], strategy: .order, enabled: true,
+                             configured: true, agents: "financeiro2")
+        #expect(q.focus() == "financeiro")
+        #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Suas sessões rodam e as novas abrem na")
+        #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions())
+                == "Os agentes ficam na Financeiro2 até ela chegar no limite e só então trocam.")
+    }
+
+    @Test func empateDeSessõesFicaComAContaDasNovas() {
+        var a = entry("financeiro"), b = entry("financeiro2")
+        a.sessions = 1
+        b.sessions = 1
+        let q = AccountQueue(entries: [b, a], strategy: .order, enabled: true, configured: true, pinned: nil)
+        #expect(q.newSessions() == "financeiro2")
+        #expect(q.focus() == "financeiro2")
+        let other = AccountQueue(entries: [a, b], strategy: .order, enabled: true, configured: true)
+        #expect(other.focus() == "financeiro")
+    }
+
+    @Test func nadaRodandoOTopoÉOndeAPróximaSessãoAbre() {
+        let q = AccountQueue(entries: [entry("financeiro"), entry("financeiro2")], strategy: .order, enabled: true,
+                             configured: true, agents: "financeiro2")
+        #expect(q.focus() == "financeiro")
+        #expect(AccountQueue.focusCaption(queue: q, focus: q.focus()) == "Sessões novas abrem na")
     }
 
     @Test func próximaDosAgentesSóEntreContasComLoginDeAgentes() {

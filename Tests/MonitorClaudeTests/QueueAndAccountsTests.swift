@@ -238,12 +238,13 @@ struct QueueAndAccountsTests {
     @Test func barraDeMenuSegueOsAgentesQuandoORoteadorOsTiraDaPreferida() {
         let q = AccountQueue(entries: [entry("aegro", used: 97), entry("max", used: 93),
                                        entry("time", used: 2)],
-                             strategy: .order, enabled: true, reserveBelow: 3, configured: true, agents: "time")
+                             strategy: .order, enabled: true, reserveBelow: 3, configured: true, agents: "time",
+                             agentsRunning: true)
         #expect(q.newSessions() == "aegro")
         #expect(q.focus() == "time")
 
         let together = AccountQueue(entries: q.entries, strategy: .order, enabled: true, reserveBelow: 3,
-                                    configured: true, agents: "aegro")
+                                    configured: true, agents: "aegro", agentsRunning: true)
         #expect(together.focus() == "aegro")
     }
 

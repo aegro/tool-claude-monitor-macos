@@ -1029,7 +1029,8 @@ final class Monitor: ObservableObject {
                 plan: live?.plan, email: activeAccount?.email, organization: activeAccount?.organizationDisplay,
                 snapshot: usage, hasLogin: true, agentsLogin: true, exhaustedUntil: nil,
                 sessions: sessions.count, runsAgents: true, isLive: true)
-            return AccountQueue(entries: [entry], strategy: .order, enabled: false, configured: false)
+            return AccountQueue(entries: [entry], strategy: .order, enabled: false, configured: false,
+                                agentsRunning: ClaudeSessionStore.backgroundAgentsRunning(sessions))
         }
         let entries: [AccountQueue.Entry] = router.config.accounts.map { account in
             let identity = router.logins[account.id]

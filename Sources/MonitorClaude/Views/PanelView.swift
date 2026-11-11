@@ -273,7 +273,7 @@ struct PanelView: View {
         .padding(.vertical, 8)
     }
 
-    /// When the numbers of the account in use (the agents', `AccountQueue.focus`) were read, and a quiet retry. Grey
+    /// When the numbers of the account in use (`AccountQueue.focus`) were read, and a quiet retry. Grey
     /// while they are recent or the server only asked for a pause; red once they are half an hour old.
     private var freshness: some View {
         let queue = monitor.accountQueue

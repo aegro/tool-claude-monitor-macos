@@ -20,6 +20,9 @@ struct ClaudeSession: Identifiable, Equatable {
     /// The account whose config directory holds the session file, whatever the mark says: removing that account
     /// would send this folder to the Trash under the running session.
     var folderAccountId: String?
+    /// The file sits in `~/.claude` itself, where `claude agents` runs. The account in `~/.claude` also has a folder of
+    /// its own with the same `folderAccountId`, so the id alone does not tell the two apart.
+    var inDefaultDirectory = false
 
     var id: pid_t { pid }
     var isBusy: Bool { status == "busy" }
@@ -75,10 +78,17 @@ enum ClaudeSessionStore {
                    let startedAt = session.startedAt, mark.started <= startedAt.addingTimeInterval(1) {
                     session.accountId = mark.account
                 }
+                session.inDefaultDirectory = isDefault
                 out.append(session)
             }
         }
         return out.sorted { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
+    }
+
+    /// A background agent of `claude agents` is running: a session of kind `bg` in `~/.claude`, where they run. One in
+    /// an account's own folder runs on that account, not on the agents', even when it is the account in `~/.claude`.
+    static func backgroundAgentsRunning(_ sessions: [ClaudeSession]) -> Bool {
+        sessions.contains { $0.isBackground && $0.inDefaultDirectory }
     }
 
     static func load(directory dir: URL, accountId: String?) -> [ClaudeSession] {

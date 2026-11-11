@@ -82,6 +82,8 @@ struct AccountQueue: Equatable {
     var pinned: String?
     /// The account the agents of `claude agents` run on now (see `AccountRouter.agentsAccount`).
     var agents: String?
+    /// A background agent is running now (a session of kind `bg`): only then is the agents' account the one in use.
+    var agentsRunning = false
 
     /// Why an account cannot leave the queue now, or nil when it can: its folder would go to the Trash under
     /// sessions still running with it.
@@ -147,11 +149,19 @@ struct AccountQueue: Equatable {
     }
 
     /// The account the widget is about (menu bar, top of the Contas tab, highlighted row, freshness footer): the one
-    /// chosen by hand while new sessions still open there, else the one the agents run on.
+    /// in use. That is the one chosen by hand while new sessions still open there; else the agents' account while a
+    /// background agent runs; else the account with the most sessions running (new sessions' account on a tie);
+    /// with nothing running, where the next session opens. The agents' account alone is not "in use": on 11/11/2026
+    /// the panel showed the agents' account "em uso" with no session on it and the 6 open sessions on another one.
     func focus(now: Date = Date()) -> String? {
         let opens = newSessions(now: now)
         if let pinned, opens == pinned { return pinned }
-        return agents.flatMap { id in entries.contains { $0.id == id } ? id : nil } ?? opens
+        if agentsRunning, let agents, entries.contains(where: { $0.id == agents }) { return agents }
+        if let most = entries.map(\.sessions).max(), most > 0 {
+            let busiest = entries.filter { $0.sessions == most }.map(\.id)
+            return busiest.contains { $0 == opens } ? opens : busiest.first
+        }
+        return opens
     }
 
     /// Who takes over if `id` hits its limit, or nil when nobody can. The agents only move to an account with an agents
@@ -208,27 +218,34 @@ struct AccountQueue: Equatable {
     static func focusCaption(queue: AccountQueue, focus: String?) -> String {
         guard queue.configured, !queue.isSingle else { return "As sessões abrem na" }
         if queue.enabled, let pinned = queue.pinned, pinned == focus { return "Você escolheu: sessões novas abrem na" }
-        if let agents = queue.agents, agents == focus { return "Agentes e sessões em segundo plano rodam na" }
+        if queue.agentsRunning, let agents = queue.agents, agents == focus { return "Agentes e sessões em segundo plano rodam na" }
+        if let entry = queue.entry(focus), entry.sessions > 0 {
+            return focus == queue.newSessions() ? "Suas sessões rodam e as novas abrem na" : "Suas sessões rodam na"
+        }
         return queue.enabled ? "Sessões novas abrem na" : "As sessões abrem na"
     }
 
-    /// The other account in use, when there is one: the terminal's new sessions, or the agents while a hand-picked
-    /// account takes the headline. `claude agents` does not follow the terminal's rule, so the two can differ.
+    /// The other accounts at work, when they are not the one on top: where the terminal's new sessions open, and
+    /// where the agents run. `claude agents` does not follow the terminal's rule, so the two can differ.
     static func terminalNote(queue: AccountQueue, focus: String?, terminal: String?) -> String? {
         guard queue.configured, !queue.isSingle else { return nil }
+        var parts: [String] = []
         if let terminal, terminal != focus, let entry = queue.entry(terminal) {
-            let rule = queue.strategy == .headroom ? "a de mais folga até renovar" : "a primeira da fila com folga"
-            let stay = focus.flatMap { queue.entry($0) }.map { agents in
-                queue.strategy == .headroom && queue.pinned == nil
-                    ? "Os agentes ficam na \(agents.label) até ela chegar perto do limite ou outra conta da rota, com folga de sobra, render pelo menos o dobro até renovar."
-                    : "Os agentes ficam na \(agents.label) até ela chegar no limite e só então trocam."
-            }
-            return (["Cada claude novo no terminal abre na \(entry.label), \(rule)."] + [stay].compactMap { $0 }).joined(separator: " ")
+            // With switching off new sessions always open on the account in `~/.claude`, whatever the room.
+            let rule = !queue.enabled ? "a conta do ~/.claude: com a troca automática desligada, sempre nela"
+                : queue.strategy == .headroom ? "a de mais folga até renovar" : "a primeira da fila com folga"
+            parts.append("Cada claude novo no terminal abre na \(entry.label), \(rule).")
         }
-        if let agents = queue.agents, agents != focus, let entry = queue.entry(agents) {
-            return "Os agentes continuam na \(entry.label) até ela chegar no limite."
+        // On top, the agents' account still says when they leave it, next to where the terminal's sessions go.
+        if let agents = queue.agents, agents != focus || !parts.isEmpty, let entry = queue.entry(agents) {
+            // With switching off the router only renews idle logins: the agents stay where they are.
+            parts.append(!queue.enabled
+                ? "Os agentes rodam na \(entry.label); com a troca automática desligada, ficam nela."
+                : queue.strategy == .headroom && queue.pinned == nil
+                ? "Os agentes ficam na \(entry.label) até ela chegar perto do limite ou outra conta da rota, com folga de sobra, render pelo menos o dobro até renovar."
+                : "Os agentes ficam na \(entry.label) até ela chegar no limite e só então trocam.")
         }
-        return nil
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     /// Why an account with an expired login has no fresh numbers, and what to do about it.

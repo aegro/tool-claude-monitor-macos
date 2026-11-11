@@ -236,7 +236,10 @@ struct AccountQueue: Equatable {
         }
         // On top, the agents' account still says when they leave it, next to where the terminal's sessions go.
         if let agents = queue.agents, agents != focus || !parts.isEmpty, let entry = queue.entry(agents) {
-            parts.append(queue.strategy == .headroom && queue.pinned == nil
+            // With switching off the router only renews idle logins: the agents stay where they are.
+            parts.append(!queue.enabled
+                ? "Os agentes rodam na \(entry.label); com a troca automática desligada, ficam nela."
+                : queue.strategy == .headroom && queue.pinned == nil
                 ? "Os agentes ficam na \(entry.label) até ela chegar perto do limite ou outra conta da rota, com folga de sobra, render pelo menos o dobro até renovar."
                 : "Os agentes ficam na \(entry.label) até ela chegar no limite e só então trocam.")
         }

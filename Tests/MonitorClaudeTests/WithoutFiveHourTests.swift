@@ -163,6 +163,16 @@ struct FocusAndRefreshTests {
                 == "Os agentes ficam na Financeiro2 até ela chegar no limite e só então trocam.")
     }
 
+    @Test func trocaDesligadaNãoPrometeQueOsAgentesTrocam() {
+        var aberta = entry("financeiro")
+        aberta.sessions = 2
+        let q = AccountQueue(entries: [aberta, entry("financeiro2")], strategy: .order, enabled: false,
+                             configured: true, agents: "financeiro2")
+        #expect(q.focus() == "financeiro")
+        #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions())
+                == "Os agentes rodam na Financeiro2; com a troca automática desligada, ficam nela.")
+    }
+
     @Test func empateDeSessõesFicaComAContaDasNovas() {
         var a = entry("financeiro"), b = entry("financeiro2")
         a.sessions = 1

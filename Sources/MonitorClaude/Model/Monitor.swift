@@ -1028,7 +1028,9 @@ final class Monitor: ObservableObject {
                 monogram: AccountRouter.monogram(for: live?.label ?? "CC"), role: .route,
                 plan: live?.plan, email: activeAccount?.email, organization: activeAccount?.organizationDisplay,
                 snapshot: usage, hasLogin: true, agentsLogin: true, exhaustedUntil: nil,
-                sessions: sessions.count, runsAgents: true, isLive: true)
+                // The agents run on the terminal login: not on this row while the desktop app carries another organization.
+                sessions: sessions.count, runsAgents: live?.organizationUuid == activeAccount?.organizationUuid,
+                isLive: true)
             return AccountQueue(entries: [entry], strategy: .order, enabled: false, configured: false,
                                 agentsRunning: ClaudeSessionStore.backgroundAgentsRunning(sessions))
         }

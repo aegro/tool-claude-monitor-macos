@@ -527,6 +527,36 @@ struct QueueAndAccountsTests {
         #expect(sessions.first?.folderAccountId == "max")
     }
 
+    @Test func agenteEmSegundoPlanoSoContaNoClaudePadrao() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("monitor-sessions-\(UUID().uuidString)")
+        let home = base.appendingPathComponent("accounts"), padrao = base.appendingPathComponent("claude")
+        let config = try #require(AccountRouter.parseConfig(
+            Data(#"{ "principal": "max", "contas": { "max": {}, "aegro": {} }, "rota": ["max", "aegro"] }"#.utf8),
+            home: home, defaultDirectory: padrao))
+        let dirs = config.sessionDirectories(home: home)
+        let propria = home.appendingPathComponent("max/sessions"), padraoSessions = padrao.appendingPathComponent("sessions")
+        for dir in [propria, padraoSessions] { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+        let pid = Int(ProcessInfo.processInfo.processIdentifier)
+
+        // A background session in the folder of its own of the account in `~/.claude`: same `folderAccountId` as
+        // `~/.claude`, but it is not one of the agents.
+        try Data(#"{ "pid": \#(pid), "sessionId": "s", "cwd": "/tmp/x", "kind": "bg", "startedAt": 1000 }"#.utf8)
+            .write(to: propria.appendingPathComponent("1.json"))
+        var sessions = ClaudeSessionStore.load(accounts: dirs, defaultDirectory: padrao)
+        #expect(sessions.first?.folderAccountId == "max")
+        #expect(sessions.first?.inDefaultDirectory == false)
+        #expect(!ClaudeSessionStore.backgroundAgentsRunning(sessions))
+
+        // The same session in `~/.claude` is an agent.
+        try fm.removeItem(at: propria.appendingPathComponent("1.json"))
+        try Data(#"{ "pid": \#(pid), "sessionId": "s", "cwd": "/tmp/x", "kind": "bg", "startedAt": 1000 }"#.utf8)
+            .write(to: padraoSessions.appendingPathComponent("1.json"))
+        sessions = ClaudeSessionStore.load(accounts: dirs, defaultDirectory: padrao)
+        #expect(sessions.first?.inDefaultDirectory == true)
+        #expect(ClaudeSessionStore.backgroundAgentsRunning(sessions))
+    }
+
     @Test func aMarcaDoRoteadorValeNoClaudePadraoParaQuemAbriuASessao() throws {
         let fm = FileManager.default
         let base = fm.temporaryDirectory.appendingPathComponent("monitor-sessions-\(UUID().uuidString)")

@@ -1064,7 +1064,13 @@ final class Monitor: ObservableObject {
                             configured: true,
                             principal: router.config.principal, pinned: router.config.pinned,
                             agents: router.agentsAccount,
-                            agentsRunning: sessions.contains(where: \.isBackground))
+                            agentsRunning: sessions.contains { session in
+                                // `claude agents` runs from `~/.claude`: a background session in an extra account's
+                                // folder runs on that account, not on the agents'.
+                                session.isBackground && (session.folderAccountId.map { id in
+                                    router.config.accounts.contains { $0.id == id && $0.usesDefaultDirectory }
+                                } ?? true)
+                            })
     }
 
     /// The window the menu bar shows (`UsageSnapshot.headline`: the 5h one, or the week on an account without it), and

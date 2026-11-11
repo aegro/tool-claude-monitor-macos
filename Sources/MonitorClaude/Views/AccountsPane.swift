@@ -139,7 +139,7 @@ struct AccountsPane: View {
                    terminal: entry.id == terminal && terminal != inUse && !queue.isSingle,
                    draggable: !queue.isSingle, expanded: expanded == entry.id,
                    pinned: queue.enabled && queue.pinned == entry.id,
-                   bgAgents: monitor.sessions.contains(where: \.isBackground),
+                   bgAgents: queue.agentsRunning,
                    monitor: monitor) {
             withAnimation(.easeOut(duration: 0.15)) { expanded = expanded == entry.id ? nil : entry.id }
         }

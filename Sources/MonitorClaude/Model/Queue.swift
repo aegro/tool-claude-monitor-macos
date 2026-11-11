@@ -231,7 +231,9 @@ struct AccountQueue: Equatable {
         guard queue.configured, !queue.isSingle else { return nil }
         var parts: [String] = []
         if let terminal, terminal != focus, let entry = queue.entry(terminal) {
-            let rule = queue.strategy == .headroom ? "a de mais folga até renovar" : "a primeira da fila com folga"
+            // With switching off new sessions always open on the account in `~/.claude`, whatever the room.
+            let rule = !queue.enabled ? "a conta do ~/.claude: com a troca automática desligada, sempre nela"
+                : queue.strategy == .headroom ? "a de mais folga até renovar" : "a primeira da fila com folga"
             parts.append("Cada claude novo no terminal abre na \(entry.label), \(rule).")
         }
         // On top, the agents' account still says when they leave it, next to where the terminal's sessions go.

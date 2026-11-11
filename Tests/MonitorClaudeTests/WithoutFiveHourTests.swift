@@ -171,6 +171,13 @@ struct FocusAndRefreshTests {
         #expect(q.focus() == "financeiro")
         #expect(AccountQueue.terminalNote(queue: q, focus: q.focus(), terminal: q.newSessions())
                 == "Os agentes rodam na Financeiro2; com a troca automática desligada, ficam nela.")
+
+        // The terminal's line follows the principal, not a route rule that is off.
+        let comPrincipal = AccountQueue(entries: [aberta, entry("financeiro2")], strategy: .order, enabled: false,
+                                        configured: true, principal: "financeiro2", agents: "financeiro2")
+        #expect(comPrincipal.focus() == "financeiro")
+        #expect(AccountQueue.terminalNote(queue: comPrincipal, focus: comPrincipal.focus(), terminal: comPrincipal.newSessions())
+                == "Cada claude novo no terminal abre na Financeiro2, a conta do ~/.claude: com a troca automática desligada, sempre nela. Os agentes rodam na Financeiro2; com a troca automática desligada, ficam nela.")
     }
 
     @Test func empateDeSessõesFicaComAContaDasNovas() {

@@ -45,7 +45,7 @@ Config em `~/.claude-accounts/config.json`:
 
 `claude-accounts`, a troca dos agentes e os Ajustes do Monitor só mudam `config.json` e o `.claude.json` do slot (`~/.claude.json`) dentro de uma trava `<arquivo>.lock`, o mesmo diretório que o Claude Code usa para o `.claude.json`, e releem o arquivo dentro dela. Trava sem atividade há mais de 10 s é tratada como abandonada; trava ocupada por mais de alguns segundos faz a mudança desistir com erro, sem gravar. Arquivo com JSON inválido não é sobrescrito.
 
-Folga é 100% menos o maior uso entre as janelas de 5h e de 7 dias; conta sem janela de 5h (Ultra verificada: a API manda `five_hour: null`) vale pela semana, e a troca preventiva mede o ritmo dela. Conta que bateu o limite fica marcada como esgotada até o horário de renovação.
+Folga é 100% menos o maior uso entre as janelas de 5h e de 7 dias; conta sem janela de 5h (Ultra verificada: a API manda `five_hour: null`) vale pela semana, e a troca preventiva mede o ritmo dela. Conta que bateu o limite fica marcada como esgotada até o horário de renovação, e sai antes se uma leitura feita depois da marca mostra aquela janela (5h, semana ou semana do modelo) com outra hora de renovação e abaixo de 98%: a janela que encheu já renovou. A marca de login recusado (`auth`, 6 h) sai quando o login é refeito (`claude-accounts login`, o assistente do Monitor) ou renovado (`refresh`); cobrança e conta suspensa só vencem no prazo ou com `release`.
 
 ### Qual conta
 

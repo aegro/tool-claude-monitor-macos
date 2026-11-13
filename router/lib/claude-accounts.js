@@ -196,6 +196,7 @@ function entrar(id, args) {
     const conflito = contas.conflitoDoLogin(id, dir);
     if (!conflito) {
       console.log(`${id} is logged in as ${contas.rotuloDoLoginDaPasta(contas.loginDaPasta(dir)) || 'unknown'}`);
+      if (contas.liberarSeMotivo(id, ['auth'], 'login refeito')) console.log(`${id} is back in the queue`);
       avisarDuplicadas();
       process.exit(0);
     }

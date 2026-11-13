@@ -37,6 +37,7 @@ jobs:
           node router/test/teste-keychain.js
           node router/test/teste-wrapper.js
           node router/test/teste-renovar.js
+          node router/test/teste-marcas.js
           node router/test/teste-como.js
           node router/test/teste-login-cruzado.js
           python3 router/test/teste-tui.py

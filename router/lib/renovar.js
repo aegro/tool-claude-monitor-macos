@@ -228,8 +228,10 @@ async function renovarParadas({ ids = null, forcar = false, deps = {} } = {}) {
       const r = await renovarUma(id, cfg, usar, agora);
       if (!r) continue;
       feitas[id] = { em: Date.now(), ...r };
-      if (r.resultado === 'renovado') contas.log(`renovar: login de ${id} renovado pelo CLI até ${new Date(r.ate).toISOString()}`);
-      else if (r.resultado === 'falhou') contas.log(`renovar: login de ${id} venceu e não renovou: ${r.erro}`);
+      if (r.resultado === 'renovado') {
+        contas.log(`renovar: login de ${id} renovado pelo CLI até ${new Date(r.ate).toISOString()}`);
+        contas.liberarSeMotivo(id, ['auth'], 'login renovado');
+      } else if (r.resultado === 'falhou') contas.log(`renovar: login de ${id} venceu e não renovou: ${r.erro}`);
     }
     if (Object.keys(feitas).length) contas.escreverJson(ARQ_RENOVACOES, { ...lerRenovacoes(), ...feitas });
     return { acao: 'renovou', contas: feitas };

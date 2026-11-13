@@ -729,7 +729,69 @@ async function lerUso(id, { maxIdadeMs, credencial = null, chaveDoCache = id } =
   try {
     escreverJson(ARQ_USO, cache);
   } catch {}
+  // Só a leitura da própria pasta fala da conta que a marca tirou da fila; a do login dos agentes é de outra credencial.
+  if (atual.ok && !credencial && chaveDoCache === id) {
+    try {
+      revisarMarca(id, atual);
+    } catch {}
+  }
   return atual;
+}
+
+// Folga da janela, em minutos, para dizer que a hora de renovação lida não é a que a marca anotou. O servidor arredonda
+// o `resetsAt` do aviso e o `resets_at` da leitura de jeitos diferentes; dentro disso, é a mesma janela.
+const MESMA_JANELA_MS = 5 * 60 * 1000;
+
+// A marca de limite foi superada pela leitura? O aviso do servidor dá a hora em que a janela cheia renova, e a marca
+// fica até ela. Quando uma leitura feita DEPOIS da marca mostra essa janela com outra hora de renovação e longe do
+// teto, a janela que encheu já renovou (ou nunca foi a que o aviso disse): a conta está trabalhando, e segurá-la fora
+// da fila até a hora anotada só esconde folga real. Caso de 13/11/2026: aviso de five_hour às 10:58 dizendo 14:00, e
+// às 13:44 a leitura mostrava 69% numa janela que renovava às 15:59, com sessões gastando nela desde as 11:00.
+// A marca de login (`auth`) não sai por leitura: quem a tira é o login refeito ou renovado (liberarSeMotivo).
+// Conta sem janela de 5h (Ultra) não tem com o que comparar um five_hour, e a marca fica.
+function marcaSuperada(marca, sonda, agora = Date.now()) {
+  if (!marca || !sonda || !sonda.ok || !sonda.uso) return false;
+  if (!(sonda.verificadoEm > (marca.em || 0))) return false;
+  const janela = janelaDaMarca(marca, sonda.uso);
+  if (!janela || !(janela.renovaEm > agora)) return false;
+  if (janela.usado >= 98) return false;
+  return Math.abs(janela.renovaEm - marca.ate) > MESMA_JANELA_MS;
+}
+
+// A janela da leitura de que a marca fala: a de 5h, a semanal geral ou a semanal de um modelo (seven_day_opus).
+function janelaDaMarca(marca, uso) {
+  const base = String(marca.motivo || '').replace(/^agents /, '');
+  if (base === 'five_hour') return uso.cinco;
+  if (base === 'seven_day') return uso.sete;
+  if (base.startsWith('seven_day_')) return janelaDoModelo(uso, base);
+  return null;
+}
+
+function revisarMarca(id, sonda, agora = Date.now()) {
+  const todas = lerEsgotadas();
+  const marca = todas[id];
+  if (!marcaSuperada(marca, sonda, agora)) return false;
+  delete todas[id];
+  escreverJson(ARQ_ESGOTADAS, todas);
+  const janela = janelaDaMarca(marca, sonda.uso);
+  log(
+    `conta ${id} liberada: marca ${marca.motivo} até ${new Date(marca.ate).toISOString()} superada pela leitura ` +
+      `(${janela.usado}%, janela renova ${new Date(janela.renovaEm).toISOString()})`,
+  );
+  return true;
+}
+
+// Tira a marca da conta só se ela foi posta por um destes motivos. O login refeito ou renovado prova que o servidor
+// aceita a conta de novo, e a marca de `auth` (6h, prazoPadrao) não tem como vencer antes disso sozinha: antes deste
+// gesto, a conta seguia "pediu login" depois de autorizada, até alguém rodar `claude-accounts release`.
+function liberarSeMotivo(id, motivos, porque) {
+  const todas = lerEsgotadas();
+  const marca = todas[id];
+  if (!marca || !motivos.includes(String(marca.motivo || '').replace(/^agents /, ''))) return false;
+  delete todas[id];
+  escreverJson(ARQ_ESGOTADAS, todas);
+  log(`conta ${id} liberada: marca ${marca.motivo} tirada pelo ${porque}`);
+  return true;
 }
 
 function lerEsgotadas() {
@@ -1121,6 +1183,9 @@ module.exports = {
   marcarEsgotada,
   lerEsgotadas,
   liberar,
+  liberarSeMotivo,
+  marcaSuperada,
+  revisarMarca,
   registrarTroca,
   registrarLimiteAoVivo,
   DIR_AO_VIVO,

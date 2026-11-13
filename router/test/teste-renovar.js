@@ -179,6 +179,24 @@ const testes = {
     delete process.env.ANTHROPIC_AUTH_TOKEN;
   },
 
+  async loginRenovadoTiraAMarcaDeLogin() {
+    configurar();
+    const marcas = path.join(contas.DIR_ESTADO, 'esgotadas.json');
+    fs.mkdirSync(contas.DIR_ESTADO, { recursive: true });
+    fs.writeFileSync(
+      marcas,
+      JSON.stringify({
+        parada: { ate: Date.now() + 6 * hora, motivo: 'auth', em: Date.now() - hora },
+        viva: { ate: Date.now() + 6 * hora, motivo: 'auth', em: Date.now() - hora },
+      }),
+    );
+    const { deps } = cenario();
+    await renovar.renovarParadas({ deps });
+    // Só a que renovou volta; a viva não precisou renovar, e o login dela segue sem prova nova.
+    assert.deepStrictEqual(Object.keys(JSON.parse(fs.readFileSync(marcas, 'utf8'))), ['viva']);
+    fs.rmSync(marcas, { force: true });
+  },
+
   async travaOcupadaNaoRodaDuasVezes() {
     configurar();
     fs.mkdirSync(path.join(contas.DIR_ESTADO, 'renovar.trava'), { recursive: true });

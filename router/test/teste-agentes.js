@@ -231,13 +231,13 @@ const testes = {
     const porLimite = { sessionId: 's1', motivo: 'limite', quando: agora - 60000, processoDesde: troca + 5000 };
     const porLogin = { sessionId: 's2', motivo: 'auth', quando: agora - 50000, processoDesde: troca + 5000 };
     assert.deepStrictEqual(
-      [agentes.planejar([porLimite], { ultimaTroca: troca }).motivo, agentes.planejar([porLimite, porLogin], { ultimaTroca: troca }).motivo],
+      [porLimite, porLogin].map((p) => agentes.planejar([p], { ultimaTroca: troca }).motivo),
       ['limite', 'auth'],
     );
+    assert.strictEqual(agentes.planejar([porLimite, porLogin], { ultimaTroca: troca }).motivo, 'limite');
     const loginDeAntesDaTroca = { ...porLogin, processoDesde: troca - 5000 };
-    const plano = agentes.planejar([porLimite, loginDeAntesDaTroca], { ultimaTroca: troca });
-    assert.strictEqual(plano.precisaTrocar, true);
-    assert.strictEqual(plano.motivo, 'limite');
+    const plano = agentes.planejar([loginDeAntesDaTroca], { ultimaTroca: troca });
+    assert.strictEqual(plano.precisaTrocar, false);
   },
   respostaNormalOuParadaAntigaOuInterativaNaoContam() {
     sessao('s2', [limite(agora - 120000), { type: 'assistant', timestamp: new Date(agora - 60000).toISOString() }]);

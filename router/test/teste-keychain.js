@@ -105,6 +105,12 @@ function cenarioDosAgentes(slot) {
   fs.writeFileSync(process.env.FAKE_AGENTES_LOG, '');
 }
 
+function guardadoHa(id, ms) {
+  const arquivo = path.join(contas.DIR_ESTADO, 'agentes', `${id}.json`);
+  const guardado = JSON.parse(fs.readFileSync(arquivo, 'utf8'));
+  fs.writeFileSync(arquivo, JSON.stringify({ ...guardado, guardadoEm: Date.now() - ms }));
+}
+
 const eventosDoFake = () => fs.readFileSync(process.env.FAKE_AGENTES_LOG, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const ultimaTroca = () => JSON.parse(fs.readFileSync(path.join(contas.DIR_ESTADO, 'trocas.jsonl'), 'utf8').trim().split('\n').pop());
 const tokenNoSlot = () => JSON.parse(itemDe(usuario, agentes.SERVICO_SLOT)).claudeAiOauth.accessToken;
@@ -120,12 +126,17 @@ const testes = {
     const estado = {};
     assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot(estado, paradas)), 'vivo');
     assert.strictEqual(estado.loginVivoApesarDoErro.impressao, agentes.impressaoDoLogin(slotDaPrincipal));
-    const recusadaDeNovo = [{ motivo: 'auth', quando: estado.loginVivoApesarDoErro.em + 1000 }];
-    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot(estado, recusadaDeNovo)), 'morto');
+    const em = estado.loginVivoApesarDoErro.em;
+    const retomadaERecusada = [{ motivo: 'auth', quando: em + 1000, processoDesde: em + 500 }];
+    const deProcessoDeAntes = [{ motivo: 'auth', quando: em + 1000, processoDesde: em - 500 }];
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot(estado, retomadaERecusada, em + 2000)), 'morto');
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot({ ...estado }, deProcessoDeAntes, em + 2000)), 'vivo');
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot({ ...estado }, retomadaERecusada, em + 2 * 3600000)), 'vivo');
     assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot(estado, paradas)), 'vivo');
   },
   async vigiaTrocaOSlotERetomaQuandoOLoginDosAgentesCai() {
     cenarioDosAgentes(slotDaPrincipalVencido);
+    guardadoHa('principal', 3600000);
     agenteParadoPorLogin('s-login', Date.now() - 60000);
     const r = await comPerfis(() => agentes.vigiar());
     assert.strictEqual(r.acao, 'retomou');
@@ -141,6 +152,18 @@ const testes = {
     const r2 = await comPerfis(() => agentes.vigiar());
     assert.notStrictEqual(r2.acao, 'retomou');
     assert.strictEqual(tokenNoSlot(), 'token-segunda');
+  },
+  async loginDeAgentesRefeitoDepoisDaRecusaNaoEhSobrescritoNemInvalidado() {
+    cenarioDosAgentes(slotDaPrincipalVencido);
+    const loginNovoDaPrincipal = JSON.stringify({ claudeAiOauth: { accessToken: 'token-principal-novo', refreshToken: 'r1-novo', expiresAt: daqui } });
+    const servicoDaPrincipal = `claude-auto agents ${agentes.SERVICO_SLOT.slice(-8)} principal`;
+    const itens = keychain().concat({ conta: usuario, servico: servicoDaPrincipal, texto: loginNovoDaPrincipal });
+    fs.writeFileSync(process.env.FAKE_KEYCHAIN, JSON.stringify(itens));
+    agenteParadoPorLogin('s-relogado', Date.now() - 60000);
+    const r = await comPerfis(() => agentes.vigiar());
+    assert.deepStrictEqual({ de: r.troca.de, para: r.troca.para }, { de: 'principal', para: 'segunda' });
+    assert.strictEqual(itemDe(usuario, servicoDaPrincipal), loginNovoDaPrincipal);
+    assert.strictEqual(agentes.loginUtilizavel(agentes.loginGuardado('principal')), true);
   },
   async vigiaSoRetomaComOLoginRefeitoETrocaSeEleCairDeNovo() {
     cenarioDosAgentes(slotDaPrincipal);

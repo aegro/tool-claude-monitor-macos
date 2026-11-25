@@ -609,8 +609,10 @@ async function trocarSlotSemTrava(para, motivo, estado = {}) {
   const slotAntes = await slotSeAindaFor(impressao);
   const loginDe = loginDoItem(slotAntes);
   if (!loginDe) throw new Error('there is no login in the agents slot');
-  if (!(await gravarItem(servicoGuardado(de), loginDe))) throw new Error(`could not keep the ${de} login`);
-  contas.escreverJson(arquivoDoLogin(de), { oauthAccount: contaDe || null, chave: chaveReal, guardadoEm: Date.now() });
+  if (motivo !== 'auth') {
+    if (!(await gravarItem(servicoGuardado(de), loginDe))) throw new Error(`could not keep the ${de} login`);
+    contas.escreverJson(arquivoDoLogin(de), { oauthAccount: contaDe || null, chave: chaveReal, guardadoEm: Date.now() });
+  }
   const novoSlot = slotComLogin(slotAntes, textoDestino);
   await slotSemMudancaDesde(slotAntes);
   if (!(await gravarItem(SERVICO_SLOT, novoSlot))) {
@@ -739,23 +741,34 @@ function planejar(paradas, estado = {}) {
   const ultimaTroca = estado.ultimaTroca || 0;
   const novas = paradas.filter((p) => empurrados[p.sessionId] !== p.quando && desistidos[p.sessionId] !== p.quando);
   const naContaDaVez = novas.filter((p) => p.quando > ultimaTroca && p.processoDesde >= ultimaTroca);
-  const motivo = naContaDaVez.some((p) => p.motivo === 'auth') ? 'auth' : 'limite';
+  const motivo = naContaDaVez.length && naContaDaVez.every((p) => p.motivo === 'auth') ? 'auth' : 'limite';
   return { novas, precisaTrocar: naContaDaVez.length > 0, motivo };
+}
+
+const VALIDADE_DO_LOGIN_VIVO_MS = 3600 * 1000;
+
+function recusadoDepoisDeConferidoVivo(vivoAntes, impressao, paradas, agora) {
+  if (!vivoAntes || vivoAntes.impressao !== impressao || agora - vivoAntes.em > VALIDADE_DO_LOGIN_VIVO_MS) return false;
+  return paradas.some((p) => p.motivo === 'auth' && p.quando > vivoAntes.em && p.processoDesde >= vivoAntes.em);
 }
 
 async function situacaoDoLoginNoSlot(estado, paradas, agora = Date.now()) {
   const texto = await lerItem(SERVICO_SLOT);
   const impressao = impressaoDoLogin(texto);
   if (!impressao) return 'morto';
-  const vivoAntes = estado.loginVivoApesarDoErro;
-  if (vivoAntes && vivoAntes.impressao === impressao && paradas.some((p) => p.motivo === 'auth' && p.quando > vivoAntes.em)) {
-    return 'morto';
-  }
+  if (recusadoDepoisDeConferidoVivo(estado.loginVivoApesarDoErro, impressao, paradas, agora)) return 'morto';
   const conferido = await conferirLogin(texto);
   if (conferido.valido === false || conferido.vencido) return 'morto';
   if (conferido.valido !== true) return 'sem-conferencia';
   estado.loginVivoApesarDoErro = { impressao, em: agora };
   return 'vivo';
+}
+
+function invalidarLoginGuardadoDeAntes(id, paradas) {
+  const guardado = loginGuardado(id);
+  const ultimaRecusa = Math.max(...paradas.filter((p) => p.motivo === 'auth').map((p) => p.quando));
+  if (guardado && (guardado.guardadoEm || 0) > ultimaRecusa) return false;
+  return marcarLoginInvalido(id, 'authentication_failed');
 }
 
 function continuacaoChegou(arquivo, desde) {
@@ -958,6 +971,7 @@ async function vigiar() {
     if (precisaTrocar && motivo === 'auth') {
       const situacao = await situacaoDoLoginNoSlot(estado, novas);
       if (situacao === 'sem-conferencia') {
+        avisarUmaVez(estado, 'login-sem-conferencia', 'Claude: agents login refused', 'The agents were refused a login and the check of the ~/.claude login did not answer. If it lasts, run /login in a session in ~/.claude.');
         contas.escreverJson(ARQ_ESTADO, estado);
         contas.log('agentes: parados por login recusado e o perfil não respondeu; fica para a próxima checagem');
         return { acao: 'adiada', parados: novas.map((p) => p.nome), erro: 'could not check the agents slot login' };
@@ -983,13 +997,14 @@ async function vigiar() {
         return { acao: 'troca-falhou', parados: novas.map((p) => p.nome), erro: r.erro.message };
       }
       if (!r.troca) {
-        avisarUmaVez(estado, 'sem-conta', titulo, 'No other account with headroom has an agents login.');
+        const conserto = motivo === 'auth' ? ' Run /login in a session in ~/.claude to bring them back.' : '';
+        avisarUmaVez(estado, 'sem-conta', titulo, `No other account with headroom has an agents login.${conserto}`);
         contas.escreverJson(ARQ_ESTADO, estado);
         contas.log(`agentes: ${novas.length} parados por ${causa} e nenhuma outra conta pronta`);
         return { acao: 'sem-conta', parados: novas.map((p) => p.nome) };
       }
       troca = r.troca;
-      if (motivo === 'auth' && troca.mudou) marcarLoginInvalido(troca.de, 'authentication_failed');
+      if (motivo === 'auth' && troca.mudou) invalidarLoginGuardadoDeAntes(troca.de, novas);
       estado.ultimaTroca = Date.now();
       delete estado.loginVivoApesarDoErro;
       contas.escreverJson(ARQ_ESTADO, estado);

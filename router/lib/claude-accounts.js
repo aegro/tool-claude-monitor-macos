@@ -311,7 +311,7 @@ async function main() {
       }
       const feitas = Object.entries(r.contas);
       if (!feitas.length && ids && contas.usaDirPadrao(ids[0])) {
-        console.log(`${ids[0]}: its login is the one in ~/.claude, the agents slot, which only the claude processes there renew; if the agents stopped on a refused login, run claude-accounts login ${ids[0]} --agents`);
+        console.log(`${ids[0]}: its login is the one in ~/.claude, the agents slot, which only the claude processes there renew; if the agents stopped on a refused login, run /login in a session in ~/.claude`);
       } else if (!feitas.length) console.log(ids ? `${ids[0]}: login is not expired, nothing to renew` : 'no expired login outside ~/.claude');
       for (const [id, f] of feitas) {
         if (f.resultado === 'renovado') console.log(`${id}: renewed until ${horaCurta(f.ate)}`);

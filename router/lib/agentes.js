@@ -30,6 +30,10 @@ const URL_PERFIL = 'https://api.anthropic.com/api/oauth/profile';
 const CONTINUAR =
   '[claude-auto] A conta anterior atingiu o limite e esta sessão foi retomada em outra conta. ' +
   'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
+const CONTINUAR_DEPOIS_DO_LOGIN =
+  '[claude-auto] O login da conta caiu e esta sessão foi retomada com um login que funciona. ' +
+  'Continue exatamente de onde parou, sem refazer o que já foi concluído.';
+const MOTIVO_DO_ERRO = { rate_limit: 'limite', authentication_failed: 'auth' };
 
 
 function servicoGuardado(id) {
@@ -709,11 +713,12 @@ function entradasFinais(arquivo, bytes = 262144) {
   }
 }
 
-function paradoPorLimite(agente, estado = {}, agora = Date.now()) {
+function paradoPelaConta(agente, estado = {}, agora = Date.now()) {
   if (!agente || !agente.sessionId || (agente.kind && agente.kind !== 'background')) return null;
   const arquivo = arquivoDaSessao(agente);
   const ultima = arquivo && entradasFinais(arquivo).reverse().find((e) => e.type === 'assistant');
-  if (!ultima || !ultima.isApiErrorMessage || ultima.error !== 'rate_limit') return null;
+  const motivo = ultima && ultima.isApiErrorMessage ? MOTIVO_DO_ERRO[ultima.error] : null;
+  if (!motivo) return null;
   const quando = Date.parse(ultima.timestamp);
   if (!quando || agora - quando > JANELA_DE_RETOMADA_MS) return null;
   const respawnado = ((estado.respawnados || {})[agente.sessionId]) || 0;
@@ -721,6 +726,7 @@ function paradoPorLimite(agente, estado = {}, agora = Date.now()) {
     id: agente.id,
     sessionId: agente.sessionId,
     nome: agente.name || agente.id,
+    motivo,
     quando,
     processoDesde: Math.max(respawnado, agente.startedAt || 0),
     arquivo,
@@ -732,8 +738,24 @@ function planejar(paradas, estado = {}) {
   const desistidos = estado.desistidos || {};
   const ultimaTroca = estado.ultimaTroca || 0;
   const novas = paradas.filter((p) => empurrados[p.sessionId] !== p.quando && desistidos[p.sessionId] !== p.quando);
-  const precisaTrocar = novas.some((p) => p.quando > ultimaTroca && p.processoDesde >= ultimaTroca);
-  return { novas, precisaTrocar };
+  const naContaDaVez = novas.filter((p) => p.quando > ultimaTroca && p.processoDesde >= ultimaTroca);
+  const motivo = naContaDaVez.some((p) => p.motivo === 'auth') ? 'auth' : 'limite';
+  return { novas, precisaTrocar: naContaDaVez.length > 0, motivo };
+}
+
+async function situacaoDoLoginNoSlot(estado, paradas, agora = Date.now()) {
+  const texto = await lerItem(SERVICO_SLOT);
+  const impressao = impressaoDoLogin(texto);
+  if (!impressao) return 'morto';
+  const vivoAntes = estado.loginVivoApesarDoErro;
+  if (vivoAntes && vivoAntes.impressao === impressao && paradas.some((p) => p.motivo === 'auth' && p.quando > vivoAntes.em)) {
+    return 'morto';
+  }
+  const conferido = await conferirLogin(texto);
+  if (conferido.valido === false || conferido.vencido) return 'morto';
+  if (conferido.valido !== true) return 'sem-conferencia';
+  estado.loginVivoApesarDoErro = { impressao, em: agora };
+  return 'vivo';
 }
 
 function continuacaoChegou(arquivo, desde) {
@@ -766,7 +788,8 @@ async function retomar(p, estado) {
   }
   for (let tentativa = 1; tentativa <= 2; tentativa++) {
     const desde = Date.now() - 1000;
-    await rodar(python, [path.join(__dirname, 'empurrar.py'), bin, p.id, CONTINUAR], { env: envDoSlot(), timeout: 45000 });
+    const continuar = p.motivo === 'auth' ? CONTINUAR_DEPOIS_DO_LOGIN : CONTINUAR;
+    await rodar(python, [path.join(__dirname, 'empurrar.py'), bin, p.id, continuar], { env: envDoSlot(), timeout: 45000 });
     for (let i = 0; i < 10; i++) {
       renovarTrava();
       if (continuacaoChegou(p.arquivo, desde) || (await trabalhando(p.id))) {
@@ -794,7 +817,8 @@ function registrarFalhaDeRetomada(estado, p) {
   if (tentativas < TENTATIVAS_DE_RETOMADA) return;
   estado.desistidos = { ...(estado.desistidos || {}), [p.sessionId]: p.quando };
   contas.log(`agentes: desistindo de retomar ${p.nome} depois de ${tentativas} tentativas`);
-  avisarUmaVez(estado, `retomar ${p.sessionId}`, 'Claude: agent not resumed', `${p.nome} stopped by a limit and did not resume; continue it by hand.`);
+  const causa = p.motivo === 'auth' ? 'a refused login' : 'a limit';
+  avisarUmaVez(estado, `retomar ${p.sessionId}`, 'Claude: agent not resumed', `${p.nome} stopped by ${causa} and did not resume; continue it by hand.`);
 }
 
 const INTERVALO_DA_VOLTA = 5 * 60 * 1000;
@@ -917,8 +941,8 @@ async function vigiar() {
     const lista = await listarAgentes();
     if (!lista) return { acao: 'sem-agentes' };
     const estado = contas.lerJson(ARQ_ESTADO, {}) || {};
-    const paradas = lista.map((agente) => paradoPorLimite(agente, estado)).filter(Boolean);
-    const { novas, precisaTrocar } = planejar(paradas, estado);
+    const paradas = lista.map((agente) => paradoPelaConta(agente, estado)).filter(Boolean);
+    const { novas, precisaTrocar, motivo } = planejar(paradas, estado);
 
     let troca = null;
     if (!novas.length) {
@@ -930,29 +954,44 @@ async function vigiar() {
       contas.escreverJson(ARQ_ESTADO, estado);
       return { acao: troca || migrados.length ? 'migrou' : 'nada', agentes: lista.length, troca, migrados };
     }
-    if (precisaTrocar) {
+    let trocar = precisaTrocar;
+    if (precisaTrocar && motivo === 'auth') {
+      const situacao = await situacaoDoLoginNoSlot(estado, novas);
+      if (situacao === 'sem-conferencia') {
+        contas.escreverJson(ARQ_ESTADO, estado);
+        contas.log('agentes: parados por login recusado e o perfil não respondeu; fica para a próxima checagem');
+        return { acao: 'adiada', parados: novas.map((p) => p.nome), erro: 'could not check the agents slot login' };
+      }
+      if (situacao === 'vivo') contas.log('agentes: parados por login recusado, mas o login do slot responde; só retoma');
+      trocar = situacao === 'morto';
+    }
+    if (trocar) {
+      const titulo = motivo === 'auth' ? 'Claude: agents login expired' : 'Claude: agents hit the limit';
+      const causa = motivo === 'auth' ? 'login recusado' : 'limite';
       const de = await contaRealNoSlot(cfg);
-      if (de) contas.marcarEsgotada(de, null, 'limite');
+      if (de && motivo === 'limite') contas.marcarEsgotada(de, null, 'limite');
       const candidatos = (await avaliarParaAgentes(cfg)).filter((c) => c.id !== de);
-      const r = await trocarParaAPrimeiraQueServe(candidatos, de ? [de] : [], 'limite', estado);
+      const r = await trocarParaAPrimeiraQueServe(candidatos, de ? [de] : [], motivo, estado);
       if (r.erro && r.erro.tipo === 'slot-mudou') {
         contas.escreverJson(ARQ_ESTADO, estado);
         return { acao: 'adiada', parados: novas.map((p) => p.nome), erro: r.erro.message };
       }
       if (r.erro) {
-        avisarUmaVez(estado, 'troca-falhou', 'Claude: agents hit the limit', `Could not switch the agents login: ${r.erro.message}`);
+        avisarUmaVez(estado, 'troca-falhou', titulo, `Could not switch the agents login: ${r.erro.message}`);
         contas.escreverJson(ARQ_ESTADO, estado);
         contas.log(`agentes: trocar para ${r.escolhida.id} falhou: ${r.erro.message}`);
         return { acao: 'troca-falhou', parados: novas.map((p) => p.nome), erro: r.erro.message };
       }
       if (!r.troca) {
-        avisarUmaVez(estado, 'sem-conta', 'Claude: agents hit the limit', 'No other account with headroom has an agents login.');
+        avisarUmaVez(estado, 'sem-conta', titulo, 'No other account with headroom has an agents login.');
         contas.escreverJson(ARQ_ESTADO, estado);
-        contas.log(`agentes: ${novas.length} parados por limite e nenhuma outra conta pronta`);
+        contas.log(`agentes: ${novas.length} parados por ${causa} e nenhuma outra conta pronta`);
         return { acao: 'sem-conta', parados: novas.map((p) => p.nome) };
       }
       troca = r.troca;
+      if (motivo === 'auth' && troca.mudou) marcarLoginInvalido(troca.de, 'authentication_failed');
       estado.ultimaTroca = Date.now();
+      delete estado.loginVivoApesarDoErro;
       contas.escreverJson(ARQ_ESTADO, estado);
     }
 
@@ -1023,6 +1062,7 @@ async function prepararSlot({ prazoDaAvaliacaoMs = 8000, prazoDaTravaMs = 15000 
 
 module.exports = {
   CONTINUAR,
+  CONTINUAR_DEPOIS_DO_LOGIN,
   DIR_SLOT,
   contaNoSlot,
   contaRealNoSlot,
@@ -1043,8 +1083,9 @@ module.exports = {
   servicoDoDir,
   envDoSlot,
   listarAgentes,
-  paradoPorLimite,
+  paradoPelaConta,
   planejar,
+  situacaoDoLoginNoSlot,
   guardarLeitura,
   ritmoDeUso,
   ritmoDaConta,

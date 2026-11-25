@@ -16,6 +16,9 @@ const bin = path.join(raiz, 'bin');
 fs.mkdirSync(bin, { recursive: true });
 fs.writeFileSync(path.join(bin, 'security'), `#!/bin/sh\nexec "${process.execPath}" "${path.join(__dirname, 'fake-security.js')}" "$@"\n`, { mode: 0o755 });
 process.env.PATH = `${bin}:${process.env.PATH}`;
+process.env.CLAUDE_AUTO_CLAUDE_BIN = path.join(__dirname, 'fake-claude-agentes.js');
+process.env.FAKE_AGENTES = path.join(raiz, 'agentes.json');
+process.env.FAKE_AGENTES_LOG = path.join(raiz, 'agentes.log');
 
 const agentes = require('../lib/agentes');
 const contas = require('../lib/contas');
@@ -57,10 +60,12 @@ const comItemDeOutraContaNaFrente = () => [
   { conta: usuario, servico: servicoDaSegunda, texto: loginDaSegunda },
 ];
 
-async function comPerfis(fn) {
+async function comPerfis(fn, { recusados = [], semResposta = false } = {}) {
   const original = global.fetch;
   global.fetch = async (_url, { headers }) => {
     const id = headers.Authorization.replace('Bearer token-', '');
+    if (semResposta) throw new Error('network down');
+    if (recusados.includes(id)) return { ok: false, status: 401, json: async () => ({}) };
     return { ok: true, status: 200, json: async () => ({ account: { uuid: `u-${id}` }, organization: { uuid: `o-${id}` } }) };
   };
   try {
@@ -70,7 +75,95 @@ async function comPerfis(fn) {
   }
 }
 
+const cwdDoAgente = '/Users/exemplo/projeto';
+const transcriptDe = (sessionId) =>
+  path.join(process.env.CLAUDE_AUTO_SLOT_DIR, 'projects', cwdDoAgente.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`);
+const slotDaPrincipalVencido = JSON.stringify({ mcpOAuth: mcp, claudeAiOauth: { accessToken: 'token-principal', refreshToken: 'r1', expiresAt: Date.now() - 60000 } });
+
+function agenteParadoPorLogin(sessionId, quando) {
+  const arquivo = transcriptDe(sessionId);
+  fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+  const entradas = [
+    { type: 'user', timestamp: new Date(quando - 10000).toISOString(), message: { role: 'user', content: 'trabalhe' } },
+    { type: 'assistant', isApiErrorMessage: true, error: 'authentication_failed', timestamp: new Date(quando).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: 'Login reached its time limit · Please run /login' }] } },
+  ];
+  fs.appendFileSync(arquivo, entradas.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  process.env.FAKE_TRANSCRIPT = arquivo;
+  fs.writeFileSync(
+    process.env.FAKE_AGENTES,
+    JSON.stringify([{ id: 'a1', sessionId, name: 'Agente', cwd: cwdDoAgente, kind: 'background', status: 'idle', startedAt: Date.now() - 3600000 }]),
+  );
+}
+
+function cenarioDosAgentes(slot) {
+  cenario([
+    { conta: usuario, servico: agentes.SERVICO_SLOT, texto: slot },
+    { conta: usuario, servico: servicoDaSegunda, texto: loginDaSegunda },
+  ]);
+  const uso = { ok: true, verificadoEm: Date.now(), uso: { cinco: { usado: 10, renovaEm: Date.now() + 3600000 }, sete: { usado: 15, renovaEm: Date.now() + 86400000 }, janelas: [] } };
+  fs.writeFileSync(path.join(contas.DIR_ESTADO, 'uso.json'), JSON.stringify({ principal: uso, segunda: uso, 'agents segunda': uso }));
+  fs.writeFileSync(process.env.FAKE_AGENTES_LOG, '');
+}
+
+const eventosDoFake = () => fs.readFileSync(process.env.FAKE_AGENTES_LOG, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const ultimaTroca = () => JSON.parse(fs.readFileSync(path.join(contas.DIR_ESTADO, 'trocas.jsonl'), 'utf8').trim().split('\n').pop());
+const tokenNoSlot = () => JSON.parse(itemDe(usuario, agentes.SERVICO_SLOT)).claudeAiOauth.accessToken;
+
 const testes = {
+  async loginDoSlotRecusadoVencidoOuVivo() {
+    const paradas = [{ motivo: 'auth', quando: Date.now() - 1000 }];
+    cenario([{ conta: usuario, servico: agentes.SERVICO_SLOT, texto: slotDaPrincipalVencido }]);
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot({}, paradas)), 'morto');
+    cenario([{ conta: usuario, servico: agentes.SERVICO_SLOT, texto: slotDaPrincipal }]);
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot({}, paradas), { recusados: ['principal'] }), 'morto');
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot({}, paradas), { semResposta: true }), 'sem-conferencia');
+    const estado = {};
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot(estado, paradas)), 'vivo');
+    assert.strictEqual(estado.loginVivoApesarDoErro.impressao, agentes.impressaoDoLogin(slotDaPrincipal));
+    const recusadaDeNovo = [{ motivo: 'auth', quando: estado.loginVivoApesarDoErro.em + 1000 }];
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot(estado, recusadaDeNovo)), 'morto');
+    assert.strictEqual(await comPerfis(() => agentes.situacaoDoLoginNoSlot(estado, paradas)), 'vivo');
+  },
+  async vigiaTrocaOSlotERetomaQuandoOLoginDosAgentesCai() {
+    cenarioDosAgentes(slotDaPrincipalVencido);
+    agenteParadoPorLogin('s-login', Date.now() - 60000);
+    const r = await comPerfis(() => agentes.vigiar());
+    assert.strictEqual(r.acao, 'retomou');
+    assert.deepStrictEqual({ de: r.troca.de, para: r.troca.para, mudou: r.troca.mudou }, { de: 'principal', para: 'segunda', mudou: true });
+    assert.deepStrictEqual(r.retomados, ['Agente']);
+    assert.strictEqual(tokenNoSlot(), 'token-segunda');
+    assert.strictEqual(ultimaTroca().motivo, 'agents auth');
+    assert.ok(agentes.loginGuardado('principal').invalidoEm);
+    assert.strictEqual(agentes.loginUtilizavel(agentes.loginGuardado('segunda')), true);
+    assert.strictEqual(contas.lerJson(path.join(contas.DIR_ESTADO, 'esgotadas.json'), {}).principal, undefined);
+    const continuacao = eventosDoFake().find((e) => e.evento === 'continuar');
+    assert.strictEqual(continuacao.texto, agentes.CONTINUAR_DEPOIS_DO_LOGIN);
+    const r2 = await comPerfis(() => agentes.vigiar());
+    assert.notStrictEqual(r2.acao, 'retomou');
+    assert.strictEqual(tokenNoSlot(), 'token-segunda');
+  },
+  async vigiaSoRetomaComOLoginRefeitoETrocaSeEleCairDeNovo() {
+    cenarioDosAgentes(slotDaPrincipal);
+    agenteParadoPorLogin('s-refeito', Date.now() - 60000);
+    const r = await comPerfis(() => agentes.vigiar());
+    assert.strictEqual(r.acao, 'retomou');
+    assert.strictEqual(r.troca, null);
+    assert.strictEqual(tokenNoSlot(), 'token-principal');
+    assert.strictEqual(agentes.loginGuardado('principal').invalidoEm, undefined);
+    agenteParadoPorLogin('s-refeito', Date.now());
+    const r2 = await comPerfis(() => agentes.vigiar());
+    assert.strictEqual(r2.acao, 'retomou');
+    assert.deepStrictEqual({ de: r2.troca.de, para: r2.troca.para }, { de: 'principal', para: 'segunda' });
+    assert.strictEqual(tokenNoSlot(), 'token-segunda');
+  },
+  async vigiaEsperaQuandoNaoDaParaConferirOLoginDoSlot() {
+    cenarioDosAgentes(slotDaPrincipal);
+    agenteParadoPorLogin('s-sem-rede', Date.now() - 60000);
+    const r = await comPerfis(() => agentes.vigiar(), { semResposta: true });
+    assert.strictEqual(r.acao, 'adiada');
+    assert.strictEqual(tokenNoSlot(), 'token-principal');
+    assert.deepStrictEqual(eventosDoFake(), []);
+  },
   async slotLidoPelaContaDoUsuarioComOutroItemNaFrente() {
     cenario(comItemDeOutraContaNaFrente());
     fs.writeFileSync(path.join(process.env.CLAUDE_AUTO_SLOT_DIR, '.claude.json'), JSON.stringify({ oauthAccount: contaDe('segunda') }));

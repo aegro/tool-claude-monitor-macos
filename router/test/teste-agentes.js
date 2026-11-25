@@ -47,6 +47,10 @@ function limite(ms) {
   return { type: 'assistant', isApiErrorMessage: true, error: 'rate_limit', timestamp: new Date(ms).toISOString() };
 }
 
+function loginRecusado(ms) {
+  return { type: 'assistant', isApiErrorMessage: true, error: 'authentication_failed', timestamp: new Date(ms).toISOString() };
+}
+
 const renovaEm = agora + 3 * 3600000;
 
 function leitura(minutos, usado, renovacao = renovaEm) {
@@ -208,17 +212,40 @@ const testes = {
 
   agenteParadoPorLimiteEhDetectado() {
     sessao('s1', [{ type: 'user', timestamp: new Date(agora - 70000).toISOString() }, limite(agora - 60000)]);
-    const p = agentes.paradoPorLimite({ id: 'a1', sessionId: 's1', cwd, kind: 'background', startedAt: agora - 3600000 });
+    const p = agentes.paradoPelaConta({ id: 'a1', sessionId: 's1', cwd, kind: 'background', startedAt: agora - 3600000 });
     assert.ok(p);
     assert.strictEqual(p.quando, agora - 60000);
+    assert.strictEqual(p.motivo, 'limite');
+  },
+  agenteParadoPorLoginRecusadoEhDetectado() {
+    sessao('s5', [{ type: 'user', timestamp: new Date(agora - 70000).toISOString() }, loginRecusado(agora - 60000)]);
+    const p = agentes.paradoPelaConta({ id: 'a5', sessionId: 's5', cwd, kind: 'background', startedAt: agora - 3600000 });
+    assert.ok(p);
+    assert.strictEqual(p.quando, agora - 60000);
+    assert.strictEqual(p.motivo, 'auth');
+    sessao('s6', [{ type: 'assistant', isApiErrorMessage: true, error: 'invalid_request', timestamp: new Date(agora - 60000).toISOString() }]);
+    assert.strictEqual(agentes.paradoPelaConta({ id: 'a6', sessionId: 's6', cwd, kind: 'background' }), null);
+  },
+  paradaPorLoginNaContaDaVezPedeTrocaPorLogin() {
+    const troca = agora - 300000;
+    const porLimite = { sessionId: 's1', motivo: 'limite', quando: agora - 60000, processoDesde: troca + 5000 };
+    const porLogin = { sessionId: 's2', motivo: 'auth', quando: agora - 50000, processoDesde: troca + 5000 };
+    assert.deepStrictEqual(
+      [agentes.planejar([porLimite], { ultimaTroca: troca }).motivo, agentes.planejar([porLimite, porLogin], { ultimaTroca: troca }).motivo],
+      ['limite', 'auth'],
+    );
+    const loginDeAntesDaTroca = { ...porLogin, processoDesde: troca - 5000 };
+    const plano = agentes.planejar([porLimite, loginDeAntesDaTroca], { ultimaTroca: troca });
+    assert.strictEqual(plano.precisaTrocar, true);
+    assert.strictEqual(plano.motivo, 'limite');
   },
   respostaNormalOuParadaAntigaOuInterativaNaoContam() {
     sessao('s2', [limite(agora - 120000), { type: 'assistant', timestamp: new Date(agora - 60000).toISOString() }]);
-    assert.strictEqual(agentes.paradoPorLimite({ id: 'a2', sessionId: 's2', cwd, kind: 'background' }), null);
+    assert.strictEqual(agentes.paradoPelaConta({ id: 'a2', sessionId: 's2', cwd, kind: 'background' }), null);
     sessao('s3', [limite(agora - 7 * 3600000)]);
-    assert.strictEqual(agentes.paradoPorLimite({ id: 'a3', sessionId: 's3', cwd, kind: 'background' }), null);
+    assert.strictEqual(agentes.paradoPelaConta({ id: 'a3', sessionId: 's3', cwd, kind: 'background' }), null);
     sessao('s4', [limite(agora - 60000)]);
-    assert.strictEqual(agentes.paradoPorLimite({ id: 'a4', sessionId: 's4', cwd, kind: 'interactive' }), null);
+    assert.strictEqual(agentes.paradoPelaConta({ id: 'a4', sessionId: 's4', cwd, kind: 'interactive' }), null);
   },
   primeiraParadaPedeTroca() {
     const p = { sessionId: 's1', quando: agora - 60000, processoDesde: agora - 3600000 };

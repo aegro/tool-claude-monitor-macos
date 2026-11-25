@@ -172,8 +172,12 @@ async function statusDosAgentes() {
   }
   console.log(tabela(linhas));
   const lista = (await agentes.listarAgentes()) || [];
-  const paradas = lista.map((a) => agentes.paradoPorLimite(a)).filter(Boolean);
-  console.log(`\n${lista.length} agents, ${paradas.length} stopped by a limit${paradas.length ? `: ${paradas.map((p) => p.nome).join(', ')}` : ''}`);
+  const paradas = lista.map((a) => agentes.paradoPelaConta(a)).filter(Boolean);
+  const porMotivo = (motivo, texto) => {
+    const delas = paradas.filter((p) => p.motivo === motivo);
+    return `${delas.length} stopped by ${texto}${delas.length ? `: ${delas.map((p) => p.nome).join(', ')}` : ''}`;
+  };
+  console.log(`\n${lista.length} agents, ${porMotivo('limite', 'a limit')}, ${porMotivo('auth', 'a refused login')}`);
 }
 
 // O login do terminal da conta, ou, com --own-folder, o da pasta própria da conta do ~/.claude (onde as sessões do VS
@@ -306,7 +310,9 @@ async function main() {
         break;
       }
       const feitas = Object.entries(r.contas);
-      if (!feitas.length) console.log(ids ? `${ids[0]}: login is not expired, nothing to renew` : 'no expired login outside ~/.claude');
+      if (!feitas.length && ids && contas.usaDirPadrao(ids[0])) {
+        console.log(`${ids[0]}: its login is the one in ~/.claude, the agents slot, which only the claude processes there renew; if the agents stopped on a refused login, run claude-accounts login ${ids[0]} --agents`);
+      } else if (!feitas.length) console.log(ids ? `${ids[0]}: login is not expired, nothing to renew` : 'no expired login outside ~/.claude');
       for (const [id, f] of feitas) {
         if (f.resultado === 'renovado') console.log(`${id}: renewed until ${horaCurta(f.ate)}`);
         else if (f.resultado === 'em-uso') console.log(`${id}: ${f.processos} claude process(es) use its folder; the CLI there renews it`);
